@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+        continue-on-error: true
+
+      - run: pnpm install
+
+      - run: pnpm db:generate
+
+      - run: pnpm typecheck
+
+      - run: pnpm --filter @mazare3/web build
+
+      - run: pnpm --filter @mazare3/api build

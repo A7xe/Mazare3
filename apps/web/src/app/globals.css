@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-background: #faf8f5;
+  --color-surface: #ffffff;
+  --color-primary: #0d5c4b;
+  --color-primary-foreground: #f8faf9;
+  --color-accent: #c4a574;
+  --color-accent-foreground: #1a1a1a;
+  --color-foreground: #1a1a1a;
+  --color-muted: #6b6560;
+  --color-muted-foreground: #6b6560;
+  --color-border: #e8e2d9;
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-arabic: var(--font-cairo), system-ui, sans-serif;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 1.75rem;
+  --shadow-soft: 0 8px 32px -8px rgb(26 26 26 / 0.08);
+  --shadow-card: 0 4px 24px -4px rgb(26 26 26 / 0.06);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+
+  [dir='rtl'] body {
+    font-family: var(--font-arabic);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-hero {
+    background: linear-gradient(
+      135deg,
+      rgb(13 92 75 / 0.06) 0%,
+      rgb(196 165 116 / 0.12) 50%,
+      rgb(250 248 245) 100%
+    );
+  }
+
+  .gradient-card-fallback {
+    background: linear-gradient(145deg, #0d5c4b 0%, #1a7a64 40%, #c4a574 100%);
+  }
+}

@@ -1,0 +1,237 @@
+// Mazare3 Jordan — Phase 2 foundation
+// Booking/payment models come in later phases.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  customer
+  owner
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+  deleted
+}
+
+enum OwnerStatus {
+  pending
+  approved
+  rejected
+  suspended
+}
+
+enum PropertyStatus {
+  draft
+  pending_review
+  changes_requested
+  approved
+  published
+  unpublished
+  suspended
+  rejected
+}
+
+enum VerificationStatus {
+  unverified
+  owner_uploaded
+  platform_reviewed
+  platform_verified
+}
+
+enum PropertyType {
+  farm
+  chalet
+  villa
+  istiraha
+  private_resort
+  pool_house
+}
+
+enum MediaType {
+  image
+  video
+  virtual_tour
+}
+
+model User {
+  id               String     @id @default(cuid())
+  name             String?
+  email            String     @unique
+  phone            String?
+  passwordHash     String?
+  externalAuthId   String?
+  externalProvider String?
+  role             UserRole   @default(customer)
+  status           UserStatus @default(active)
+  locale           String     @default("ar")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  ownerProfile OwnerProfile?
+  favorites    Favorite[]
+  auditLogs    AuditLog[]    @relation("AuditActor")
+
+  @@index([role])
+  @@index([status])
+}
+
+model OwnerProfile {
+  id              String      @id @default(cuid())
+  userId          String      @unique
+  displayName     String
+  businessName    String?
+  phone           String // never exposed on public listing UI
+  status          OwnerStatus @default(pending)
+  rejectionReason String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  properties Property[]
+}
+
+model Property {
+  id                    String             @id @default(cuid())
+  ownerId               String
+  slug                  String             @unique
+  type                  PropertyType
+  titleAr               String
+  titleEn               String?
+  descriptionAr         String             @db.Text
+  descriptionEn         String?            @db.Text
+  city                  String
+  area                  String
+  approximateAddress    String
+  exactAddress          String? // hidden from public API/UI until booking confirmed
+  latitudeApprox        Float?
+  longitudeApprox       Float?
+  latitudeExact         Float?
+  longitudeExact        Float?
+  capacity              Int
+  bedrooms              Int                @default(0)
+  bathrooms             Int                @default(0)
+  poolsCount            Int                @default(0)
+  hasIndoorPool         Boolean            @default(false)
+  hasHeatedPool         Boolean            @default(false)
+  hasFootballField      Boolean            @default(false)
+  allowsFamilies        Boolean            @default(true)
+  allowsYouth           Boolean            @default(false)
+  allowsMixedGroups     Boolean            @default(true)
+  allowsEvents          Boolean            @default(false)
+  allowsOvernight       Boolean            @default(true)
+  checkInTime           String?
+  checkOutTime          String?
+  status                PropertyStatus     @default(draft)
+  verificationStatus    VerificationStatus @default(unverified)
+  instantBookingEnabled Boolean            @default(false)
+  hasPlatformDeal       Boolean            @default(false)
+  ratingAvg             Decimal?           @db.Decimal(3, 2)
+  reviewCount           Int                @default(0)
+  basePrice             Decimal            @db.Decimal(10, 2)
+  currency              String             @default("JOD")
+  cleaningFee           Decimal?           @db.Decimal(10, 2)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  owner     OwnerProfile      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  media     PropertyMedia[]
+  amenities PropertyAmenity[]
+  rules     PropertyRule[]
+  favorites Favorite[]
+
+  @@index([city, status])
+  @@index([status, verificationStatus])
+  @@index([slug])
+}
+
+model PropertyMedia {
+  id                 String             @id @default(cuid())
+  propertyId         String
+  type               MediaType          @default(image)
+  url                String
+  thumbnailUrl       String?
+  altAr              String?
+  altEn              String?
+  sortOrder          Int                @default(0)
+  verificationStatus VerificationStatus @default(owner_uploaded)
+  createdAt          DateTime           @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, sortOrder])
+}
+
+model PropertyRule {
+  id            String  @id @default(cuid())
+  propertyId    String
+  titleAr       String
+  titleEn       String?
+  descriptionAr String?
+  descriptionEn String?
+  sortOrder     Int     @default(0)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, sortOrder])
+}
+
+model Amenity {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  labelAr  String
+  labelEn  String
+  icon     String?
+  category String?
+  isActive Boolean @default(true)
+
+  properties PropertyAmenity[]
+}
+
+model PropertyAmenity {
+  propertyId String
+  amenityId  String
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  amenity  Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+
+  @@id([propertyId, amenityId])
+}
+
+model Favorite {
+  userId     String
+  propertyId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@id([userId, propertyId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
