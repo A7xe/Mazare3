@@ -90,3 +90,4 @@ Public signup always creates **customer** only. Owner accounts are created via s
 
 See `PROJECT_BRIEF_CURSOR_MAZARE3_JORDAN.md` for the full roadmap.
 # Mazare3
+# Mazare3
