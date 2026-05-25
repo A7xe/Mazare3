@@ -176,3 +176,4 @@ See `PROJECT_BRIEF_CURSOR_MAZARE3_JORDAN.md` for the full roadmap.
 # Mazare3
 # Mazare3
 # Mazare3
+# Mazare3
