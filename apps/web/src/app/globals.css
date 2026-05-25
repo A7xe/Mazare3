@@ -1,17 +1,21 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-background: #faf8f5;
+  /* Phase 2C — Final Brand Palette Lock */
+  --color-background: #fbfbfb;
   --color-surface: #ffffff;
-  --color-primary: #0d5c4b;
-  --color-primary-foreground: #f8faf9;
-  --color-accent: #c4a574;
-  --color-accent-foreground: #1a1a1a;
-  --color-foreground: #1a1a1a;
-  --color-muted: #6b6560;
-  --color-muted-foreground: #6b6560;
-  --color-border: #e8e2d9;
-  --color-success: #059669;
+  --color-primary: #0e6ba8;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: color-mix(in srgb, #0e6ba8 7%, #fbfbfb);
+  --color-royal: #0a2472;
+  --color-royal-foreground: #ffffff;
+  --color-navy: #001c55;
+  --color-night: #00072d;
+  --color-foreground: #001c55;
+  --color-muted: #64748b;
+  --color-muted-foreground: #64748b;
+  --color-border: #e2e8f0;
+  --color-success: #0e6ba8;
   --color-warning: #d97706;
   --color-danger: #dc2626;
   --font-sans: var(--font-inter), system-ui, sans-serif;
@@ -19,8 +23,9 @@
   --radius-lg: 1.25rem;
   --radius-xl: 1.5rem;
   --radius-2xl: 1.75rem;
-  --shadow-soft: 0 8px 32px -8px rgb(26 26 26 / 0.08);
-  --shadow-card: 0 4px 24px -4px rgb(26 26 26 / 0.06);
+  --shadow-soft: 0 12px 40px -12px rgb(0 28 85 / 0.1);
+  --shadow-card: 0 4px 24px -6px rgb(0 7 45 / 0.06);
+  --shadow-premium: 0 20px 50px -16px rgb(14 107 168 / 0.16);
 }
 
 @layer base {
@@ -47,16 +52,53 @@
     text-wrap: balance;
   }
 
+  /* Light: #fbfbfb → subtle primary */
   .gradient-hero {
     background: linear-gradient(
-      135deg,
-      rgb(13 92 75 / 0.06) 0%,
-      rgb(196 165 116 / 0.12) 50%,
-      rgb(250 248 245) 100%
+      165deg,
+      #fbfbfb 0%,
+      color-mix(in srgb, #0e6ba8 4%, #fbfbfb) 55%,
+      color-mix(in srgb, #0e6ba8 8%, #fbfbfb) 100%
     );
   }
 
+  .gradient-auth {
+    background: linear-gradient(
+      160deg,
+      #fbfbfb 0%,
+      color-mix(in srgb, #0e6ba8 5%, #fbfbfb) 60%,
+      color-mix(in srgb, #0a2472 3%, #fbfbfb) 100%
+    );
+  }
+
+  /* Primary: #0e6ba8 → #0a2472 */
+  .gradient-primary {
+    background: linear-gradient(135deg, #0e6ba8 0%, #0a2472 100%);
+  }
+
+  /* Premium navy: night → deep → royal */
+  .gradient-premium {
+    background: linear-gradient(145deg, #00072d 0%, #001c55 45%, #0a2472 100%);
+  }
+
   .gradient-card-fallback {
-    background: linear-gradient(145deg, #0d5c4b 0%, #1a7a64 40%, #c4a574 100%);
+    background: linear-gradient(145deg, #00072d 0%, #001c55 40%, #0a2472 75%, #0e6ba8 100%);
+  }
+
+  .gradient-card-overlay {
+    background: linear-gradient(
+      to top,
+      rgb(0 7 45 / 0.72) 0%,
+      rgb(0 28 85 / 0.2) 45%,
+      transparent 100%
+    );
+  }
+
+  .glass-surface {
+    @apply border border-white/70 bg-surface/88 shadow-card backdrop-blur-xl;
+  }
+
+  .glass-panel {
+    @apply border border-primary/12 bg-surface/92 shadow-premium backdrop-blur-xl;
   }
 }

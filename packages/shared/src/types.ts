@@ -1,18 +1,10 @@
-import type { Locale } from './constants';
+import type { Locale, AvailabilityPeriod, BookingStatus, PropertyType } from './constants';
 
 export type VerificationStatus =
   | 'unverified'
   | 'owner_uploaded'
   | 'platform_reviewed'
   | 'platform_verified';
-
-export type PropertyType =
-  | 'farm'
-  | 'chalet'
-  | 'villa'
-  | 'istiraha'
-  | 'private_resort'
-  | 'pool_house';
 
 export interface PublicPropertySummary {
   id: string;
@@ -54,4 +46,83 @@ export interface PublicPropertyDetail extends PublicPropertySummary {
   rulesEn: string[];
 }
 
-export type LocalizedField<T> = Record<Locale, T>;
+export interface PublicAvailabilitySlot {
+  date: string;
+  period: AvailabilityPeriod;
+  price: number;
+  currency: string;
+  status: 'available' | 'blocked' | 'booked';
+}
+
+export interface OwnerDashboardSummary {
+  propertiesCount: number;
+  upcomingBookingsCount: number;
+  todayBookingsCount: number;
+  weekBookingsCount: number;
+  estimatedRevenueJod: number;
+  occupancyPercent: number;
+}
+
+export interface OwnerPropertyCard {
+  id: string;
+  slug: string;
+  titleAr: string;
+  titleEn: string;
+  status: string;
+  area: string;
+  city: string;
+  basePrice: number;
+  currency: string;
+  bookingsCount: number;
+  imageUrl?: string;
+}
+
+export interface OwnerPropertyDetail extends OwnerPropertyCard {
+  capacity: number;
+  allowsOvernight: boolean;
+  upcomingBookingsCount: number;
+}
+
+export interface OwnerBookingRow {
+  id: string;
+  publicCode: string;
+  status: BookingStatus;
+  propertyId: string;
+  propertySlug: string;
+  propertyTitleAr: string;
+  propertyTitleEn: string;
+  date: string;
+  period: AvailabilityPeriod;
+  guestsCount: number;
+  totalAmount: number;
+  currency: string;
+  createdAt: string;
+}
+
+export interface OwnerAvailabilitySlotRow {
+  id: string;
+  propertyId: string;
+  date: string;
+  period: AvailabilityPeriod;
+  price: number;
+  currency: string;
+  status: 'available' | 'blocked' | 'booked';
+  hasActiveBooking: boolean;
+}
+
+export interface PublicBookingSummary {
+  id: string;
+  publicCode: string;
+  status: BookingStatus;
+  propertySlug: string;
+  propertyTitleAr: string;
+  propertyTitleEn: string;
+  approximateLocation: string;
+  date: string;
+  period: AvailabilityPeriod;
+  guestsCount: number;
+  totalAmount: number;
+  currency: string;
+  createdAt: string;
+  cancelledAt?: string | null;
+}

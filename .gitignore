@@ -6,7 +6,17 @@ coverage
 .env
 .env.local
 .env.*.local
+apps/api/.env
+apps/api/.env.local
+apps/web/.env
+apps/web/.env.local
+packages/db/.env
+packages/db/.env.local
 *.log
 .DS_Store
 .turbo
 packages/db/generated
+test-results/
+playwright-report/
+blob-report/
+e2e/.auth/

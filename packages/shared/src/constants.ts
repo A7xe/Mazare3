@@ -8,6 +8,31 @@ export type UserRole = (typeof USER_ROLES)[number];
 
 export const API_VERSION = 'v1';
 
+export const AVAILABILITY_PERIODS = ['morning', 'evening', 'full_day', 'overnight'] as const;
+export type AvailabilityPeriod = (typeof AVAILABILITY_PERIODS)[number];
+
+export const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled', 'expired'] as const;
+export type BookingStatus = (typeof BOOKING_STATUSES)[number];
+
+export const PROPERTY_SORT_OPTIONS = [
+  'recommended',
+  'price_asc',
+  'price_desc',
+  'rating_desc',
+  'newest',
+] as const;
+export type PropertySortOption = (typeof PROPERTY_SORT_OPTIONS)[number];
+
+export const PROPERTY_TYPES = [
+  'farm',
+  'chalet',
+  'villa',
+  'istiraha',
+  'private_resort',
+  'pool_house',
+] as const;
+export type PropertyType = (typeof PROPERTY_TYPES)[number];
+
 export const JORDAN_CITIES = [
   { key: 'amman', labelAr: 'عمان', labelEn: 'Amman' },
   { key: 'salt', labelAr: 'السلط', labelEn: 'Salt' },

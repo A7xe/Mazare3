@@ -63,6 +63,26 @@ enum MediaType {
   virtual_tour
 }
 
+enum AvailabilityPeriod {
+  morning
+  evening
+  full_day
+  overnight
+}
+
+enum AvailabilitySlotStatus {
+  available
+  blocked
+  booked
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  expired
+}
+
 model User {
   id               String     @id @default(cuid())
   name             String?
@@ -79,6 +99,7 @@ model User {
 
   ownerProfile OwnerProfile?
   favorites    Favorite[]
+  bookings     Booking[]
   auditLogs    AuditLog[]    @relation("AuditActor")
 
   @@index([role])
@@ -147,7 +168,9 @@ model Property {
   media     PropertyMedia[]
   amenities PropertyAmenity[]
   rules     PropertyRule[]
-  favorites Favorite[]
+  favorites         Favorite[]
+  availabilitySlots AvailabilitySlot[]
+  bookings          Booking[]
 
   @@index([city, status])
   @@index([status, verificationStatus])
@@ -216,6 +239,47 @@ model Favorite {
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@id([userId, propertyId])
+}
+
+model AvailabilitySlot {
+  id         String                 @id @default(cuid())
+  propertyId String
+  date       DateTime               @db.Date
+  period     AvailabilityPeriod
+  price      Decimal                @db.Decimal(10, 2)
+  status     AvailabilitySlotStatus @default(available)
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@unique([propertyId, date, period])
+  @@index([propertyId, date, status])
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  publicCode         String        @unique
+  userId             String
+  propertyId         String
+  availabilitySlotId String
+  guestsCount        Int
+  totalAmount        Decimal       @db.Decimal(10, 2)
+  currency           String        @default("JOD")
+  status             BookingStatus @default(confirmed)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  cancelledAt        DateTime?
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  slot     AvailabilitySlot @relation(fields: [availabilitySlotId], references: [id], onDelete: Restrict)
+
+  @@index([userId, status])
+  @@index([propertyId])
+  @@index([publicCode])
+  @@index([availabilitySlotId, status])
 }
 
 model AuditLog {

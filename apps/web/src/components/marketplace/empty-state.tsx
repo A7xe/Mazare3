@@ -11,11 +11,11 @@ interface EmptyStateProps {
 
 export function EmptyState({ title, description, actionLabel, actionHref }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface/50 px-8 py-16 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-primary/20 bg-primary-soft/50 px-8 py-16 text-center">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface shadow-card">
         <SearchX className="h-7 w-7 text-primary" aria-hidden />
       </div>
-      <h3 className="text-lg font-semibold">{title}</h3>
+      <h3 className="text-lg font-semibold text-navy">{title}</h3>
       {description && <p className="mt-2 max-w-md text-sm text-muted">{description}</p>}
       {actionLabel && actionHref && (
         <Button className="mt-6" variant="secondary" asChild>

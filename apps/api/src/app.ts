@@ -7,6 +7,9 @@ import { errorHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.js';
 import { propertiesRouter } from './routes/properties.js';
 import { authRouter } from './routes/auth.js';
+import { bookingsRouter } from './routes/bookings.js';
+import { meRouter } from './routes/me.js';
+import { ownerRouter } from './routes/owner.js';
 
 export function createApp(): Express {
   const app = express();
@@ -29,6 +32,9 @@ export function createApp(): Express {
   app.use(api, healthRouter);
   app.use(`${api}/auth`, authRouter);
   app.use(`${api}/properties`, propertiesRouter);
+  app.use(`${api}/bookings`, bookingsRouter);
+  app.use(`${api}/me`, meRouter);
+  app.use(`${api}/owner`, ownerRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });

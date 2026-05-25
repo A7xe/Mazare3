@@ -4,15 +4,18 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-soft hover:opacity-95',
-        secondary: 'bg-surface text-foreground border border-border shadow-card hover:bg-background',
-        outline: 'border border-border bg-transparent hover:bg-surface',
-        ghost: 'hover:bg-surface',
-        accent: 'bg-accent text-accent-foreground hover:opacity-90',
+        default:
+          'bg-primary text-primary-foreground shadow-soft hover:bg-royal active:bg-navy',
+        secondary:
+          'border border-royal/25 bg-surface text-royal shadow-card hover:border-royal/40 hover:bg-primary-soft',
+        outline:
+          'border border-border bg-transparent hover:border-primary/30 hover:bg-primary-soft',
+        ghost: 'text-navy hover:bg-primary-soft hover:text-primary',
+        royal: 'bg-royal text-royal-foreground shadow-soft hover:bg-navy active:bg-night',
       },
       size: {
         default: 'h-11 px-5 py-2',

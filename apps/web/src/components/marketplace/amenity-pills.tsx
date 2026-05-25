@@ -2,6 +2,7 @@ import { Waves, Flame, Users, Moon, Wifi, Car, UtensilsCrossed } from 'lucide-re
 
 const AMENITY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   pool: Waves,
+  heated_pool: Flame,
   heated: Flame,
   football: Users,
   overnight: Moon,
@@ -25,10 +26,10 @@ export function AmenityPills({ keys, max = 4 }: AmenityPillsProps) {
         return (
           <span
             key={key}
-            className="inline-flex items-center gap-1 rounded-full bg-background px-2 py-0.5 text-xs text-muted"
+            className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary-soft px-2 py-0.5 text-xs text-navy"
           >
-            <Icon className="h-3 w-3" aria-hidden />
-            {key}
+            <Icon className="h-3 w-3 text-primary" aria-hidden />
+            {key.replace('_', ' ')}
           </span>
         );
       })}

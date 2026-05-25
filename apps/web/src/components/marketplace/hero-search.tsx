@@ -19,25 +19,25 @@ export function HeroSearch() {
   return (
     <form
       onSubmit={handleSearch}
-      className="mx-auto w-full max-w-4xl rounded-2xl border border-border bg-surface p-3 shadow-soft sm:rounded-3xl sm:p-4"
+      className="glass-panel mx-auto w-full max-w-4xl rounded-3xl p-4 sm:p-5"
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="relative lg:col-span-2">
-          <MapPin className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <MapPin className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
           <Input
-            className="ps-10"
+            className="border-primary/10 bg-surface ps-10"
             placeholder={t('searchPlaceholder')}
             aria-label={t('searchPlaceholder')}
           />
         </div>
         <div className="relative">
-          <Calendar className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <Input className="ps-10" type="date" aria-label={t('dateLabel')} />
+          <Calendar className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/70" />
+          <Input className="border-primary/10 bg-surface ps-10" type="date" aria-label={t('dateLabel')} />
         </div>
         <div className="relative">
-          <Users className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <Users className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/70" />
           <Input
-            className="ps-10"
+            className="border-primary/10 bg-surface ps-10"
             type="number"
             min={1}
             max={50}
@@ -46,8 +46,8 @@ export function HeroSearch() {
           />
         </div>
       </div>
-      <div className="mt-3 flex justify-end">
-        <Button type="submit" size="lg" className="w-full sm:w-auto">
+      <div className="mt-4 flex justify-end">
+        <Button type="submit" size="lg" className="w-full shadow-premium sm:w-auto">
           <Search className="h-4 w-4" />
           {tCommon('search')}
         </Button>

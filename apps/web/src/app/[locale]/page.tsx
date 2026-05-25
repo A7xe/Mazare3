@@ -50,20 +50,20 @@ export default async function HomePage({ params }: Props) {
         </div>
       </section>
 
-      <section className="border-y border-border bg-surface px-4 py-16 sm:px-6 lg:px-8">
+      <section className="border-y border-primary/8 bg-primary-soft/40 px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <SectionHeader title={t('howTitle')} />
           <div className="mt-12 grid gap-8 md:grid-cols-3">
             {steps.map(({ title, desc, icon: Icon }) => (
               <div
                 key={title}
-                className="rounded-2xl border border-border bg-background p-8 text-center shadow-card"
+                className="glass-surface rounded-3xl p-8 text-center transition-shadow hover:shadow-soft"
               >
-                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                  <Icon className="h-6 w-6 text-primary" />
+                <div className="gradient-primary mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl text-primary-foreground shadow-soft">
+                  <Icon className="h-6 w-6" />
                 </div>
-                <h3 className="font-semibold">{title}</h3>
-                <p className="mt-2 text-sm text-muted">{desc}</p>
+                <h3 className="font-semibold text-navy">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{desc}</p>
               </div>
             ))}
           </div>
@@ -71,11 +71,11 @@ export default async function HomePage({ params }: Props) {
       </section>
 
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-        <div className="rounded-3xl border border-border bg-gradient-to-br from-primary/5 via-surface to-accent/10 p-8 sm:p-12">
+        <div className="gradient-premium overflow-hidden rounded-3xl p-8 text-primary-foreground sm:p-12">
           <div className="max-w-xl">
             <h2 className="text-2xl font-semibold sm:text-3xl">{t('ownerCtaTitle')}</h2>
-            <p className="mt-4 text-muted">{t('ownerCtaDesc')}</p>
-            <Button className="mt-6" variant="accent" size="lg" asChild>
+            <p className="mt-4 text-primary-foreground/80">{t('ownerCtaDesc')}</p>
+            <Button className="mt-6 shadow-premium" variant="royal" size="lg" asChild>
               <Link href="/become-owner">{tCommon('listProperty')}</Link>
             </Button>
           </div>

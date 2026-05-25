@@ -1,4 +1,12 @@
-import { PrismaClient, PropertyStatus, PropertyType, VerificationStatus } from '../generated/client/index.js';
+import './load-env.js';
+import {
+  AvailabilityPeriod,
+  AvailabilitySlotStatus,
+  PrismaClient,
+  PropertyStatus,
+  PropertyType,
+  VerificationStatus,
+} from '../generated/client/index.js';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -461,6 +469,8 @@ async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
 
   await prisma.auditLog.deleteMany();
+  await prisma.booking.deleteMany();
+  await prisma.availabilitySlot.deleteMany();
   await prisma.favorite.deleteMany();
   await prisma.propertyAmenity.deleteMany();
   await prisma.propertyMedia.deleteMany();
@@ -599,16 +609,62 @@ async function main() {
     }
   }
 
+  const published = await prisma.property.findMany({
+    where: { status: PropertyStatus.published },
+    select: { id: true, basePrice: true, allowsOvernight: true },
+  });
+
+  const periods: AvailabilityPeriod[] = ['morning', 'evening', 'full_day', 'overnight'];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  let slotCount = 0;
+
+  for (const prop of published) {
+    const base = Number(prop.basePrice);
+    for (let dayOffset = 0; dayOffset < 45; dayOffset++) {
+      const date = new Date(today);
+      date.setUTCDate(date.getUTCDate() + dayOffset);
+
+      for (const period of periods) {
+        if (period === 'overnight' && !prop.allowsOvernight) continue;
+
+        let status: AvailabilitySlotStatus = AvailabilitySlotStatus.available;
+        if (dayOffset % 7 === 0) status = AvailabilitySlotStatus.blocked;
+        else if (dayOffset % 11 === 5 && period === 'full_day') status = AvailabilitySlotStatus.blocked;
+        else if (dayOffset % 13 === 8 && period === 'evening') status = AvailabilitySlotStatus.blocked;
+
+        const multiplier =
+          period === 'morning' ? 0.45 : period === 'evening' ? 0.55 : period === 'overnight' ? 1.2 : 1;
+        const price = Math.round(base * multiplier);
+
+        await prisma.availabilitySlot.upsert({
+          where: {
+            propertyId_date_period: { propertyId: prop.id, date, period },
+          },
+          create: { propertyId: prop.id, date, period, price, status },
+          update: { price, status },
+        });
+        slotCount++;
+      }
+    }
+  }
+
   await prisma.auditLog.create({
     data: {
       actorUserId: admin.id,
       action: 'seed.completed',
       entityType: 'database',
-      metadata: { properties: PROPERTIES.length, demoPasswordNote: 'See README — dev only' },
+      metadata: {
+        properties: PROPERTIES.length,
+        availabilitySlots: slotCount,
+        demoPasswordNote: 'See README — dev only',
+      },
     },
   });
 
-  console.log(`✅ Seeded ${PROPERTIES.length} properties, ${AMENITIES.length} amenities, users (admin/owners/customer).`);
+  console.log(
+    `✅ Seeded ${PROPERTIES.length} properties, ${slotCount} availability slots, ${AMENITIES.length} amenities, users (admin/owners/customer).`,
+  );
   console.log(`   Demo password (dev only): ${DEMO_PASSWORD}`);
 }
 

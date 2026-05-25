@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
+import { useSearchParams } from 'next/navigation';
 import { useRouter } from '@/i18n/navigation';
 import { Link } from '@/i18n/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +21,8 @@ export function AuthForm({ mode }: AuthFormProps) {
   const t = useTranslations('auth');
   const locale = useLocale();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnUrl = searchParams.get('returnUrl');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,7 +42,8 @@ export function AuthForm({ mode }: AuthFormProps) {
       } else {
         await login({ email, password });
       }
-      router.push('/');
+      const dest = returnUrl && returnUrl.startsWith('/') ? returnUrl : '/';
+      router.push(dest);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errorGeneric'));
@@ -49,11 +53,13 @@ export function AuthForm({ mode }: AuthFormProps) {
   }
 
   return (
-    <Card className="mx-auto w-full max-w-md border-border shadow-soft">
-      <CardHeader>
-        <CardTitle className="text-center text-2xl">
+    <Card className="glass-panel w-full max-w-md overflow-hidden rounded-3xl border-primary/12">
+      <div className="gradient-primary h-1" />
+      <CardHeader className="pb-2 text-center sm:text-start">
+        <CardTitle className="text-2xl">
           {mode === 'login' ? t('loginTitle') : t('signupTitle')}
         </CardTitle>
+        <p className="text-sm text-muted">{t('formSubtitle')}</p>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={handleSubmit}>
@@ -68,6 +74,7 @@ export function AuthForm({ mode }: AuthFormProps) {
             <Input
               id="email"
               name="email"
+              data-testid="auth-email"
               type="email"
               autoComplete="email"
               required
@@ -79,6 +86,7 @@ export function AuthForm({ mode }: AuthFormProps) {
             <Input
               id="password"
               name="password"
+              data-testid="auth-password"
               type="password"
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               required
@@ -87,11 +95,20 @@ export function AuthForm({ mode }: AuthFormProps) {
             />
           </div>
           {error && (
-            <p className="rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            <p
+              className="rounded-xl border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger"
+              role="alert"
+            >
               {error}
             </p>
           )}
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button
+            type="submit"
+            data-testid="auth-submit"
+            className="w-full shadow-soft"
+            size="lg"
+            disabled={loading}
+          >
             {loading
               ? t('loading')
               : mode === 'login'
@@ -99,11 +116,17 @@ export function AuthForm({ mode }: AuthFormProps) {
                 : t('signupSubmit')}
           </Button>
         </form>
-        <p className="mt-6 text-center text-sm text-muted">
+        <p className="mt-6 text-center text-sm text-muted sm:text-start">
           {mode === 'login' ? t('noAccount') : t('hasAccount')}{' '}
           <Link
-            href={mode === 'login' ? '/signup' : '/login'}
-            className="font-medium text-primary hover:underline"
+            href={
+              returnUrl
+                ? `${mode === 'login' ? '/signup' : '/login'}?returnUrl=${encodeURIComponent(returnUrl)}`
+                : mode === 'login'
+                  ? '/signup'
+                  : '/login'
+            }
+            className="font-semibold text-primary hover:text-royal hover:underline"
           >
             {mode === 'login' ? t('signupTitle') : t('loginTitle')}
           </Link>
