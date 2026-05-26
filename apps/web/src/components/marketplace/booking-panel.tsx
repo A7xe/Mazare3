@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { usePathname, useRouter } from '@/i18n/navigation';
-import { Calendar, ShieldCheck, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Calendar, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
 import type { AvailabilityPeriod, PublicAvailabilitySlot, PublicPropertyDetail } from '@mazare3/shared';
 import { AVAILABILITY_PERIODS } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,7 +51,6 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successCode, setSuccessCode] = useState<string | null>(null);
 
   const minDate = todayIso();
 
@@ -138,9 +137,8 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
         period: period as AvailabilityPeriod,
         guestsCount: guests,
       });
-      setSuccessCode(res.data.publicCode);
       clearBookingDraft(property.slug);
-      router.push('/account/bookings');
+      router.push(`/checkout/${res.data.id}`);
     } catch (err) {
       if (err instanceof BookingApiError && err.code === 'SLOT_UNAVAILABLE') {
         if (date) await loadSlots(date);
@@ -194,14 +192,12 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
             onChange={(e) => {
               setDate(e.target.value);
               setPeriod('');
-              setSuccessCode(null);
             }}
             onBlur={(e) => {
               const v = e.target.value;
               if (v && v !== date) {
                 setDate(v);
                 setPeriod('');
-                setSuccessCode(null);
               }
             }}
           />
@@ -288,7 +284,7 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
               </li>
             </ul>
             <p className="mt-3 rounded-lg border border-primary/15 bg-surface/80 px-3 py-2 text-xs leading-relaxed text-muted">
-              {t('paymentNotEnabled')}
+              {t('paymentAtCheckout')}
             </p>
           </div>
         )}
@@ -300,13 +296,6 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
           >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             {error}
-          </p>
-        )}
-
-        {successCode && (
-          <p className="flex items-start gap-2 rounded-xl border border-primary/20 bg-primary-soft px-3 py-2 text-sm text-navy">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            {t('bookingSuccess', { code: successCode })}
           </p>
         )}
 

@@ -4,3 +4,7 @@ export * from './mock-properties';
 export * from './schemas/auth';
 export * from './schemas/property-search';
 export * from './schemas/owner';
+export * from './schemas/owner-onboarding';
+export * from './schemas/admin';
+export * from './schemas/payment';
+export * from './schemas/operations';

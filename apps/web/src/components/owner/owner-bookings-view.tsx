@@ -56,7 +56,7 @@ export function OwnerBookingsView() {
   }
 
   return (
-        <div data-testid="owner-bookings-list" className="space-y-4">
+    <div data-testid="owner-bookings-list" className="space-y-4">
       {bookings.map((b) => {
         const title = locale === 'ar' ? b.propertyTitleAr : b.propertyTitleEn;
         return (
@@ -74,9 +74,17 @@ export function OwnerBookingsView() {
                 </CardTitle>
                 <p className="mt-1 font-mono text-xs text-muted">{b.publicCode}</p>
               </div>
-              <Badge variant={b.status === 'cancelled' ? 'muted' : 'highlight'}>
-                {t(`bookingStatus.${b.status}`)}
-              </Badge>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={b.status === 'cancelled' ? 'muted' : 'highlight'}>
+                  {t(`bookingStatus.${b.status}`)}
+                </Badge>
+                <Badge variant={b.paymentStatus === 'paid' ? 'highlight' : 'muted'}>
+                  {t(`paymentStatus.${b.paymentStatus}`)}
+                </Badge>
+                {b.payoutStatus && (
+                  <Badge variant="default">{t(`payoutStatus.${b.payoutStatus}`)}</Badge>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="flex flex-wrap items-end justify-between gap-4 text-sm">
               <div className="space-y-1 text-muted">
@@ -90,8 +98,29 @@ export function OwnerBookingsView() {
                 <p>
                   <span className="font-medium text-navy">{t('guests')}:</span> {b.guestsCount}
                 </p>
+                <p>
+                  <span className="font-medium text-navy">{t('bookingTotal')}:</span>{' '}
+                  <PriceDisplay amount={b.totalAmount} currency={b.currency} locale={locale} />
+                </p>
+                {b.ownerNetPayoutAmount != null && (
+                  <p>
+                    <span className="font-medium text-navy">{t('ownerNetPayout')}:</span>{' '}
+                    <PriceDisplay
+                      amount={b.ownerNetPayoutAmount}
+                      currency={b.currency}
+                      locale={locale}
+                    />
+                  </p>
+                )}
+                {b.payoutAvailableAt && (
+                  <p>
+                    <span className="font-medium text-navy">{t('payoutAvailableAt')}:</span>{' '}
+                    {new Date(b.payoutAvailableAt).toLocaleString(
+                      locale === 'ar' ? 'ar-JO' : 'en-GB',
+                    )}
+                  </p>
+                )}
               </div>
-              <PriceDisplay amount={b.totalAmount} currency={b.currency} locale={locale} large />
             </CardContent>
           </Card>
         );

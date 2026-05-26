@@ -8,6 +8,8 @@ export interface AuthUser {
   name: string | null;
   role: string;
   locale: string;
+  ownerProfileStatus?: string | null;
+  ownerRejectionReason?: string | null;
 }
 
 async function authFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -48,4 +50,8 @@ export async function logout() {
 
 export async function getMe() {
   return authFetch<{ data: { user: AuthUser } }>('/auth/me');
+}
+
+export async function refreshSession() {
+  return authFetch<{ data: { user: AuthUser } }>('/auth/refresh-session', { method: 'POST' });
 }

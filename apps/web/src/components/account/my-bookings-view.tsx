@@ -3,14 +3,30 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link, useRouter } from '@/i18n/navigation';
-import { Calendar, Loader2, MapPin, XCircle } from 'lucide-react';
-import type { PublicBookingSummary } from '@mazare3/shared';
+import { Calendar, Loader2, MapPin, MessageSquareWarning, RotateCcw, XCircle } from 'lucide-react';
+import type { CancellationPolicyView, DisputeType, PublicBookingSummary } from '@mazare3/shared';
+import { DISPUTE_TYPES } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { BookingApiError, cancelBooking, fetchMyBookings } from '@/lib/api-bookings';
+import { openDispute, requestRefund, OperationsApiError } from '@/lib/api-operations';
 import { getMe } from '@/lib/api-auth';
 import { PriceDisplay } from '@/components/marketplace/price-display';
+
+function policySummaryText(
+  t: ReturnType<typeof useTranslations<'bookings'>>,
+  policy: CancellationPolicyView,
+): string {
+  if (!policy.canCancel) return t('policyPast');
+  if (policy.tier === 'free') return t('policyFree');
+  if (policy.tier === 'partial') {
+    return t('policyPartial', { percent: policy.refundPercent ?? 50 });
+  }
+  if (policy.tier === 'late') return t('policyLate');
+  return t('policyPast');
+}
 
 export function MyBookingsView() {
   const t = useTranslations('bookings');
@@ -22,6 +38,11 @@ export function MyBookingsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [refundReason, setRefundReason] = useState<Record<string, string>>({});
+  const [disputeForm, setDisputeForm] = useState<
+    Record<string, { type: DisputeType; description: string }>
+  >({});
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,13 +62,51 @@ export function MyBookingsView() {
     void load();
   }, [load]);
 
+  async function handleRefundRequest(booking: PublicBookingSummary) {
+    const reason = refundReason[booking.id]?.trim();
+    if (!reason || reason.length < 10) {
+      setError(t('refundReasonMin'));
+      return;
+    }
+    setActionBusy(booking.id);
+    setError(null);
+    try {
+      await requestRefund(booking.id, { reason });
+      await load();
+    } catch (err) {
+      setError(err instanceof OperationsApiError ? err.message : t('refundError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleOpenDispute(booking: PublicBookingSummary) {
+    const form = disputeForm[booking.id];
+    if (!form?.description || form.description.length < 10) {
+      setError(t('disputeDescMin'));
+      return;
+    }
+    setActionBusy(`dispute-${booking.id}`);
+    setError(null);
+    try {
+      await openDispute(booking.id, form);
+      await load();
+    } catch (err) {
+      setError(err instanceof OperationsApiError ? err.message : t('disputeError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function handleCancel(id: string) {
     setCancellingId(id);
     try {
       await cancelBooking(id);
       await load();
     } catch (err) {
-      if (err instanceof BookingApiError && err.code === 'INVALID_STATUS') {
+      if (err instanceof BookingApiError && err.code === 'CANCELLATION_NOT_ALLOWED') {
+        setError(t('cancelNotAllowedPolicy'));
+      } else if (err instanceof BookingApiError && err.code === 'INVALID_STATUS') {
         setError(t('cancelNotAllowed'));
       } else {
         setError(err instanceof Error ? err.message : t('cancelError'));
@@ -57,7 +116,10 @@ export function MyBookingsView() {
     }
   }
 
-  const canCancel = (status: string) => status === 'confirmed' || status === 'pending';
+  const canCancelBooking = (b: PublicBookingSummary) => {
+    if (b.status === 'pending_payment') return true;
+    return b.status === 'confirmed' && b.cancellationPolicy?.canCancel === true;
+  };
 
   if (loading) {
     return (
@@ -96,6 +158,7 @@ export function MyBookingsView() {
         <div className="space-y-4">
           {bookings.map((b) => {
             const title = locale === 'ar' ? b.propertyTitleAr : b.propertyTitleEn;
+            const policy = b.cancellationPolicy;
             return (
               <Card key={b.id} className="glass-panel overflow-hidden rounded-3xl border-primary/12">
                 <div className="gradient-primary h-1" />
@@ -115,12 +178,24 @@ export function MyBookingsView() {
                     </p>
                     <p className="mt-1 font-mono text-xs text-muted">{b.publicCode}</p>
                   </div>
-                  <Badge variant={b.status === 'cancelled' ? 'muted' : 'highlight'}>
-                    {t(`status.${b.status}`)}
-                  </Badge>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={b.status === 'cancelled' ? 'muted' : 'highlight'}>
+                      {t(`status.${b.status}`)}
+                    </Badge>
+                    {b.paymentStatus && (
+                      <Badge variant={b.paymentStatus === 'paid' ? 'highlight' : 'default'}>
+                        {t(`paymentStatus.${b.paymentStatus}`)}
+                      </Badge>
+                    )}
+                    {b.paidInFull && (
+                      <Badge variant="highlight" data-testid="booking-paid-in-full">
+                        {t('paidInFull')}
+                      </Badge>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-end justify-between gap-4">
-                  <div className="space-y-1 text-sm text-muted">
+                  <div className="space-y-2 text-sm text-muted">
                     <p>
                       <span className="font-medium text-navy">{t('date')}:</span> {b.date}
                     </p>
@@ -131,15 +206,54 @@ export function MyBookingsView() {
                     <p>
                       <span className="font-medium text-navy">{t('guests')}:</span> {b.guestsCount}
                     </p>
+                    <p>
+                      <span className="font-medium text-navy">{t('bookingTotal')}:</span>{' '}
+                      <PriceDisplay amount={b.totalAmount} currency={b.currency} locale={locale} />
+                    </p>
+                    {policy && b.status !== 'cancelled' && (
+                      <div className="rounded-xl border border-primary/10 bg-primary-soft/20 p-3 text-xs">
+                        <p className="font-medium text-navy">{t('cancellationPolicy')}</p>
+                        <p className="mt-1">{policySummaryText(t, policy)}</p>
+                        {policy.canCancel &&
+                          policy.refundableAmount != null &&
+                          policy.refundableAmount > 0 && (
+                            <p className="mt-2 text-navy">
+                              {t('expectedRefund')}:{' '}
+                              <PriceDisplay
+                                amount={policy.refundableAmount}
+                                currency={b.currency}
+                                locale={locale}
+                              />
+                            </p>
+                          )}
+                        {policy.canCancel &&
+                          (policy.refundableAmount == null || policy.refundableAmount === 0) && (
+                            <p className="mt-2">{t('noRefundExpected')}</p>
+                          )}
+                        {!policy.canCancel && policy.reason && (
+                          <p className="mt-2 text-danger">{policy.reason}</p>
+                        )}
+                        {b.paidInFull && (
+                          <p className="mt-2 text-muted">{t('refundNote')}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-3">
-                    <PriceDisplay
-                      amount={b.totalAmount}
-                      currency={b.currency}
-                      locale={locale}
-                      large
-                    />
-                    {canCancel(b.status) && (
+                    {b.customerPayableAmount != null && b.status === 'pending_payment' && (
+                      <PriceDisplay
+                        amount={b.customerPayableAmount}
+                        currency={b.currency}
+                        locale={locale}
+                        large
+                      />
+                    )}
+                    {b.status === 'pending_payment' && (
+                      <Button asChild size="sm" className="shadow-soft">
+                        <Link href={`/checkout/${b.id}`}>{t('completePayment')}</Link>
+                      </Button>
+                    )}
+                    {canCancelBooking(b) && (
                       <Button
                         data-testid="booking-cancel"
                         variant="outline"
@@ -155,6 +269,95 @@ export function MyBookingsView() {
                         )}
                         {t('cancel')}
                       </Button>
+                    )}
+                    {b.canRequestRefund && (
+                      <div className="w-full max-w-sm space-y-2 rounded-xl border border-primary/10 p-3">
+                        <p className="text-xs font-medium text-navy">{t('requestRefundTitle')}</p>
+                        {policy?.refundableAmount != null && (
+                          <p className="text-xs text-muted">
+                            {t('expectedRefund')}:{' '}
+                            <PriceDisplay
+                              amount={policy.refundableAmount}
+                              currency={b.currency}
+                              locale={locale}
+                            />
+                          </p>
+                        )}
+                        <Input
+                          data-testid={`refund-reason-${b.id}`}
+                          placeholder={t('refundReasonPlaceholder')}
+                          value={refundReason[b.id] ?? ''}
+                          onChange={(e) =>
+                            setRefundReason((r) => ({ ...r, [b.id]: e.target.value }))
+                          }
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`refund-request-${b.id}`}
+                          disabled={actionBusy === b.id}
+                          className="gap-1"
+                          onClick={() => void handleRefundRequest(b)}
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          {t('requestRefund')}
+                        </Button>
+                      </div>
+                    )}
+                    {b.refundRequest && (
+                      <Badge variant="muted" data-testid={`refund-status-${b.id}`}>
+                        {t(`refundRequestStatus.${b.refundRequest.status}`)}
+                      </Badge>
+                    )}
+                    {b.canOpenDispute && (
+                      <div className="w-full max-w-sm space-y-2 rounded-xl border border-primary/10 p-3">
+                        <p className="text-xs font-medium text-navy">{t('openDisputeTitle')}</p>
+                        <select
+                          data-testid={`dispute-type-${b.id}`}
+                          className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
+                          value={disputeForm[b.id]?.type ?? 'property_mismatch'}
+                          onChange={(e) =>
+                            setDisputeForm((f) => ({
+                              ...f,
+                              [b.id]: {
+                                type: e.target.value as DisputeType,
+                                description: f[b.id]?.description ?? '',
+                              },
+                            }))
+                          }
+                        >
+                          {DISPUTE_TYPES.map((dt) => (
+                            <option key={dt} value={dt}>
+                              {t(`disputeType.${dt}`)}
+                            </option>
+                          ))}
+                        </select>
+                        <Input
+                          data-testid={`dispute-desc-${b.id}`}
+                          placeholder={t('disputeDescPlaceholder')}
+                          value={disputeForm[b.id]?.description ?? ''}
+                          onChange={(e) =>
+                            setDisputeForm((f) => ({
+                              ...f,
+                              [b.id]: {
+                                type: f[b.id]?.type ?? 'property_mismatch',
+                                description: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`dispute-open-${b.id}`}
+                          disabled={actionBusy === `dispute-${b.id}`}
+                          className="gap-1"
+                          onClick={() => void handleOpenDispute(b)}
+                        >
+                          <MessageSquareWarning className="h-4 w-4" />
+                          {t('openDispute')}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </CardContent>

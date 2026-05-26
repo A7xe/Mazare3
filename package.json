@@ -11,13 +11,17 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "db:generate": "pnpm --filter @mazare3/db generate",
+    "db:generate:safe": "node scripts/db-generate-safe.mjs",
+    "db:generate:check": "node scripts/db-generate-safe.mjs --check",
     "db:push": "pnpm --filter @mazare3/db push",
     "db:migrate": "pnpm --filter @mazare3/db migrate",
     "db:seed": "pnpm --filter @mazare3/db seed",
     "db:studio": "pnpm --filter @mazare3/db studio",
     "postinstall": "pnpm db:generate",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:seed": "pnpm db:seed && playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "qa:api": "node scripts/qa-run-api.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

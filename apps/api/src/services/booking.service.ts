@@ -2,14 +2,34 @@ import {
   prisma,
   AvailabilitySlotStatus,
   BookingStatus,
+  PaymentStatus,
+  PayoutStatus,
   PropertyStatus,
+  RefundStatus,
 } from '@mazare3/db';
+import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
 import type { CreateBookingInput } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
-import { toPublicBookingSummary } from '../mappers/public-booking.mapper.js';
+import {
+  toPublicBookingSummary,
+  withBookingOperationsFlags,
+} from '../mappers/public-booking.mapper.js';
+import { BLOCKING_REFUND_REQUEST_STATUSES } from '@mazare3/shared';
+import { canOpenDisputeForBooking } from './dispute.service.js';
+import { toPaymentSummary } from '../mappers/payment.mapper.js';
+import type { CheckoutBookingView } from '@mazare3/shared';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { randomBytes } from 'node:crypto';
+import {
+  calculateBookingFinancials,
+  evaluateCancellationPolicy,
+} from './payment-policy.service.js';
+import { syncPayoutStatusForPayment } from './payment-payout.service.js';
+
+function decimalToNumber(value: { toNumber(): number } | number): number {
+  return typeof value === 'number' ? value : value.toNumber();
+}
 
 function parseDateOnly(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -72,7 +92,7 @@ export async function createBooking(
       const activeOnSlot = await tx.booking.findFirst({
         where: {
           availabilitySlotId: slot.id,
-          status: { in: [BookingStatus.pending, BookingStatus.confirmed] },
+          status: { in: SLOT_HOLDING_STATUSES },
         },
       });
       if (activeOnSlot) {
@@ -97,13 +117,14 @@ export async function createBooking(
           guestsCount: input.guestsCount,
           totalAmount: slot.price,
           currency: 'JOD',
-          status: BookingStatus.confirmed,
+          status: BookingStatus.pending_payment,
         },
         include: {
           property: {
             select: { slug: true, titleAr: true, titleEn: true, approximateAddress: true },
           },
           slot: { select: { date: true, period: true } },
+          payments: { orderBy: { createdAt: 'desc' }, take: 1 },
         },
       });
     });
@@ -146,34 +167,125 @@ export async function createBooking(
   }
 }
 
+const bookingInclude = {
+  property: {
+    select: { slug: true, titleAr: true, titleEn: true, approximateAddress: true },
+  },
+  slot: { select: { date: true, period: true } },
+  payments: { orderBy: { createdAt: 'desc' as const }, take: 1 },
+};
+
+async function enrichBookingSummariesForCustomer(
+  userId: string,
+  rows: Awaited<ReturnType<typeof prisma.booking.findMany<{ include: typeof bookingInclude }>>>,
+) {
+  const ids = rows.map((r) => r.id);
+  const [refunds, disputes] = await Promise.all([
+    prisma.refundRequest.findMany({
+      where: {
+        bookingId: { in: ids },
+        customerId: userId,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.dispute.findMany({
+      where: { bookingId: { in: ids }, openedByUserId: userId },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  const refundByBooking = new Map<string, (typeof refunds)[0]>();
+  for (const r of refunds) {
+    if (!refundByBooking.has(r.bookingId)) refundByBooking.set(r.bookingId, r);
+  }
+  const disputeByBooking = new Map<string, (typeof disputes)[0]>();
+  for (const d of disputes) {
+    if (!disputeByBooking.has(d.bookingId)) disputeByBooking.set(d.bookingId, d);
+  }
+
+  return rows.map((row) => {
+    const summary = toPublicBookingSummary(row);
+    const paid =
+      row.status === BookingStatus.confirmed &&
+      row.payments[0]?.status === PaymentStatus.succeeded;
+    const refundRow = refundByBooking.get(row.id);
+    const hasBlockingRefund =
+      refundRow &&
+      (BLOCKING_REFUND_REQUEST_STATUSES as readonly string[]).includes(refundRow.status);
+    const refundRequest = refundRow
+      ? {
+          id: refundRow.id,
+          bookingId: refundRow.bookingId,
+          status: refundRow.status,
+          policyRefundAmount: decimalToNumber(refundRow.policyRefundAmount),
+          requestedAmount: decimalToNumber(refundRow.requestedAmount),
+          approvedAmount:
+            refundRow.approvedAmount != null
+              ? decimalToNumber(refundRow.approvedAmount)
+              : null,
+          reason: refundRow.reason,
+          adminNote: refundRow.adminNote,
+          createdAt: refundRow.createdAt.toISOString(),
+          updatedAt: refundRow.updatedAt.toISOString(),
+        }
+      : null;
+
+    return withBookingOperationsFlags(summary, {
+      refundRequest,
+      canRequestRefund: paid && !hasBlockingRefund && !refundRow,
+      canOpenDispute:
+        paid &&
+        canOpenDisputeForBooking(row.status, true, row.slot.date) &&
+        !disputeByBooking.get(row.id),
+    });
+  });
+}
+
 export async function listMyBookings(userId: string) {
   const rows = await prisma.booking.findMany({
     where: { userId },
-    include: {
-      property: {
-        select: { slug: true, titleAr: true, titleEn: true, approximateAddress: true },
-      },
-      slot: { select: { date: true, period: true } },
-    },
+    include: bookingInclude,
     orderBy: { createdAt: 'desc' },
   });
 
-  return rows.map(toPublicBookingSummary);
+  return enrichBookingSummariesForCustomer(userId, rows);
 }
 
 export async function getMyBookingById(userId: string, bookingId: string) {
   const row = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
-    include: {
-      property: {
-        select: { slug: true, titleAr: true, titleEn: true, approximateAddress: true },
-      },
-      slot: { select: { date: true, period: true } },
-    },
+    include: bookingInclude,
   });
 
   if (!row) return null;
-  return toPublicBookingSummary(row);
+  const [enriched] = await enrichBookingSummariesForCustomer(userId, [row]);
+  return enriched ?? null;
+}
+
+export async function getCheckoutBooking(
+  userId: string,
+  bookingId: string,
+): Promise<CheckoutBookingView | null> {
+  const row = await prisma.booking.findFirst({
+    where: { id: bookingId, userId },
+    include: bookingInclude,
+  });
+  if (!row) return null;
+
+  const summary = toPublicBookingSummary(row);
+  const latestPayment = row.payments[0];
+  const fin = calculateBookingFinancials(decimalToNumber(row.totalAmount));
+  let paymentSummary = latestPayment ? toPaymentSummary(latestPayment) : null;
+  if (latestPayment?.status === PaymentStatus.succeeded) {
+    await syncPayoutStatusForPayment(latestPayment.id);
+    const synced = await prisma.payment.findUnique({ where: { id: latestPayment.id } });
+    if (synced) paymentSummary = toPaymentSummary(synced);
+  }
+  return {
+    ...summary,
+    payment: paymentSummary,
+    pricing: fin,
+  };
 }
 
 export async function cancelMyBooking(
@@ -197,6 +309,32 @@ export async function cancelMyBooking(
     throw new AppError(400, 'INVALID_STATUS', 'Booking cannot be cancelled');
   }
 
+  let cancellationMeta: Record<string, unknown> | undefined;
+
+  if (booking.status === BookingStatus.confirmed) {
+    const paid = await prisma.payment.findFirst({
+      where: { bookingId: booking.id, status: PaymentStatus.succeeded },
+    });
+    if (!paid) {
+      throw new AppError(400, 'INVALID_STATUS', 'Booking cannot be cancelled');
+    }
+    const payable = decimalToNumber(paid.customerPayableAmount);
+    const policy = evaluateCancellationPolicy(payable, booking.slot.date);
+    if (!policy.canCancel) {
+      throw new AppError(
+        400,
+        'CANCELLATION_NOT_ALLOWED',
+        policy.reason ?? 'Cancellation is not allowed for this booking',
+      );
+    }
+    cancellationMeta = {
+      refundableAmount: policy.refundableAmount,
+      cancellationPenaltyAmount: policy.cancellationPenaltyAmount,
+      refundPercent: policy.refundPercent,
+      tier: policy.tier,
+    };
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     const b = await tx.booking.update({
       where: { id: booking.id },
@@ -209,8 +347,29 @@ export async function cancelMyBooking(
           select: { slug: true, titleAr: true, titleEn: true, approximateAddress: true },
         },
         slot: { select: { date: true, period: true } },
+        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
     });
+
+    if (booking.status === BookingStatus.confirmed && cancellationMeta) {
+      await tx.payment.updateMany({
+        where: { bookingId: booking.id, status: PaymentStatus.succeeded },
+        data: {
+          refundStatus: RefundStatus.pending,
+          cancellationRefundAmount: cancellationMeta.refundableAmount as number,
+          cancellationPenaltyAmount: cancellationMeta.cancellationPenaltyAmount as number,
+          payoutStatus: PayoutStatus.blocked,
+        },
+      });
+    } else {
+      await tx.payment.updateMany({
+        where: {
+          bookingId: booking.id,
+          status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+        },
+        data: { status: PaymentStatus.cancelled },
+      });
+    }
 
     await tx.availabilitySlot.update({
       where: { id: booking.availabilitySlotId },
@@ -220,12 +379,17 @@ export async function cancelMyBooking(
     return b;
   });
 
+  const auditAction =
+    booking.status === BookingStatus.confirmed
+      ? 'booking.cancel_requested'
+      : 'booking.cancelled';
+
   await createAuditLog({
     actorUserId: userId,
-    action: 'booking.cancelled',
+    action: auditAction,
     entityType: 'booking',
     entityId: booking.id,
-    metadata: { publicCode: booking.publicCode },
+    metadata: { publicCode: booking.publicCode, ...cancellationMeta },
     req,
   });
 

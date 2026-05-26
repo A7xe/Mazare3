@@ -7,6 +7,7 @@ import {
   CalendarRange,
   LayoutDashboard,
   Building2,
+  Banknote,
 } from 'lucide-react';
 import { OwnerGuard } from './owner-guard';
 import { cn } from '@/lib/utils';
@@ -15,6 +16,7 @@ const navItems = [
   { href: '/owner', icon: LayoutDashboard, labelKey: 'nav.dashboard' as const },
   { href: '/owner/properties', icon: Building2, labelKey: 'nav.properties' as const },
   { href: '/owner/bookings', icon: CalendarDays, labelKey: 'nav.bookings' as const },
+  { href: '/owner/payouts', icon: Banknote, labelKey: 'nav.payouts' as const },
   { href: '/owner/availability', icon: CalendarRange, labelKey: 'nav.availability' as const },
 ];
 

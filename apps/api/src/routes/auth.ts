@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error-handler.js';
 import { authRateLimiter } from '../middleware/rate-limit.js';
 import { requireAuth, attachUser, type AuthenticatedRequest } from '../middleware/auth.js';
 import { COOKIE_NAME, getCookieOptions, signSession } from '../lib/jwt.js';
+import { prisma } from '@mazare3/db';
 import { loginUser, signupCustomer, getUserById } from '../services/auth.service.js';
 import { createAuditLog } from '../services/audit.service.js';
 
@@ -80,5 +81,28 @@ authRouter.get(
   attachUser,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     res.json({ data: { user: req.user } });
+  }),
+);
+
+authRouter.post(
+  '/refresh-session',
+  requireAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const user = await prisma.user.findUnique({
+      where: { id: req.session!.userId },
+      select: { id: true, email: true, role: true, status: true },
+    });
+    if (!user || user.status !== 'active') {
+      res.status(401).json({ error: 'User not found', code: 'UNAUTHORIZED' });
+      return;
+    }
+    const token = signSession({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
+    res.cookie(COOKIE_NAME, token, getCookieOptions());
+    const full = await getUserById(user.id);
+    res.json({ data: { user: full } });
   }),
 );

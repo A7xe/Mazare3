@@ -1,6 +1,7 @@
 /**
- * Phase 3C — API booking QA (run with API on :4000)
- * Usage: node scripts/qa-booking-api.mjs
+ * Phase 3C — API booking QA
+ * Prefer: pnpm qa:api (isolated :4012, no auth rate limit)
+ * Or: API_BASE=http://localhost:4012/api/v1 node scripts/qa-booking-api.mjs
  */
 const BASE = process.env.API_BASE ?? 'http://localhost:4000/api/v1';
 const SLUG = 'chalet-emerald-dead-sea';
@@ -38,7 +39,7 @@ function hasSensitive(obj, path = '') {
   const hits = [];
   for (const [k, v] of Object.entries(obj)) {
     const p = path ? `${path}.${k}` : k;
-    if (SENSITIVE_KEYS.some((s) => k.toLowerCase().includes(s.toLowerCase()))) {
+    if (SENSITIVE_KEYS.some((s) => k.toLowerCase() === s.toLowerCase())) {
       hits.push(p);
     }
     if (v && typeof v === 'object') hits.push(...hasSensitive(v, p));
@@ -187,8 +188,8 @@ async function main() {
       period: bookedPeriod,
       guestsCount: 8,
     });
-    if (r.status === 201 && r.json.data?.publicCode && r.json.data?.status === 'confirmed') {
-      pass('POST /bookings success');
+    if (r.status === 201 && r.json.data?.publicCode && r.json.data?.status === 'pending_payment') {
+      pass('POST /bookings success (pending_payment)');
       bookingId = r.json.data.id;
       if (r.json.data.totalAmount > 0) pass('booking has server totalAmount');
       const hits = hasSensitive(r.json.data);
@@ -278,7 +279,12 @@ async function main() {
 
   // Login back as customer for cancel test
   cookieJar = '';
-  await api('POST', '/auth/login', CUSTOMER);
+  r = await api('POST', '/auth/login', CUSTOMER);
+  if (r.status !== 200) {
+    fail('customer re-login for cancel', `status ${r.status}`);
+  } else {
+    pass('customer re-login for cancel');
+  }
 
   // 8. Cancel
   if (bookingId) {

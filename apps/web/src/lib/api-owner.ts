@@ -1,12 +1,17 @@
 'use client';
 
 import type {
+  CreateOwnerPropertyInput,
+  OwnerApplicationView,
+  OwnerApplyInput,
   OwnerAvailabilitySlotRow,
   OwnerBookingRow,
   OwnerDashboardSummary,
   OwnerPropertyCard,
   OwnerPropertyDetail,
+  OwnerPropertyEdit,
   PatchOwnerAvailabilityInput,
+  UpdateOwnerPropertyInput,
 } from '@mazare3/shared';
 import { getApiBaseUrl } from './api';
 
@@ -38,6 +43,17 @@ async function ownerFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export async function submitOwnerApplication(input: OwnerApplyInput) {
+  return ownerFetch<{ data: OwnerApplicationView }>('/owner/apply', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchMyOwnerApplication() {
+  return ownerFetch<{ data: OwnerApplicationView | null }>('/owner/application/me');
+}
+
 export async function fetchOwnerSummary() {
   return ownerFetch<{ data: OwnerDashboardSummary }>('/owner/summary');
 }
@@ -63,5 +79,29 @@ export async function patchOwnerAvailabilitySlot(slotId: string, input: PatchOwn
   return ownerFetch<{ data: OwnerAvailabilitySlotRow }>(`/owner/availability/${slotId}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
+  });
+}
+
+export async function createOwnerProperty(input: CreateOwnerPropertyInput) {
+  return ownerFetch<{ data: OwnerPropertyEdit }>('/owner/properties', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchOwnerPropertyEdit(id: string) {
+  return ownerFetch<{ data: OwnerPropertyEdit }>(`/owner/properties/${id}/edit`);
+}
+
+export async function updateOwnerProperty(id: string, input: UpdateOwnerPropertyInput) {
+  return ownerFetch<{ data: OwnerPropertyEdit }>(`/owner/properties/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function submitOwnerPropertyReview(id: string) {
+  return ownerFetch<{ data: OwnerPropertyEdit }>(`/owner/properties/${id}/submit-review`, {
+    method: 'POST',
   });
 }

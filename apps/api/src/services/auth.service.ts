@@ -61,6 +61,9 @@ export async function getUserById(userId: string) {
       locale: true,
       status: true,
       createdAt: true,
+      ownerProfile: {
+        select: { status: true, rejectionReason: true },
+      },
     },
   });
 
@@ -68,5 +71,10 @@ export async function getUserById(userId: string) {
     return null;
   }
 
-  return user;
+  const { ownerProfile, ...rest } = user;
+  return {
+    ...rest,
+    ownerProfileStatus: ownerProfile?.status ?? null,
+    ownerRejectionReason: ownerProfile?.rejectionReason ?? null,
+  };
 }

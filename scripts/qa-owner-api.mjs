@@ -1,6 +1,7 @@
 /**
  * Phase 4A — Owner API QA (run with API on :4000)
- * Usage: node scripts/qa-owner-api.mjs
+ * Prefer: pnpm qa:api
+ * Or: API_BASE=http://localhost:4012/api/v1 node scripts/qa-owner-api.mjs
  */
 const BASE = process.env.API_BASE ?? 'http://localhost:4000/api/v1';
 const OWNER1 = { email: 'owner1@mazare3.jo', password: 'Mazare3Demo2026!' };

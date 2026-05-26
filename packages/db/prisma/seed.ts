@@ -621,7 +621,8 @@ async function main() {
 
   for (const prop of published) {
     const base = Number(prop.basePrice);
-    for (let dayOffset = 0; dayOffset < 45; dayOffset++) {
+    // 90 days so E2E can use +35..+80 window while QA typically uses +1..+30
+    for (let dayOffset = 0; dayOffset < 90; dayOffset++) {
       const date = new Date(today);
       date.setUTCDate(date.getUTCDate() + dayOffset);
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/navigation';
-import { Building2, CalendarRange, Loader2, MapPin } from 'lucide-react';
+import { Building2, CalendarRange, Loader2, MapPin, Plus } from 'lucide-react';
 import type { OwnerPropertyCard } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +54,13 @@ export function OwnerPropertiesView() {
   }
 
   return (
+    <div className="space-y-6">
+      <Button asChild className="shadow-soft" data-testid="owner-add-property">
+        <Link href="/owner/properties/new">
+          <Plus className="h-4 w-4" />
+          {t('addProperty')}
+        </Link>
+      </Button>
     <div className="grid gap-4 md:grid-cols-2">
       {items.map((p) => {
         const title = locale === 'ar' ? p.titleAr : p.titleEn;
@@ -89,9 +96,9 @@ export function OwnerPropertiesView() {
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <Link href={`/owner/properties/${p.id}`}>
+                  <Link href={`/owner/properties/${p.id}/edit`}>
                     <Building2 className="h-4 w-4" />
-                    {t('viewProperty')}
+                    {t('editProperty')}
                   </Link>
                 </Button>
                 <Button size="sm" asChild className="shadow-soft">
@@ -105,6 +112,7 @@ export function OwnerPropertiesView() {
           </Card>
         );
       })}
+    </div>
     </div>
   );
 }

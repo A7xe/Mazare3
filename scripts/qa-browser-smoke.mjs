@@ -13,6 +13,8 @@ const PAGES = [
   '/ar/properties/chalet-emerald-dead-sea',
   '/en/properties/chalet-emerald-dead-sea',
   '/ar/account/bookings',
+  '/en/account/bookings',
+  '/ar/admin/payments',
   '/ar/login',
   '/ar/owner',
   '/en/owner',
@@ -59,6 +61,41 @@ async function main() {
   cookie = (login.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
   const me = await fetch(`${API}/auth/me`, { headers: { Cookie: cookie } });
   console.log(me.status === 200 ? '✅ auth/me with cookie' : `❌ auth/me ${me.status}`);
+
+  const avail = await fetch(
+    `${API}/properties/chalet-emerald-dead-sea/availability?from=2026-06-01&to=2026-06-30`,
+  );
+  const availJson = await avail.json();
+  const slot = availJson.data?.find((s) => s.status === 'available');
+  if (slot) {
+    const book = await fetch(`${API}/bookings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        propertySlug: 'chalet-emerald-dead-sea',
+        date: slot.date,
+        period: slot.period,
+        guestsCount: 4,
+      }),
+    });
+    const bookJson = await book.json();
+    if (book.status === 201 && bookJson.data?.id) {
+      console.log('✅ booking → pending_payment');
+      for (const loc of ['ar', 'en']) {
+        const checkout = await fetch(`${WEB}/${loc}/checkout/${bookJson.data.id}`, {
+          redirect: 'follow',
+        });
+        const html = await checkout.text();
+        const okCheckout =
+          checkout.status === 200 &&
+          !html.includes('exactAddress') &&
+          (html.includes('checkout') || html.includes('Checkout'));
+        console.log(okCheckout ? `✅ /${loc}/checkout page` : `❌ /${loc}/checkout ${checkout.status}`);
+      }
+    } else {
+      console.log(`⚠️  booking for checkout smoke skipped (${book.status})`);
+    }
+  }
 
   console.log(`\nPages: ${ok} ok, ${fail} failed`);
   if (fail) process.exit(1);

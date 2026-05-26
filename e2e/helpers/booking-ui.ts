@@ -9,9 +9,18 @@ export async function gotoProperty(page: Page, locale: 'ar' | 'en', slug: string
 /** Set date, load availability, and pick period + guests. */
 export async function selectBookingSlot(page: Page, slot: AvailableSlot, guests = 6) {
   const dateInput = page.getByTestId('booking-date');
+  const availabilityLoaded = page.waitForResponse(
+    (res) =>
+      res.request().method() === 'GET' &&
+      res.url().includes('/availability') &&
+      res.url().includes(`from=${slot.date}`) &&
+      res.ok(),
+    { timeout: 30_000 },
+  );
   await dateInput.click();
   await dateInput.fill(slot.date);
   await dateInput.blur();
+  await availabilityLoaded;
   await expect(page.getByText(/اختر الفترة|Select period/i)).toBeVisible({ timeout: 10_000 });
   const periodBtn = page.getByTestId(`booking-period-${slot.period}`);
   await expect(periodBtn).toBeVisible({ timeout: 25_000 });

@@ -3,27 +3,43 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { usePathname, useRouter } from '@/i18n/navigation';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { Loader2, ShieldAlert, Clock } from 'lucide-react';
 import { getMe } from '@/lib/api-auth';
 import { Button } from '@/components/ui/button';
 import { Link } from '@/i18n/navigation';
 
-type GuardState = 'loading' | 'allowed' | 'login' | 'forbidden';
+type GuardState = 'loading' | 'allowed' | 'login' | 'forbidden' | 'pending' | 'suspended' | 'rejected';
 
 export function OwnerGuard({ children }: { children: ReactNode }) {
   const t = useTranslations('owner');
   const router = useRouter();
   const pathname = usePathname();
   const [state, setState] = useState<GuardState>('loading');
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const res = await getMe();
         if (cancelled) return;
-        const role = res.data.user.role;
-        if (role === 'owner' || role === 'admin') {
+        const user = res.data.user;
+        if (user.role === 'admin') {
           setState('allowed');
+          return;
+        }
+        if (user.role !== 'owner') {
+          setState('forbidden');
+          return;
+        }
+        const ps = user.ownerProfileStatus;
+        if (ps === 'approved') {
+          setState('allowed');
+        } else if (ps === 'suspended') {
+          setState('suspended');
+        } else if (ps === 'pending') {
+          setState('pending');
+        } else if (ps === 'rejected') {
+          setState('rejected');
         } else {
           setState('forbidden');
         }
@@ -38,7 +54,7 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
     };
   }, [pathname, router]);
 
-  if (state === 'loading') {
+  if (state === 'loading' || state === 'login') {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-muted">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -47,15 +63,25 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
     );
   }
 
-  if (state === 'forbidden') {
+  if (state === 'pending') {
     return (
-      <div
-        data-testid="owner-forbidden"
-        className="mx-auto max-w-lg px-4 py-20 text-center"
-      >
+      <div data-testid="owner-pending" className="mx-auto max-w-lg px-4 py-20 text-center">
+        <Clock className="mx-auto h-12 w-12 text-primary" />
+        <h1 className="mt-4 text-2xl font-bold text-navy">{t('pendingTitle')}</h1>
+        <p className="mt-2 text-muted">{t('pendingHint')}</p>
+        <Button asChild className="mt-6 shadow-soft" variant="outline">
+          <Link href="/become-owner">{t('viewApplication')}</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (state === 'suspended') {
+    return (
+      <div data-testid="owner-suspended" className="mx-auto max-w-lg px-4 py-20 text-center">
         <ShieldAlert className="mx-auto h-12 w-12 text-danger" />
-        <h1 className="mt-4 text-2xl font-bold text-navy">{t('forbiddenTitle')}</h1>
-        <p className="mt-2 text-muted">{t('forbiddenHint')}</p>
+        <h1 className="mt-4 text-2xl font-bold text-navy">{t('suspendedTitle')}</h1>
+        <p className="mt-2 text-muted">{t('suspendedHint')}</p>
         <Button asChild className="mt-6 shadow-soft">
           <Link href="/">{t('backHome')}</Link>
         </Button>
@@ -63,10 +89,27 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
     );
   }
 
-  if (state === 'login') {
+  if (state === 'rejected' || state === 'forbidden') {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center text-muted">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div
+        data-testid="owner-forbidden"
+        className="mx-auto max-w-lg px-4 py-20 text-center"
+      >
+        <ShieldAlert className="mx-auto h-12 w-12 text-danger" />
+        <h1 className="mt-4 text-2xl font-bold text-navy">{t('forbiddenTitle')}</h1>
+        <p className="mt-2 text-muted">
+          {state === 'rejected' ? t('rejectedHint') : t('forbiddenHint')}
+        </p>
+        {state === 'rejected' && (
+          <Button asChild className="mt-6 shadow-soft">
+            <Link href="/become-owner">{t('reapply')}</Link>
+          </Button>
+        )}
+        {state === 'forbidden' && (
+          <Button asChild className="mt-6 shadow-soft">
+            <Link href="/">{t('backHome')}</Link>
+          </Button>
+        )}
       </div>
     );
   }

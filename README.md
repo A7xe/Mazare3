@@ -46,6 +46,8 @@ Local development uses **one file only**: `.env` at the repository root.
 | `DATABASE_URL` | API, Prisma | Secret — never `NEXT_PUBLIC_` |
 | `JWT_SECRET` | API auth | Min 32 chars |
 | `API_PORT`, `CORS_ORIGIN` | API | |
+| `DISABLE_AUTH_RATE_LIMIT` | API | **`true` only for QA/E2E** — never in production |
+| `ENABLE_INTERNAL_QA_ROUTES` | API | **`true` only on QA API** (`pnpm qa:api`) — payment expiry helpers |
 | `NEXT_PUBLIC_API_URL` | Next.js client | Public API base URL only |
 | `NEXT_PUBLIC_APP_URL` | Next.js client | Public app URL |
 
@@ -82,18 +84,41 @@ Public signup always creates **customer** only. Owner accounts are created via s
 | `pnpm test:e2e:ui` | Playwright UI mode |
 | `pnpm db:generate` | Generate Prisma client |
 | `node scripts/qa-owner-api.mjs` | Phase 4A owner API QA |
+| `node scripts/qa-admin-api.mjs` | Phase 5A admin API QA |
+| `node scripts/qa-onboarding-api.mjs` | Phase 5B owner onboarding API QA |
+| `node scripts/qa-payment-api.mjs` | Phase 6A payments API QA |
+| `pnpm qa:api` | Run **all** API QA scripts on isolated `:4012` (recommended) |
 
 ### Prisma `db:generate` on Windows (EPERM)
 
 If `pnpm db:generate` fails with **`EPERM: operation not permitted, rename ... query_engine-windows.dll.node`**, the Prisma query engine file is locked — usually because **`pnpm dev`** (API) or another Node process is still running.
 
-**Fix:**
+**Recommended (preflight, does not kill processes):**
 
-1. Stop dev servers (`Ctrl+C` in the terminal running `pnpm dev`).
+```bash
+pnpm db:generate:check   # report ports / file lock only
+pnpm db:generate:safe    # aborts with guidance if dev ports or DLL are locked
+```
+
+**Manual fix:**
+
+1. Stop dev servers (`Ctrl+C` in the terminal running `pnpm dev` / Playwright).
 2. Close DB Studio or any other tool using the Prisma client.
-3. Run `pnpm db:generate` again.
+3. Run `pnpm db:generate` or `pnpm db:generate:safe` again.
 
 This is a **Windows file lock**, not a schema or migration error. CI/Linux typically does not hit this. You can still run `typecheck`, `build`, and E2E while dev is running; only regenerate the client after stopping Node when EPERM appears.
+
+### Phase 6B.2 — Test isolation (QA vs E2E)
+
+| Runner | API port | Typical slot window (days from today) |
+|--------|----------|----------------------------------------|
+| `pnpm qa:api` | **4012** (isolated) | +1 … +30 |
+| `pnpm test:e2e` | **4010** (Playwright) | +3 … +75 (staggered per test) |
+
+- Seed creates availability for **90 days** so E2E can use a high window (+38 … +75) for the conflict test.
+- E2E conflict test **cancels** the holding booking via API in `finally` so the slot is released.
+- Optional fresh seed before E2E: `pnpm test:e2e:seed` or `E2E_SEED=1 pnpm test:e2e`.
+- Playwright uses **1 retry** locally to absorb transient `ERR_NETWORK_IO_SUSPENDED` (browser/IO suspend).
 
 ## API (v1)
 
@@ -113,6 +138,16 @@ This is a **Windows file lock**, not a schema or migration error. CI/Linux typic
 | GET | `/owner/bookings` | Cookie + `owner` or `admin` |
 | GET | `/owner/availability?propertyId=&from=&to=` | Cookie + `owner` or `admin` |
 | PATCH | `/owner/availability/:slotId` | Cookie + `owner` or `admin` (`status`: available/blocked, `price`) |
+| GET | `/admin/summary` | Cookie + `admin` |
+| GET | `/admin/users`, `/admin/users/:id` | Cookie + `admin` |
+| PATCH | `/admin/users/:id/status` | Cookie + `admin` (`active` / `suspended`) |
+| GET | `/admin/owners` | Cookie + `admin` |
+| GET | `/admin/properties`, `/admin/properties/:id` | Cookie + `admin` |
+| PATCH | `/admin/properties/:id/status` | Cookie + `admin` |
+| GET | `/admin/bookings` | Cookie + `admin` |
+| GET | `/admin/availability?propertyId=&from=&to=` | Cookie + `admin` |
+| PATCH | `/admin/availability/:slotId` | Cookie + `admin` |
+| GET | `/admin/audit-logs` | Cookie + `admin` |
 | POST | `/auth/signup` | Public → `customer` |
 | POST | `/auth/login` | Public |
 | POST | `/auth/logout` | Cookie |
@@ -148,9 +183,98 @@ Owner API QA: `node scripts/qa-owner-api.mjs` (API on `:4000`)
 
 ## Phase 4B — Owner dashboard QA
 
-- Header shows **لوحة المالك / Owner dashboard** when logged in as `owner` or `admin`.
+- Header shows **لوحة المالك / Owner dashboard** when logged in as `owner` only.
 - Light Playwright tests: `pnpm test:e2e` (includes `e2e/owner.spec.ts`).
 - Browser smoke: `node scripts/qa-browser-smoke.mjs` (owner routes; redirects to login when guest).
+
+## Phase 5B — Owner onboarding & property submission
+
+- `/ar/become-owner` — benefits + application form (customers only; admin approval required).
+- Approved owners: `/ar/owner/properties/new`, `/ar/owner/properties/[id]/edit` — draft → submit for review.
+- Admin: `/ar/admin/owners` — approve / reject / suspend owners; `/ar/admin/properties/[id]` — publish / request changes.
+
+API: `POST /owner/apply`, `GET /owner/application/me`, `POST/PATCH /owner/properties`, `POST .../submit-review`, `PATCH /admin/owners/:id/status`.
+
+Run migration after pull: `pnpm db:migrate`
+
+QA: `node scripts/qa-onboarding-api.mjs`
+
+## Phase 5A — Admin dashboard
+
+After seed, log in as **`admin@mazare3.jo`** / `Mazare3Demo2026!` and open:
+
+- `/ar/admin` — platform summary + recent audit logs
+- `/ar/admin/users` — user list, suspend/activate (not last admin)
+- `/ar/admin/owners` — owner profiles (read-only stats)
+- `/ar/admin/properties` — all properties + status changes
+- `/ar/admin/bookings` — all bookings (read-only)
+- `/ar/admin/availability` — view/edit slots (same rules as owner)
+- `/ar/admin/audit-logs` — audit trail (sanitized metadata)
+
+API (cookie + `admin` role only): `GET/PATCH /api/v1/admin/*`
+
+Admin API QA: `node scripts/qa-admin-api.mjs` (API on `:4000` or `:4010`)
+
+Header shows **لوحة الأدمن / Admin dashboard** for `admin` only. Customers and owners receive 403 on admin API routes.
+
+## Phase 6A — Trial payments foundation
+
+- Booking flow: `pending_payment` → `/checkout/[bookingId]` → trial simulate → `confirmed` + paid.
+- No real CliQ/Visa; no card data stored.
+- API: `POST/GET /api/v1/payments/*`, `GET /api/v1/admin/payments`.
+- Simulate endpoints are **disabled in production** (`NODE_ENV=production`).
+
+## Phase 6B — Payment provider readiness
+
+Configuration and placeholders for CliQ / card gateway — **no live API calls**.
+
+- Config: `apps/api/src/config/payment-config.ts`
+- Providers: `test`, `cliq-payment-provider.ts`, `card-gateway-payment-provider.ts` (throw until configured)
+- Public: `GET /api/v1/payments/config`
+- Webhooks: `POST /api/v1/payments/webhooks/:provider` (`test` ack; `cliq`/`card_gateway` → 501)
+- Docs: [docs/payments-provider-readiness.md](docs/payments-provider-readiness.md)
+
+Env: see `.env.example` (`PAYMENT_PROVIDER`, `CLIQ_*`, `CARD_GATEWAY_*`).  
+Simulate requires `PAYMENT_SIMULATE_ENABLED=true` (set automatically by `pnpm qa:api` and E2E).
+
+## Phase 6A.1 — QA hardening & payment expiry
+
+### Auth rate limit vs QA
+
+- Normal `pnpm dev` on `:4000`: login/signup rate limit **enabled** (30 requests / 15 min per IP).
+- `pnpm qa:api`: starts a **separate** API on `:4012` with `DISABLE_AUTH_RATE_LIMIT=true` and `ENABLE_INTERNAL_QA_ROUTES=true`, then runs all QA scripts in order. Your dev server is unchanged.
+- Playwright E2E (`pnpm test:e2e`): API on `:4010` with `DISABLE_AUTH_RATE_LIMIT=true` (see `playwright.config.ts`).
+
+**Never set `DISABLE_AUTH_RATE_LIMIT` in production.**
+
+### Run all API QA (no 429)
+
+```bash
+pnpm qa:api
+```
+
+Or individually against the QA server:
+
+```bash
+# terminal 1
+API_PORT=4012 DISABLE_AUTH_RATE_LIMIT=true ENABLE_INTERNAL_QA_ROUTES=true pnpm dev:api
+
+# terminal 2
+API_BASE=http://localhost:4012/api/v1 node scripts/qa-booking-api.mjs
+# ... owner, admin, onboarding, payment
+```
+
+### Payment expiry cleanup
+
+- Lazy: `expirePaymentIfNeeded` on payment read / intent create.
+- Batch (QA/dev): `POST /api/v1/internal/payments/expire-stale` when `ENABLE_INTERNAL_QA_ROUTES=true`.
+- QA backdate: `POST /api/v1/internal/payments/:id/backdate-expiry` then expire-stale.
+- Idempotent: succeeded/confirmed bookings are never changed.
+
+### Cancellation policy (current)
+
+- `pending_payment`: customer can cancel → slot returns `available`.
+- Paid + `confirmed`: cancel blocked (`PAID_BOOKING_CANCEL`) with localized UI message.
 
 ## Phase 3E — Playwright E2E
 
@@ -170,7 +294,11 @@ Tests live in `e2e/` (booking flow, slot conflict, auth guard, English LTR smoke
 - **Phase 3:** Search filters, availability slots, booking core (no real payment)
 - **Phase 3E:** Playwright E2E booking tests (`pnpm test:e2e`)
 - **Phase 4A:** Owner dashboard + availability management (no payments)
-- **Next:** Payments (Visa/CliQ), owner/admin dashboards
+- **Phase 4B:** Owner header link, E2E smoke, rate-limit skip for Playwright
+- **Phase 6A:** Trial payment foundation (no real gateway)
+- **Phase 6A.1:** `pnpm qa:api`, payment expiry cleanup, QA hardening
+- **Phase 6B:** Provider config, placeholders, webhooks foundation (no live calls)
+- **Next:** Phase 6C — live CliQ / card gateway implementation
 
 See `PROJECT_BRIEF_CURSOR_MAZARE3_JORDAN.md` for the full roadmap.
 # Mazare3

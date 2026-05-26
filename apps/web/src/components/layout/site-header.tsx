@@ -32,7 +32,9 @@ export function SiteHeader() {
     };
   }, []);
 
-  const showOwnerPanel = user?.role === 'owner' || user?.role === 'admin';
+  const showOwnerPanel =
+    user?.role === 'owner' && user.ownerProfileStatus === 'approved';
+  const showAdminPanel = user?.role === 'admin';
 
   async function handleLogout() {
     try {
@@ -51,6 +53,16 @@ export function SiteHeader() {
       className="text-sm font-medium text-muted transition-colors hover:text-primary"
     >
       {tNav('ownerDashboard')}
+    </Link>
+  ) : null;
+
+  const adminNavLink = showAdminPanel ? (
+    <Link
+      href="/admin"
+      data-testid="nav-admin-dashboard"
+      className="text-sm font-medium text-muted transition-colors hover:text-primary"
+    >
+      {tNav('adminDashboard')}
     </Link>
   ) : null;
 
@@ -75,6 +87,7 @@ export function SiteHeader() {
             {tNav('search')}
           </Link>
           {ownerNavLink}
+          {adminNavLink}
           <Link
             href="/become-owner"
             className="text-sm font-medium text-muted transition-colors hover:text-primary"
@@ -97,6 +110,15 @@ export function SiteHeader() {
               className="text-xs font-medium text-primary transition-colors hover:text-navy md:hidden"
             >
               {tNav('ownerDashboard')}
+            </Link>
+          )}
+          {showAdminPanel && (
+            <Link
+              href="/admin"
+              data-testid="nav-admin-dashboard-mobile"
+              className="text-xs font-medium text-primary transition-colors hover:text-navy md:hidden"
+            >
+              {tNav('adminDashboard')}
             </Link>
           )}
           <LocaleSwitcher />

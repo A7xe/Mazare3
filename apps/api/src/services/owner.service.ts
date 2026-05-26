@@ -2,9 +2,12 @@ import {
   prisma,
   AvailabilitySlotStatus,
   BookingStatus,
-  OwnerStatus,
+  PaymentStatus,
   type UserRole,
 } from '@mazare3/db';
+import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
+import { toPaymentDisplayStatus } from '../mappers/payment.mapper.js';
+import { resolveOwnerScope, type OwnerScope } from './owner-access.js';
 import type {
   OwnerAvailabilityQuery,
   OwnerAvailabilitySlotRow,
@@ -16,6 +19,10 @@ import type {
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import {
+  computePayoutAvailableAt,
+  resolvePayoutStatus,
+} from './payment-policy.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 function parseDateOnly(iso: string): Date {
@@ -43,28 +50,6 @@ function addDaysUtc(base: Date, days: number): Date {
   return d;
 }
 
-type OwnerScope = {
-  isAdmin: boolean;
-  ownerProfileId: string | null;
-};
-
-async function resolveOwnerScope(userId: string, role: UserRole): Promise<OwnerScope> {
-  if (role === 'admin') {
-    return { isAdmin: true, ownerProfileId: null };
-  }
-  if (role !== 'owner') {
-    throw new AppError(403, 'FORBIDDEN', 'Owner access only');
-  }
-  const profile = await prisma.ownerProfile.findUnique({
-    where: { userId },
-    select: { id: true, status: true },
-  });
-  if (!profile || profile.status !== OwnerStatus.approved) {
-    throw new AppError(403, 'FORBIDDEN', 'Owner profile not approved');
-  }
-  return { isAdmin: false, ownerProfileId: profile.id };
-}
-
 function propertyWhere(scope: OwnerScope) {
   return scope.isAdmin ? {} : { ownerId: scope.ownerProfileId! };
 }
@@ -84,7 +69,7 @@ async function slotHasActiveBooking(slotId: string): Promise<boolean> {
   const active = await prisma.booking.findFirst({
     where: {
       availabilitySlotId: slotId,
-      status: { in: [BookingStatus.pending, BookingStatus.confirmed] },
+      status: { in: SLOT_HOLDING_STATUSES },
     },
     select: { id: true },
   });
@@ -118,7 +103,7 @@ export async function getOwnerSummary(
     };
   }
 
-  const activeStatuses = [BookingStatus.pending, BookingStatus.confirmed];
+  const activeStatuses = [BookingStatus.confirmed];
 
   const [upcomingBookingsCount, todayBookings, weekBookings, revenueAgg, slotsInRange, bookedSlots] =
     await Promise.all([
@@ -202,7 +187,7 @@ export async function listOwnerProperties(
       _count: {
         select: {
           bookings: {
-            where: { status: { in: [BookingStatus.pending, BookingStatus.confirmed] } },
+            where: { status: { in: SLOT_HOLDING_STATUSES } },
           },
         },
       },
@@ -239,7 +224,7 @@ export async function getOwnerPropertyById(
         select: {
           bookings: {
             where: {
-              status: { in: [BookingStatus.pending, BookingStatus.confirmed] },
+              status: { in: SLOT_HOLDING_STATUSES },
               slot: { date: { gte: todayUtc() } },
             },
           },
@@ -282,24 +267,47 @@ export async function listOwnerBookings(
     include: {
       property: { select: { slug: true, titleAr: true, titleEn: true } },
       slot: { select: { date: true, period: true } },
+      payments: { orderBy: { createdAt: 'desc' }, take: 1 },
     },
   });
 
-  return bookings.map((b) => ({
-    id: b.id,
-    publicCode: b.publicCode,
-    status: b.status,
-    propertyId: b.propertyId,
-    propertySlug: b.property.slug,
-    propertyTitleAr: b.property.titleAr,
-    propertyTitleEn: b.property.titleEn ?? b.property.titleAr,
-    date: formatDateOnly(b.slot.date),
-    period: b.slot.period,
-    guestsCount: b.guestsCount,
-    totalAmount: decimalToNumber(b.totalAmount),
-    currency: b.currency,
-    createdAt: b.createdAt.toISOString(),
-  }));
+  return bookings.map((b) => {
+    const pay = b.payments[0];
+    let payoutAvailableAt = pay?.payoutAvailableAt ?? null;
+    if (pay?.status === PaymentStatus.succeeded && !payoutAvailableAt) {
+      payoutAvailableAt = computePayoutAvailableAt(b.slot.date);
+    }
+    const payoutStatus =
+      pay?.status === PaymentStatus.succeeded
+        ? resolvePayoutStatus({
+            paymentSucceeded: true,
+            bookingCancelled: b.status === BookingStatus.cancelled,
+            refundStatus: pay.refundStatus,
+            payoutAvailableAt,
+          })
+        : pay?.payoutStatus ?? null;
+
+    return {
+      id: b.id,
+      publicCode: b.publicCode,
+      status: b.status,
+      propertyId: b.propertyId,
+      propertySlug: b.property.slug,
+      propertyTitleAr: b.property.titleAr,
+      propertyTitleEn: b.property.titleEn ?? b.property.titleAr,
+      date: formatDateOnly(b.slot.date),
+      period: b.slot.period,
+      guestsCount: b.guestsCount,
+      totalAmount: decimalToNumber(b.totalAmount),
+      currency: b.currency,
+      createdAt: b.createdAt.toISOString(),
+      paymentStatus: toPaymentDisplayStatus(pay, b.status),
+      customerPayableAmount: pay ? decimalToNumber(pay.customerPayableAmount) : null,
+      ownerNetPayoutAmount: pay ? decimalToNumber(pay.ownerNetPayoutAmount) : null,
+      payoutStatus,
+      payoutAvailableAt: payoutAvailableAt?.toISOString() ?? null,
+    };
+  });
 }
 
 export async function listOwnerAvailability(
@@ -321,7 +329,7 @@ export async function listOwnerAvailability(
     orderBy: [{ date: 'asc' }, { period: 'asc' }],
     include: {
       bookings: {
-        where: { status: { in: [BookingStatus.pending, BookingStatus.confirmed] } },
+        where: { status: { in: SLOT_HOLDING_STATUSES } },
         select: { id: true },
         take: 1,
       },
@@ -354,7 +362,7 @@ export async function patchOwnerAvailabilitySlot(
     include: {
       property: { select: { id: true, ownerId: true } },
       bookings: {
-        where: { status: { in: [BookingStatus.pending, BookingStatus.confirmed] } },
+        where: { status: { in: SLOT_HOLDING_STATUSES } },
         select: { id: true },
         take: 1,
       },

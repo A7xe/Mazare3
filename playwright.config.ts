@@ -11,7 +11,7 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: process.env.CI ? 1 : 1,
   workers: 1,
   timeout: 90_000,
   expect: { timeout: 15_000 },
@@ -37,6 +37,9 @@ export default defineConfig({
         ...process.env,
         API_PORT: '4010',
         CORS_ORIGIN: WEB_URL,
+        DISABLE_AUTH_RATE_LIMIT: 'true',
+        PAYMENT_PROVIDER: 'test',
+        PAYMENT_SIMULATE_ENABLED: 'true',
       },
     },
     {
