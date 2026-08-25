@@ -1,47 +1,71 @@
 import type {
+  MarketplaceDiscoveryResponse,
+  PropertySearchQuery,
+  PropertySearchResponse,
   PublicAvailabilitySlot,
   PublicPropertyDetail,
   PublicPropertySummary,
-  PropertySearchQuery,
 } from '@mazare3/shared';
+import { serializePropertySearchQuery } from '@mazare3/shared';
 import { apiFetch, getApiBaseUrl } from './api';
 
-export type PropertySearchParams = Partial<{
-  q: string;
-  area: string;
-  minPrice: number;
-  maxPrice: number;
-  guests: number;
-  propertyType: PropertySearchQuery['propertyType'];
-  amenities: string[];
-  hasPool: boolean;
-  verifiedOnly: boolean;
-  sort: PropertySearchQuery['sort'];
-}>;
+export type PropertySearchParams = Partial<PropertySearchQuery>;
 
-function buildQueryString(params: PropertySearchParams): string {
-  const sp = new URLSearchParams();
-  if (params.q) sp.set('q', params.q);
-  if (params.area) sp.set('area', params.area);
-  if (params.minPrice != null) sp.set('minPrice', String(params.minPrice));
-  if (params.maxPrice != null) sp.set('maxPrice', String(params.maxPrice));
-  if (params.guests != null) sp.set('guests', String(params.guests));
-  if (params.propertyType) sp.set('propertyType', params.propertyType);
-  if (params.amenities?.length) sp.set('amenities', params.amenities.join(','));
-  if (params.hasPool === true) sp.set('hasPool', 'true');
-  if (params.hasPool === false) sp.set('hasPool', 'false');
-  if (params.verifiedOnly) sp.set('verifiedOnly', 'true');
-  if (params.sort) sp.set('sort', params.sort);
-  const qs = sp.toString();
-  return qs ? `?${qs}` : '';
+function qs(params: PropertySearchParams): string {
+  const s = serializePropertySearchQuery(params);
+  return s ? `?${s}` : '';
 }
 
 export async function fetchProperties(
   params: PropertySearchParams = {},
 ): Promise<PublicPropertySummary[]> {
-  const res = await apiFetch<{ data: PublicPropertySummary[] }>(
-    `/properties${buildQueryString(params)}`,
-    { next: { revalidate: 30 } },
+  const res = await fetchPropertySearch(params);
+  return res.data;
+}
+
+export async function fetchPropertySearch(
+  params: PropertySearchParams = {},
+  options?: { signal?: AbortSignal },
+): Promise<PropertySearchResponse> {
+  return apiFetch<PropertySearchResponse>(`/properties${qs(params)}`, {
+    cache: 'no-store',
+    signal: options?.signal,
+  });
+}
+
+export type PropertyTitleSuggestion = {
+  id: string;
+  slug: string;
+  titleAr: string;
+  titleEn: string | null;
+  type: string;
+  city: string;
+};
+
+/** Lightweight Explore autocomplete — no Recommended ranking. */
+export async function fetchPropertySuggestions(
+  q: string,
+  options?: { limit?: number; signal?: AbortSignal },
+): Promise<PropertyTitleSuggestion[]> {
+  const sp = new URLSearchParams();
+  sp.set('q', q);
+  if (options?.limit) sp.set('limit', String(options.limit));
+  const res = await apiFetch<{ data: PropertyTitleSuggestion[] }>(
+    `/properties/suggestions?${sp.toString()}`,
+    { cache: 'no-store', signal: options?.signal },
+  );
+  return res.data;
+}
+
+export async function fetchDiscovery(
+  params: Pick<
+    PropertySearchParams,
+    'city' | 'area' | 'date' | 'period' | 'guests' | 'lat' | 'lng'
+  > = {},
+): Promise<MarketplaceDiscoveryResponse> {
+  const res = await apiFetch<{ data: MarketplaceDiscoveryResponse }>(
+    `/properties/discovery${qs(params)}`,
+    { cache: 'no-store' },
   );
   return res.data;
 }
@@ -53,7 +77,7 @@ export async function fetchPropertyBySlug(slug: string): Promise<{
   const res = await apiFetch<{
     data: PublicPropertyDetail;
     similar: PublicPropertySummary[];
-  }>(`/properties/${slug}`, { next: { revalidate: 30 } });
+  }>(`/properties/${slug}`, { cache: 'no-store' });
   return { property: res.data, similar: res.similar ?? [] };
 }
 

@@ -19,6 +19,16 @@ export async function syncPayoutStatusForPayment(paymentId: string): Promise<Pay
     return PayoutStatus.not_ready;
   }
 
+  if (payment.purpose === 'deposit' || payment.booking.paymentState !== 'fully_paid') {
+    if (payment.payoutStatus !== PayoutStatus.not_ready || payment.payoutAvailableAt) {
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { payoutStatus: PayoutStatus.not_ready, payoutAvailableAt: null },
+      });
+    }
+    return PayoutStatus.not_ready;
+  }
+
   let payoutAvailableAt = payment.payoutAvailableAt;
   if (payment.status === PaymentStatus.succeeded && !payoutAvailableAt) {
     payoutAvailableAt = computePayoutAvailableAt(payment.booking.slot.date);
@@ -32,6 +42,7 @@ export async function syncPayoutStatusForPayment(paymentId: string): Promise<Pay
 
   let next = resolvePayoutStatus({
     paymentSucceeded: payment.status === PaymentStatus.succeeded,
+    bookingFullyPaid: payment.booking.paymentState === 'fully_paid',
     bookingCancelled: payment.booking.status === BookingStatus.cancelled,
     refundStatus: payment.refundStatus,
     payoutAvailableAt,

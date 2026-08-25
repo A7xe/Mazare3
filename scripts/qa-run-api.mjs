@@ -23,7 +23,15 @@ const SCRIPTS = [
   'qa-admin-api.mjs',
   'qa-onboarding-api.mjs',
   'qa-payment-api.mjs',
+  'qa-deposit-api.mjs',
   'qa-operations-api.mjs',
+  'qa-availability-math.mjs',
+  'qa-availability-api.mjs',
+  'qa-search-math.mjs',
+  'qa-search-api.mjs',
+  'qa-partner-crypto.mjs',
+  'qa-partner-storage.mjs',
+  'qa-partner-onboarding-api.mjs',
 ];
 
 const USE_SHELL = process.platform === 'win32';
@@ -54,9 +62,10 @@ function startQaApiServer() {
         API_PORT: QA_PORT,
         DISABLE_AUTH_RATE_LIMIT: 'true',
         ENABLE_INTERNAL_QA_ROUTES: 'true',
-        NODE_ENV: 'development',
+        APP_ENV: 'local',
         PAYMENT_PROVIDER: 'test',
         PAYMENT_SIMULATE_ENABLED: 'true',
+        PRISMA_DISABLE_QUERY_LOG: 'true',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -105,8 +114,10 @@ async function main() {
 
   const server = startQaApiServer();
   let serverExited = false;
-  server.on('exit', () => {
+  let serverExitCode = null;
+  server.on('exit', (code, signal) => {
     serverExited = true;
+    serverExitCode = code ?? signal;
   });
 
   server.stdout?.on('data', (chunk) => process.stdout.write(`[qa-api] ${chunk}`));
@@ -135,8 +146,29 @@ async function main() {
     console.log('✅ QA API healthy\n');
 
     for (const script of SCRIPTS) {
+      if (serverExited) {
+        throw new Error(
+          `QA API process exited unexpectedly before ${script} (exit=${serverExitCode})`,
+        );
+      }
       console.log(`\n── ${script} ──\n`);
-      await runScript(script);
+      try {
+        await runScript(script);
+      } catch (first) {
+        if (serverExited) {
+          throw new Error(
+            `QA API process crashed during ${script} (exit=${serverExitCode}): ${
+              first instanceof Error ? first.message : first
+            }`,
+          );
+        }
+        console.log(`\n↻ retry ${script} once after: ${first instanceof Error ? first.message : first}\n`);
+        await new Promise((r) => setTimeout(r, 2000));
+        if (serverExited) {
+          throw new Error(`QA API process crashed before retry of ${script} (exit=${serverExitCode})`);
+        }
+        await runScript(script);
+      }
     }
 
     console.log('\n✅ All API QA scripts passed\n');

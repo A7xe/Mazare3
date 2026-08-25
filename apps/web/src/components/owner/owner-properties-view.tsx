@@ -61,7 +61,7 @@ export function OwnerPropertiesView() {
           {t('addProperty')}
         </Link>
       </Button>
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid gap-4 md:grid-cols-2" data-testid="owner-properties-list">
       {items.map((p) => {
         const title = locale === 'ar' ? p.titleAr : p.titleEn;
         return (
@@ -96,7 +96,7 @@ export function OwnerPropertiesView() {
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <Link href={`/owner/properties/${p.id}/edit`}>
+                  <Link href={`/owner/properties/${p.id}/edit`} data-testid="owner-edit-property">
                     <Building2 className="h-4 w-4" />
                     {t('editProperty')}
                   </Link>

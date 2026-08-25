@@ -6,6 +6,12 @@ export const ownerAvailabilityQuerySchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+export const ownerRejectBookingSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type OwnerRejectBookingInput = z.infer<typeof ownerRejectBookingSchema>;
+
 export const patchOwnerAvailabilitySchema = z
   .object({
     status: z.enum(['available', 'blocked']).optional(),

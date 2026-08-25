@@ -15,11 +15,22 @@ export function getApproxLocation(
 }
 
 export function formatPrice(amount: number, currency: string, locale: Locale): string {
-  return new Intl.NumberFormat(locale === 'ar' ? 'ar-JO' : 'en-JO', {
+  const intlLocale = locale === 'ar' ? 'ar-JO' : 'en-JO';
+  const formatter = new Intl.NumberFormat(intlLocale, {
     style: 'currency',
     currency,
     maximumFractionDigits: 0,
-  }).format(amount);
+    numberingSystem: 'latn',
+  });
+
+  if (locale === 'ar' && currency.toUpperCase() === 'JOD') {
+    return formatter
+      .formatToParts(amount)
+      .map((part) => (part.type === 'currency' ? 'د.أ' : part.value))
+      .join('');
+  }
+
+  return formatter.format(amount);
 }
 
 export function shouldShowVerificationBadge(status: VerificationStatus): boolean {

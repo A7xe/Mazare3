@@ -1,6 +1,11 @@
 # Payment provider readiness (Phase 6B)
 
-Mazare3 uses a **provider abstraction** so CliQ and card gateways can be wired in Phase 6C without rewriting booking or checkout flows.
+Mazare3 uses a **provider abstraction** so CliQ and card gateways can be wired without rewriting booking or checkout flows.
+
+**Phase 6D docs (decision + staging):**
+
+- [payment-provider-decision.md](./payment-provider-decision.md) — CliQ vs card, webhooks, refunds/payouts, readiness
+- [staging-payment-checklist.md](./staging-payment-checklist.md) — env, URLs, sandbox tests, incident playbooks
 
 ## Test provider vs live providers
 
@@ -27,7 +32,7 @@ Obtain from your bank / CliQ acquirer:
 
 ### Card gateway
 
-Obtain from PSP (e.g. HyperPay, Stripe, local acquirer):
+Obtain from a Jordan PSP when selected (e.g. HyperPay, MEPS, Tap — **not Stripe**):
 
 - `CARD_GATEWAY_PROVIDER` — PSP identifier
 - `CARD_GATEWAY_API_BASE_URL`

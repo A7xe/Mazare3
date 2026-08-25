@@ -27,6 +27,8 @@ test.describe('Admin dashboard E2E', () => {
   test('header shows admin dashboard link when logged in as admin', async ({ page }) => {
     await applySessionToPage(page, ADMIN_EMAIL, ADMIN_PASSWORD);
     await page.goto('/ar');
+    await expect(page.getByTestId('marketplace-bottom-nav')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('nav-account').click();
     await expect(page.getByTestId('nav-admin-dashboard').first()).toBeVisible({
       timeout: 20_000,
     });

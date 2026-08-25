@@ -99,6 +99,13 @@ async function main() {
     if (detail.status === 200) pass('admin GET /admin/properties/:id');
     else fail('admin GET /admin/properties/:id', `status ${detail.status}`);
 
+    const health = await api('GET', `/admin/properties/${prop.id}/availability-health`);
+    if (health.status === 200 && health.json.data && 'futureBookableCount' in health.json.data) {
+      pass('admin GET availability-health');
+    } else {
+      fail('admin GET availability-health', `status ${health.status}`);
+    }
+
     const from = todayPlus(1);
     const to = todayPlus(10);
     const avail = await api(

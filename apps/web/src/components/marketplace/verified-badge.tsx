@@ -6,11 +6,13 @@ import { shouldShowVerificationBadge } from '@/lib/property-helpers';
 
 interface VerifiedBadgeProps {
   status: VerificationStatus;
+  hidden?: boolean;
 }
 
-export function VerifiedBadge({ status }: VerifiedBadgeProps) {
+export function VerifiedBadge({ status, hidden }: VerifiedBadgeProps) {
   const t = useTranslations('verification');
 
+  if (hidden) return null;
   if (!shouldShowVerificationBadge(status)) {
     return null;
   }

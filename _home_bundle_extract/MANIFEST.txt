@@ -1,0 +1,10 @@
+CURSOR_APPLY_PROMPT.md
+apps/web/src/app/[locale]/page.tsx
+apps/web/src/components/home/home-category-bar.tsx
+apps/web/src/components/home/home-hero.tsx
+apps/web/src/components/home/home-property-card.tsx
+apps/web/src/components/home/home-search-sidebar.tsx
+apps/web/src/components/home/home-trust-strip.tsx
+apps/web/src/components/home/home-why.tsx
+apps/web/src/components/marketplace/discovery-rail.tsx
+apps/web/src/components/marketplace/marketplace-search-form.tsx

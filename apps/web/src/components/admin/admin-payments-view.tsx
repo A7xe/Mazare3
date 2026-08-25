@@ -6,8 +6,11 @@ import { Loader2 } from 'lucide-react';
 import type { AdminPaymentRow } from '@mazare3/shared';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { fetchAdminPayments } from '@/lib/api-admin';
+import { Button } from '@/components/ui/button';
+import { fetchAdminPayments, reconcileAdminPayTabsPayment } from '@/lib/api-admin';
 import { PriceDisplay } from '@/components/marketplace/price-display';
+
+const RECONCILABLE = new Set(['pending', 'initiated', 'expired']);
 
 export function AdminPaymentsView() {
   const t = useTranslations('admin');
@@ -15,6 +18,8 @@ export function AdminPaymentsView() {
   const [rows, setRows] = useState<AdminPaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -28,6 +33,21 @@ export function AdminPaymentsView() {
       }
     })();
   }, [t]);
+
+  async function handleReconcile(id: string) {
+    setActingId(id);
+    setNotice(null);
+    try {
+      const res = await reconcileAdminPayTabsPayment(id);
+      setNotice(`${t('reconcileDone')}: ${res.data.result}`);
+      const list = await fetchAdminPayments();
+      setRows(list.data);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : t('loadError'));
+    } finally {
+      setActingId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -53,6 +73,11 @@ export function AdminPaymentsView() {
 
   return (
     <div data-testid="admin-payments" className="overflow-x-auto rounded-2xl border border-primary/12 bg-surface shadow-card">
+      {notice && (
+        <p className="border-b border-border px-4 py-2 text-sm text-navy" data-testid="admin-payment-reconcile-notice">
+          {notice}
+        </p>
+      )}
       <table className="w-full min-w-[1200px] text-start text-sm">
         <thead>
           <tr className="border-b border-border bg-primary-soft/40 text-muted">
@@ -68,6 +93,7 @@ export function AdminPaymentsView() {
             <th className="px-4 py-3">{t('colRefund')}</th>
             <th className="px-4 py-3">{t('colStatus')}</th>
             <th className="px-4 py-3">{t('colCreated')}</th>
+            <th className="px-4 py-3">{t('colActions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -122,6 +148,22 @@ export function AdminPaymentsView() {
               </td>
               <td className="px-4 py-3 text-muted">
                 {new Date(p.createdAt).toLocaleString(locale === 'ar' ? 'ar-JO' : 'en-GB')}
+              </td>
+              <td className="px-4 py-3">
+                {p.provider === 'paytabs' && RECONCILABLE.has(p.status) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid={`admin-reconcile-${p.id}`}
+                    disabled={actingId === p.id}
+                    onClick={() => void handleReconcile(p.id)}
+                  >
+                    {actingId === p.id ? t('reconcileChecking') : t('checkWithPaytabs')}
+                  </Button>
+                ) : (
+                  '—'
+                )}
               </td>
             </tr>
           ))}

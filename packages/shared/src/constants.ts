@@ -13,6 +13,7 @@ export type AvailabilityPeriod = (typeof AVAILABILITY_PERIODS)[number];
 
 export const BOOKING_STATUSES = [
   'pending',
+  'pending_owner_approval',
   'pending_payment',
   'confirmed',
   'cancelled',
@@ -20,9 +21,22 @@ export const BOOKING_STATUSES = [
 ] as const;
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
+export const BOOKING_MODES = ['instant', 'owner_approval'] as const;
+export type BookingMode = (typeof BOOKING_MODES)[number];
+
+export const OWNER_DECISION_STATES = [
+  'not_applicable',
+  'pending',
+  'accepted',
+  'rejected',
+  'expired',
+] as const;
+export type OwnerDecisionState = (typeof OWNER_DECISION_STATES)[number];
+
 /** Booking statuses that hold a slot (not available for others). */
 export const SLOT_HOLDING_BOOKING_STATUSES = [
   'pending_payment',
+  'pending_owner_approval',
   'pending',
   'confirmed',
 ] as const;
@@ -41,7 +55,28 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export const PAYMENT_METHODS = ['card', 'cliq', 'manual_test'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-export const PAYMENT_PROVIDERS = ['test', 'cliq', 'card_gateway'] as const;
+export const PAYMENT_PURPOSES = ['full', 'deposit', 'balance'] as const;
+export type PaymentPurpose = (typeof PAYMENT_PURPOSES)[number];
+
+export const PAYMENT_COLLECTION_MODES = ['full', 'deposit_balance'] as const;
+export type PaymentCollectionMode = (typeof PAYMENT_COLLECTION_MODES)[number];
+
+export const BOOKING_PAYMENT_STATES = [
+  'unpaid',
+  'deposit_pending',
+  'deposit_paid',
+  'balance_pending',
+  'fully_paid',
+  'balance_overdue',
+  'partially_refunded',
+  'refunded',
+] as const;
+export type BookingPaymentState = (typeof BOOKING_PAYMENT_STATES)[number];
+
+/** Test fixture default only — not a commercial deposit rate. */
+export const TEST_DEFAULT_DEPOSIT_PERCENT = 30;
+
+export const PAYMENT_PROVIDERS = ['test', 'cliq', 'card_gateway', 'paytabs'] as const;
 export type PaymentProvider = (typeof PAYMENT_PROVIDERS)[number];
 
 export const ACTIVE_PAYMENT_STATUSES = ['initiated', 'pending'] as const;
@@ -78,6 +113,23 @@ export type DisputeStatus = (typeof DISPUTE_STATUSES)[number];
 
 export const BLOCKING_DISPUTE_STATUSES = ['open', 'under_review'] as const;
 
+export const SUPPORT_TICKET_SOURCES = ['booking', 'general'] as const;
+export type SupportTicketSource = (typeof SUPPORT_TICKET_SOURCES)[number];
+
+export const SUPPORT_TICKET_STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
+export type SupportTicketStatus = (typeof SUPPORT_TICKET_STATUSES)[number];
+
+export const OPEN_SUPPORT_TICKET_STATUSES = ['open', 'in_progress'] as const;
+
+export const SUPPORT_TICKET_CATEGORIES = [
+  'payment',
+  'booking_status',
+  'property_arrival',
+  'cancellation_refund',
+  'other',
+] as const;
+export type SupportTicketCategory = (typeof SUPPORT_TICKET_CATEGORIES)[number];
+
 export const OWNER_PAYOUT_RECORD_STATUSES = [
   'pending',
   'eligible',
@@ -91,10 +143,24 @@ export const PROPERTY_SORT_OPTIONS = [
   'recommended',
   'price_asc',
   'price_desc',
+  'capacity_desc',
   'rating_desc',
   'newest',
+  'distance_asc',
 ] as const;
 export type PropertySortOption = (typeof PROPERTY_SORT_OPTIONS)[number];
+
+/** Public marketplace sort controls. `rating_desc` remains in the API for compatibility. */
+export const PUBLIC_PROPERTY_SORT_OPTIONS = [
+  'recommended',
+  'price_asc',
+  'price_desc',
+  'capacity_desc',
+  'newest',
+] as const;
+
+export const SEARCH_DEFAULT_PAGE_SIZE = 24;
+export const SEARCH_MAX_PAGE_SIZE = 48;
 
 export const PROPERTY_TYPES = [
   'farm',
@@ -133,3 +199,17 @@ export const JORDAN_CITIES = [
 
 /** Default payment hold window (minutes) for pending_payment bookings. */
 export const PAYMENT_HOLD_MINUTES = 30;
+
+export const CATALOG_PACKAGE_STATUSES = ['active', 'inactive'] as const;
+export type CatalogPackageStatus = (typeof CATALOG_PACKAGE_STATUSES)[number];
+
+export const SPONSORED_ORDER_STATUSES = [
+  'pending_review',
+  'approved_pending_payment',
+  'paid',
+  'active',
+  'completed',
+  'rejected',
+  'cancelled',
+] as const;
+export type SponsoredOrderStatus = (typeof SPONSORED_ORDER_STATUSES)[number];

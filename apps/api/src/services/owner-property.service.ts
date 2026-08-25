@@ -1,14 +1,18 @@
 import { prisma, PropertyStatus, type PropertyType } from '@mazare3/db';
-import type {
-  CreateOwnerPropertyInput,
-  OwnerPropertyEdit,
-  UpdateOwnerPropertyInput,
+import {
+  OWNER_LOCATION_PATCH_KEYS,
+  type CreateOwnerPropertyInput,
+  type OwnerPropertyEdit,
+  type UpdateOwnerPropertyInput,
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { uniquePropertySlug } from '../lib/slug.js';
 import { createAuditLog } from './audit.service.js';
+import { notifyPropertySubmittedForReview } from './notification.service.js';
+import { assertMediaForSubmitReview } from '../lib/property-media-guards.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveOwnerScope } from './owner-access.js';
+import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
 
 const OWNER_EDITABLE_STATUSES: PropertyStatus[] = [
   PropertyStatus.draft,
@@ -36,6 +40,19 @@ async function resolveAmenityIds(keys: string[]): Promise<string[]> {
 function mapPropertyEdit(
   p: Awaited<ReturnType<typeof loadPropertyForEdit>>,
 ): OwnerPropertyEdit {
+  const media = p.media.map((m) => ({
+    id: m.id,
+    propertyId: m.propertyId,
+    url: resolvePropertyMediaPublicUrl({ url: m.url, storageKey: m.storageKey }),
+    storageKey: m.storageKey ?? null,
+    type: m.type === 'image' ? 'image' : (m.type as any),
+    altAr: m.altAr ?? null,
+    altEn: m.altEn ?? null,
+    sortOrder: m.sortOrder,
+    isCover: m.sortOrder === 0,
+    createdAt: m.createdAt.toISOString(),
+  }));
+
   return {
     id: p.id,
     slug: p.slug,
@@ -48,6 +65,12 @@ function mapPropertyEdit(
     area: p.area,
     approximateAddress: p.approximateAddress,
     exactAddress: p.exactAddress,
+    latitudeApprox: p.latitudeApprox,
+    longitudeApprox: p.longitudeApprox,
+    latitudeExact: p.latitudeExact,
+    longitudeExact: p.longitudeExact,
+    arrivalInstructionsAr: p.arrivalInstructionsAr,
+    arrivalInstructionsEn: p.arrivalInstructionsEn,
     basePrice: decimalToNumber(p.basePrice),
     currency: p.currency,
     capacity: p.capacity,
@@ -55,9 +78,11 @@ function mapPropertyEdit(
     allowsOvernight: p.allowsOvernight,
     allowsFamilies: p.allowsFamilies,
     allowsYouth: p.allowsYouth,
+    instantBookingEnabled: p.instantBookingEnabled,
     poolsCount: p.poolsCount,
     amenityKeys: p.amenities.map((a) => a.amenity.key),
-    imageUrls: p.media.map((m) => m.url),
+    imageUrls: media.map((m) => m.url),
+    media,
     rules: p.rules.map((r) => ({ titleAr: r.titleAr, titleEn: r.titleEn })),
   };
 }
@@ -115,24 +140,35 @@ export async function createOwnerProperty(
       area: input.area.trim(),
       approximateAddress: input.approximateAddress.trim(),
       exactAddress: input.exactAddress.trim(),
+      latitudeApprox: input.latitudeApprox ?? null,
+      longitudeApprox: input.longitudeApprox ?? null,
+      latitudeExact: input.latitudeExact ?? null,
+      longitudeExact: input.longitudeExact ?? null,
+      arrivalInstructionsAr: input.arrivalInstructionsAr?.trim() || null,
+      arrivalInstructionsEn: input.arrivalInstructionsEn?.trim() || null,
       capacity: input.capacity,
       basePrice: input.basePrice,
       allowsOvernight: input.allowsOvernight ?? true,
       allowsFamilies: input.allowsFamilies ?? true,
       allowsYouth: input.allowsYouth ?? false,
+      instantBookingEnabled: input.instantBookingEnabled ?? true,
       poolsCount,
       hasIndoorPool: (input.amenityKeys ?? []).includes('indoor_pool'),
       hasHeatedPool: (input.amenityKeys ?? []).includes('heated_pool'),
       hasFootballField: (input.amenityKeys ?? []).includes('football'),
       status: PropertyStatus.draft,
-      media: {
-        create: input.imageUrls.map((url, i) => ({
-          url,
-          sortOrder: i,
-          altAr: input.titleAr,
-          altEn: input.titleEn ?? input.titleAr,
-        })),
-      },
+      ...(input.imageUrls.length
+        ? {
+            media: {
+              create: input.imageUrls.map((url, i) => ({
+                url,
+                sortOrder: i,
+                altAr: input.titleAr,
+                altEn: input.titleEn ?? input.titleAr,
+              })),
+            },
+          }
+        : {}),
       amenities: {
         create: amenityIds.map((amenityId) => ({ amenityId })),
       },
@@ -187,7 +223,34 @@ export async function updateOwnerProperty(
   }
 
   const existing = await loadPropertyForEdit(propertyId, scope.ownerProfileId!);
-  assertOwnerCanEditStatus(existing.status);
+  const definedKeys = (Object.keys(input) as (keyof UpdateOwnerPropertyInput)[]).filter(
+    (key) => input[key] !== undefined,
+  );
+  const bookingModeOnly =
+    definedKeys.length === 1 && definedKeys[0] === 'instantBookingEnabled';
+  const locationOnly =
+    definedKeys.length > 0 &&
+    definedKeys.every((key) =>
+      (OWNER_LOCATION_PATCH_KEYS as readonly string[]).includes(key),
+    );
+  if (bookingModeOnly) {
+    await prisma.property.update({
+      where: { id: propertyId },
+      data: { instantBookingEnabled: input.instantBookingEnabled },
+    });
+    await createAuditLog({
+      actorUserId: userId,
+      action: 'property.booking_mode_updated',
+      entityType: 'property',
+      entityId: propertyId,
+      metadata: { instantBookingEnabled: input.instantBookingEnabled },
+      req,
+    });
+    return mapPropertyEdit(await loadPropertyForEdit(propertyId, scope.ownerProfileId!));
+  }
+  if (!locationOnly) {
+    assertOwnerCanEditStatus(existing.status);
+  }
 
   const amenityIds =
     input.amenityKeys !== undefined ? await resolveAmenityIds(input.amenityKeys) : undefined;
@@ -212,11 +275,24 @@ export async function updateOwnerProperty(
           approximateAddress: input.approximateAddress.trim(),
         }),
         ...(input.exactAddress !== undefined && { exactAddress: input.exactAddress.trim() }),
+        ...(input.latitudeApprox !== undefined && { latitudeApprox: input.latitudeApprox }),
+        ...(input.longitudeApprox !== undefined && { longitudeApprox: input.longitudeApprox }),
+        ...(input.latitudeExact !== undefined && { latitudeExact: input.latitudeExact }),
+        ...(input.longitudeExact !== undefined && { longitudeExact: input.longitudeExact }),
+        ...(input.arrivalInstructionsAr !== undefined && {
+          arrivalInstructionsAr: input.arrivalInstructionsAr?.trim() || null,
+        }),
+        ...(input.arrivalInstructionsEn !== undefined && {
+          arrivalInstructionsEn: input.arrivalInstructionsEn?.trim() || null,
+        }),
         ...(input.basePrice !== undefined && { basePrice: input.basePrice }),
         ...(input.capacity !== undefined && { capacity: input.capacity }),
         ...(input.allowsOvernight !== undefined && { allowsOvernight: input.allowsOvernight }),
         ...(input.allowsFamilies !== undefined && { allowsFamilies: input.allowsFamilies }),
         ...(input.allowsYouth !== undefined && { allowsYouth: input.allowsYouth }),
+        ...(input.instantBookingEnabled !== undefined && {
+          instantBookingEnabled: input.instantBookingEnabled,
+        }),
         ...(input.poolsCount !== undefined && { poolsCount }),
         hasIndoorPool: amenityKeys.includes('indoor_pool'),
         hasHeatedPool: amenityKeys.includes('heated_pool'),
@@ -226,15 +302,17 @@ export async function updateOwnerProperty(
 
     if (input.imageUrls !== undefined) {
       await tx.propertyMedia.deleteMany({ where: { propertyId } });
-      await tx.propertyMedia.createMany({
-        data: input.imageUrls.map((url, i) => ({
-          propertyId,
-          url,
-          sortOrder: i,
-          altAr: input.titleAr ?? existing.titleAr,
-          altEn: input.titleEn ?? existing.titleEn ?? existing.titleAr,
-        })),
-      });
+      if (input.imageUrls.length) {
+        await tx.propertyMedia.createMany({
+          data: input.imageUrls.map((url, i) => ({
+            propertyId,
+            url,
+            sortOrder: i,
+            altAr: input.titleAr ?? existing.titleAr,
+            altEn: input.titleEn ?? existing.titleEn ?? existing.titleAr,
+          })),
+        });
+      }
     }
 
     if (amenityIds !== undefined) {
@@ -294,6 +372,8 @@ export async function submitOwnerPropertyForReview(
     );
   }
 
+  assertMediaForSubmitReview(existing.media);
+
   await prisma.property.update({
     where: { id: propertyId },
     data: { status: PropertyStatus.pending_review },
@@ -307,6 +387,11 @@ export async function submitOwnerPropertyForReview(
     metadata: { previousStatus: existing.status },
     req,
   });
+
+  void notifyPropertySubmittedForReview({
+    propertyId,
+    titleAr: existing.titleAr,
+  }).catch((err) => console.error('[notifications] owner.property_submitted_for_review', err));
 
   const updated = await loadPropertyForEdit(propertyId, scope.ownerProfileId!);
   return mapPropertyEdit(updated);

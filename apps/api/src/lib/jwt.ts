@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import type { UserRole } from '@mazare3/shared';
+import { getSessionCookieOptions } from './cookie-options.js';
 
 const COOKIE_NAME = 'mazare3_session';
 
@@ -29,12 +30,5 @@ export function verifySession(token: string): SessionPayload {
 export { COOKIE_NAME };
 
 export function getCookieOptions() {
-  const isProd = process.env.NODE_ENV === 'production';
-  return {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax' as const,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: '/',
-  };
+  return getSessionCookieOptions();
 }

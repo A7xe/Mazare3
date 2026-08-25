@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Building2, CalendarCheck, CalendarClock, Percent, Wallet, Loader2 } from 'lucide-react';
-import type { OwnerDashboardSummary } from '@mazare3/shared';
+import type { OwnerDashboardSummary, OwnerPerformanceRange } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { fetchOwnerSummary } from '@/lib/api-owner';
+import { fetchOwnerSummary, fetchOwnerPerformance } from '@/lib/api-owner';
+import { OwnerPerformancePanel } from '@/components/owner/owner-performance-panel';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 import { useLocale } from 'next-intl';
 
@@ -15,6 +16,11 @@ export function OwnerDashboardView() {
   const [data, setData] = useState<OwnerDashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadPerformance = useCallback(async (range: OwnerPerformanceRange) => {
+    const res = await fetchOwnerPerformance(range);
+    return res.data;
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -109,6 +115,7 @@ export function OwnerDashboardView() {
           </CardContent>
         </Card>
       </div>
+      <OwnerPerformancePanel ns="owner" locale={locale} load={loadPerformance} />
     </div>
   );
 }

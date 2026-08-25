@@ -49,7 +49,11 @@ export async function findAvailableSlot(
   const from = addDaysUtc(min);
   const to = addDaysUtc(max);
   const url = `${getApiBase()}/properties/${slug}/availability?from=${from}&to=${to}`;
-  const res = await fetch(url);
+  let res = await fetch(url);
+  if (!res.ok && res.status >= 500) {
+    await new Promise((r) => setTimeout(r, 1200));
+    res = await fetch(url);
+  }
   if (!res.ok) {
     throw new Error(`Availability API failed (${res.status}). Run pnpm db:seed`);
   }
@@ -60,12 +64,29 @@ export async function findAvailableSlot(
     periodPreference
       .map((period) => available.find((s) => s.period === period))
       .find((s): s is AvailableSlot => s != null) ?? available[0];
-  if (!slot) {
-    throw new Error(
-      `No available slot between +${min} and +${max} days for ${slug} — run pnpm db:seed`,
-    );
+  if (slot) return slot;
+
+  const ensure = await fetch(`${getApiBase()}/internal/properties/${slug}/ensure-available-slot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (ensure.ok) {
+    const created = (await ensure.json()) as {
+      data?: { date: string; period: string; price: number };
+    };
+    if (created.data?.date) {
+      return {
+        date: created.data.date,
+        period: created.data.period,
+        price: created.data.price,
+        status: 'available',
+      };
+    }
   }
-  return slot;
+  throw new Error(
+    `No available slot between +${min} and +${max} days for ${slug} — run pnpm db:seed`,
+  );
 }
 
 /** @deprecated Use findAvailableSlot — kept for imports. */

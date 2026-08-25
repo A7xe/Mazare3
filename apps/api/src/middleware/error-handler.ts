@@ -8,6 +8,15 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  const maybeMulterErr = err as { code?: string; message?: string };
+  if (maybeMulterErr?.code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({
+      error: 'Uploaded file is too large',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+    return;
+  }
+
   if (err instanceof ZodError) {
     res.status(400).json({
       error: 'Validation failed',

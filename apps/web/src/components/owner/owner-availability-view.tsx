@@ -17,6 +17,7 @@ import {
   patchOwnerAvailabilitySlot,
   OwnerApiError,
 } from '@/lib/api-owner';
+import { OwnerAvailabilitySchedule } from '@/components/owner/owner-availability-schedule';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -211,6 +212,10 @@ export function OwnerAvailabilityView() {
         </p>
       )}
 
+      {propertyId && (
+        <OwnerAvailabilitySchedule propertyId={propertyId} onGenerated={() => void loadSlots()} />
+      )}
+
       {error && (
         <p
           data-testid="owner-availability-error"
@@ -261,12 +266,26 @@ export function OwnerAvailabilityView() {
                             {t(`slotStatus.${slot.status}`)}
                           </Badge>
                         </div>
+                        {(slot.startAtLocal || slot.endAtLocal) && (
+                          <p
+                            data-testid={`owner-slot-times-${slot.id}`}
+                            className="mt-2 text-xs text-muted"
+                          >
+                            {slot.startAtLocal} – {slot.endAtLocal} ({slot.timeZone})
+                          </p>
+                        )}
+                        <p className="mt-1 text-xs text-muted" data-testid={`owner-slot-source-${slot.id}`}>
+                          {t(`slotSource.${slot.source}`)}
+                          {slot.priceOverridden ? ` · ${t('manualPrice')}` : ''}
+                          {slot.usesLegacyTiming ? ` · ${t('legacyTiming')}` : ''}
+                        </p>
                         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
                           <div className="w-full min-w-0 flex-1 sm:min-w-[100px]">
                             <label className="text-xs text-muted">{t('price')}</label>
                             <Input
                               type="number"
                               min={1}
+                              data-testid={`owner-slot-price-${slot.id}`}
                               disabled={locked || savingId === slot.id}
                               value={priceEdits[slot.id] ?? String(slot.price)}
                               onChange={(e) =>
@@ -281,6 +300,7 @@ export function OwnerAvailabilityView() {
                             size="sm"
                             variant="outline"
                             disabled={locked || savingId === slot.id}
+                            data-testid={`owner-slot-save-${slot.id}`}
                             onClick={() => void savePrice(slot)}
                           >
                             <Save className="h-4 w-4" />

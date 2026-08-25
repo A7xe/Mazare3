@@ -1,12 +1,13 @@
 'use client';
 
-import type { CreateBookingInput, PublicBookingSummary } from '@mazare3/shared';
+import type { CreateBookingInput, PublicBookingSummary, RebookIntent } from '@mazare3/shared';
 import { getApiBaseUrl } from './api';
 
 export class BookingApiError extends Error {
   constructor(
     message: string,
     public code?: string,
+    public status?: number,
   ) {
     super(message);
     this.name = 'BookingApiError';
@@ -24,15 +25,42 @@ async function bookingFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new BookingApiError(
       (body as { error?: string }).error ?? 'Request failed',
       (body as { code?: string }).code,
+      res.status,
     );
   }
   return body as T;
+}
+
+export async function validatePropertyCoupon(
+  slug: string,
+  input: { code: string; date: string; period: string },
+) {
+  return bookingFetch<{ data: import('@mazare3/shared').CouponValidationResult }>(
+    `/properties/${slug}/coupons/validate`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export async function validatePlatformCoupon(
+  slug: string,
+  input: { code: string; date: string; period: string },
+) {
+  return bookingFetch<{ data: import('@mazare3/shared').PlatformCouponValidationResult }>(
+    `/properties/${slug}/platform-coupons/validate`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
 }
 
 export async function createBooking(input: CreateBookingInput) {
   return bookingFetch<{ data: PublicBookingSummary }>('/bookings', {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export async function fetchRebookIntent(bookingId: string) {
+  return bookingFetch<{ data: RebookIntent }>(`/me/bookings/${bookingId}/rebook-intent`, {
+    cache: 'no-store',
   });
 }
 
@@ -45,6 +73,16 @@ export async function fetchMyBookings() {
 export async function cancelBooking(id: string) {
   return bookingFetch<{ data: PublicBookingSummary }>(`/me/bookings/${id}/cancel`, {
     method: 'POST',
+  });
+}
+
+export async function submitBookingReview(
+  bookingId: string,
+  input: { rating: number; comment?: string },
+) {
+  return bookingFetch<{ data: { id: string; rating: number } }>(`/me/bookings/${bookingId}/review`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

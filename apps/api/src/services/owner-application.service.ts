@@ -2,7 +2,9 @@ import { prisma, OwnerStatus, UserRole } from '@mazare3/db';
 import type { OwnerApplyInput, OwnerApplicationView } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { notifyOwnerApplicationSubmitted } from './notification.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { ensureOwnerOnboarding } from './partner-onboarding.service.js';
 
 function mapApplication(profile: {
   id: string;
@@ -34,49 +36,61 @@ function mapApplication(profile: {
   };
 }
 
+async function persistApplicationFields(ownerProfileId: string, input: OwnerApplyInput) {
+  return prisma.ownerProfile.update({
+    where: { id: ownerProfileId },
+    data: {
+      displayName: input.displayName.trim(),
+      businessName: input.businessName?.trim() || null,
+      phone: input.phone.trim(),
+      city: input.city.trim(),
+      area: input.area.trim(),
+      bio: input.bio.trim(),
+      approximateFarmCount: input.approximateFarmCount ?? null,
+      termsAcceptedAt: new Date(),
+      status: OwnerStatus.pending,
+      rejectionReason: null,
+    },
+  });
+}
+
 export async function submitOwnerApplication(
   userId: string,
   userRole: UserRole,
   input: OwnerApplyInput,
   req?: AuthenticatedRequest,
 ): Promise<OwnerApplicationView> {
-  if (userRole === 'admin') {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, status: true },
+  });
+  if (!dbUser || dbUser.status !== 'active') {
+    throw new AppError(403, 'ACCOUNT_SUSPENDED', 'Your account is not active');
+  }
+  const liveRole = dbUser.role;
+  if (liveRole === 'admin') {
     throw new AppError(400, 'ADMIN_NO_APPLY', 'Admins do not need to apply');
   }
-  if (userRole === 'owner') {
+  if (liveRole === 'owner' || userRole === 'admin') {
     throw new AppError(400, 'ALREADY_OWNER', 'You are already an approved owner');
   }
 
   const existing = await prisma.ownerProfile.findUnique({ where: { userId } });
   if (existing) {
-    if (existing.status === OwnerStatus.pending || existing.status === OwnerStatus.approved) {
+    if (existing.status === OwnerStatus.approved) {
       throw new AppError(409, 'APPLICATION_EXISTS', 'You already have a pending or approved application');
     }
     if (existing.status === OwnerStatus.suspended) {
       throw new AppError(403, 'OWNER_SUSPENDED', 'Your owner account is suspended');
     }
-    // rejected — allow re-apply by updating
-    const updated = await prisma.ownerProfile.update({
-      where: { id: existing.id },
-      data: {
-        displayName: input.displayName.trim(),
-        businessName: input.businessName?.trim() || null,
-        phone: input.phone.trim(),
-        city: input.city.trim(),
-        area: input.area.trim(),
-        bio: input.bio.trim(),
-        approximateFarmCount: input.approximateFarmCount ?? null,
-        termsAcceptedAt: new Date(),
-        status: OwnerStatus.pending,
-        rejectionReason: null,
-      },
-    });
+    const updated = await persistApplicationFields(existing.id, input);
+    await ensureOwnerOnboarding(userId);
     await createAuditLog({
       actorUserId: userId,
       action: 'owner.application_submitted',
       entityType: 'owner_profile',
       entityId: updated.id,
-      metadata: { reapplied: true },
+      metadata: { compatibilityRoute: true, reapplied: existing.status === OwnerStatus.rejected },
       req,
     });
     return mapApplication(updated);
@@ -96,14 +110,21 @@ export async function submitOwnerApplication(
       status: OwnerStatus.pending,
     },
   });
+  await ensureOwnerOnboarding(userId);
 
   await createAuditLog({
     actorUserId: userId,
     action: 'owner.application_submitted',
     entityType: 'owner_profile',
     entityId: created.id,
+    metadata: { compatibilityRoute: true },
     req,
   });
+
+  void notifyOwnerApplicationSubmitted({
+    ownerProfileId: created.id,
+    displayName: created.displayName,
+  }).catch((err) => console.error('[notifications] owner.application_submitted', err));
 
   return mapApplication(created);
 }

@@ -1,5 +1,12 @@
+import {
+  AVAILABILITY_PERIODS,
+  PROPERTY_SORT_OPTIONS,
+  PROPERTY_TYPES,
+  serializePropertySearchQuery,
+  type AvailabilityPeriod,
+  type PropertySearchQuery,
+} from '@mazare3/shared';
 import type { PropertySearchParams } from './api-properties';
-import { PROPERTY_SORT_OPTIONS, PROPERTY_TYPES } from '@mazare3/shared';
 
 const AMENITY_KEYS = [
   'pool',
@@ -15,36 +22,68 @@ const AMENITY_KEYS = [
   'kids_pool',
 ] as const;
 
+function first(raw: Record<string, string | string[] | undefined>, key: string) {
+  const v = raw[key];
+  return Array.isArray(v) ? v[0] : v;
+}
+
 export function parseSearchParams(
   raw: Record<string, string | string[] | undefined>,
 ): PropertySearchParams {
-  const get = (key: string) => {
-    const v = raw[key];
-    return Array.isArray(v) ? v[0] : v;
-  };
-
+  const get = (key: string) => first(raw, key);
   const sort = get('sort');
   const propertyType = get('propertyType');
+  const period = get('period');
   const amenitiesRaw = get('amenities');
+  const guests = get('guests');
+  const minPrice = get('minPrice');
+  const maxPrice = get('maxPrice');
+  const page = get('page');
+  const latRaw = get('lat');
+  const lngRaw = get('lng');
+  const latNum = latRaw != null && latRaw !== '' ? Number(latRaw) : undefined;
+  const lngNum = lngRaw != null && lngRaw !== '' ? Number(lngRaw) : undefined;
 
   return {
     q: get('q') || undefined,
+    city: get('city') || undefined,
     area: get('area') || undefined,
-    minPrice: get('minPrice') ? Number(get('minPrice')) : undefined,
-    maxPrice: get('maxPrice') ? Number(get('maxPrice')) : undefined,
-    guests: get('guests') ? Number(get('guests')) : undefined,
+    date: get('date') || undefined,
+    period:
+      period && (AVAILABILITY_PERIODS as readonly string[]).includes(period)
+        ? (period as AvailabilityPeriod)
+        : undefined,
+    minPrice: minPrice ? Number(minPrice) : undefined,
+    maxPrice: maxPrice ? Number(maxPrice) : undefined,
+    guests: guests ? Number(guests) : undefined,
     propertyType:
       propertyType && (PROPERTY_TYPES as readonly string[]).includes(propertyType)
-        ? (propertyType as PropertySearchParams['propertyType'])
+        ? (propertyType as PropertySearchQuery['propertyType'])
         : undefined,
     amenities: amenitiesRaw ? amenitiesRaw.split(',').filter(Boolean) : undefined,
     hasPool: get('hasPool') === 'true' ? true : get('hasPool') === 'false' ? false : undefined,
-    verifiedOnly: get('verifiedOnly') === 'true',
+    allowsOvernight: get('allowsOvernight') === 'true' ? true : undefined,
+    allowsEvents: get('allowsEvents') === 'true' ? true : undefined,
+    featured: get('featured') === 'true' ? true : undefined,
+    verifiedOnly: get('verifiedOnly') === 'true' || get('verified') === 'true' ? true : undefined,
     sort:
       sort && (PROPERTY_SORT_OPTIONS as readonly string[]).includes(sort)
-        ? (sort as PropertySearchParams['sort'])
+        ? (sort as PropertySearchQuery['sort'])
         : 'recommended',
+    lat:
+      latNum != null && Number.isFinite(latNum) && latNum >= -90 && latNum <= 90
+        ? latNum
+        : undefined,
+    lng:
+      lngNum != null && Number.isFinite(lngNum) && lngNum >= -180 && lngNum <= 180
+        ? lngNum
+        : undefined,
+    page: page ? Number(page) : 1,
   };
+}
+
+export function searchQueryString(params: PropertySearchParams): string {
+  return serializePropertySearchQuery(params);
 }
 
 export const SEARCH_AMENITY_KEYS = AMENITY_KEYS;

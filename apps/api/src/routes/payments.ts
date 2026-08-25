@@ -9,6 +9,7 @@ import {
 } from '../middleware/auth.js';
 import { AppError, formatZodErrors } from '../lib/errors.js';
 import {
+  acknowledgeBrowserPaymentReturn,
   createPaymentIntent,
   getPaymentForUser,
   simulatePaymentFailure,
@@ -26,6 +27,7 @@ paymentsRouter.post(
     if (!parsed.success) {
       throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
     }
+    // Amount is never accepted from the client — only bookingId/method/purpose/idempotencyKey.
     const data = await createPaymentIntent(req.session!.userId, parsed.data, req);
     res.status(201).json({ data });
   }),
@@ -45,6 +47,29 @@ paymentsRouter.get(
       return;
     }
     res.json({ data });
+  }),
+);
+
+/**
+ * PSP browser return / success-page callback.
+ * Informational only — does not capture or mark payment succeeded.
+ */
+paymentsRouter.post(
+  '/:id/browser-return',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'Payment id is required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const data = await acknowledgeBrowserPaymentReturn(req.session!.userId, id);
+    res.json({
+      data,
+      meta: {
+        paymentTruth: 'webhook_or_server_verify',
+        note: 'Browser return acknowledged; payment status unchanged by this endpoint',
+      },
+    });
   }),
 );
 

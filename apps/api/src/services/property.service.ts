@@ -1,6 +1,10 @@
-import { prisma, Prisma, PropertyStatus, VerificationStatus } from '@mazare3/db';
+import { prisma, PropertyStatus, OwnerStatus } from '@mazare3/db';
 import type { PropertySearchQuery } from '@mazare3/shared';
-import { toPublicPropertyDetail, toPublicPropertySummary } from '../mappers/public-property.mapper.js';
+import { toPublicPropertyDetail, toPublicPropertySummary, applyLiveRating } from '../mappers/public-property.mapper.js';
+import { searchPublishedProperties } from './property-search.service.js';
+import { getPublishedReviewStats, listPublishedReviewsForProperty } from './review.service.js';
+import { loadLivePromotionsByProperty } from './promotion.service.js';
+import { applyPlacementFlags, loadLivePlacementsByPropertyIds } from './placement.service.js';
 
 const publishedInclude = {
   media: { orderBy: { sortOrder: 'asc' as const } },
@@ -8,108 +12,48 @@ const publishedInclude = {
   rules: { orderBy: { sortOrder: 'asc' as const } },
 } as const;
 
-function buildWhere(query: PropertySearchQuery): Prisma.PropertyWhereInput {
-  const where: Prisma.PropertyWhereInput = {
-    status: PropertyStatus.published,
-  };
-
-  if (query.q) {
-    const q = query.q.trim();
-    where.OR = [
-      { titleAr: { contains: q, mode: 'insensitive' } },
-      { titleEn: { contains: q, mode: 'insensitive' } },
-      { descriptionAr: { contains: q, mode: 'insensitive' } },
-      { descriptionEn: { contains: q, mode: 'insensitive' } },
-      { area: { contains: q, mode: 'insensitive' } },
-      { city: { contains: q, mode: 'insensitive' } },
-      { approximateAddress: { contains: q, mode: 'insensitive' } },
-    ];
-  }
-
-  if (query.area) {
-    where.AND = [
-      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
-      {
-        OR: [
-          { city: { equals: query.area, mode: 'insensitive' } },
-          { area: { contains: query.area, mode: 'insensitive' } },
-        ],
-      },
-    ];
-  }
-
-  if (query.propertyType) {
-    where.type = query.propertyType;
-  }
-
-  if (query.guests) {
-    where.capacity = { gte: query.guests };
-  }
-
-  if (query.minPrice !== undefined || query.maxPrice !== undefined) {
-    where.basePrice = {};
-    if (query.minPrice !== undefined) where.basePrice.gte = query.minPrice;
-    if (query.maxPrice !== undefined) where.basePrice.lte = query.maxPrice;
-  }
-
-  if (query.hasPool === true) {
-    where.poolsCount = { gt: 0 };
-  } else if (query.hasPool === false) {
-    where.poolsCount = 0;
-  }
-
-  if (query.verifiedOnly) {
-    where.verificationStatus = {
-      in: [VerificationStatus.platform_reviewed, VerificationStatus.platform_verified],
-    };
-  }
-
-  if (query.amenities?.length) {
-    where.AND = [
-      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
-      ...query.amenities.map((key) => ({
-        amenities: { some: { amenity: { key } } },
-      })),
-    ];
-  }
-
-  return where;
-}
-
-function buildOrderBy(sort: PropertySearchQuery['sort']): Prisma.PropertyOrderByWithRelationInput[] {
-  switch (sort) {
-    case 'price_asc':
-      return [{ basePrice: 'asc' }];
-    case 'price_desc':
-      return [{ basePrice: 'desc' }];
-    case 'rating_desc':
-      return [{ ratingAvg: 'desc' }, { reviewCount: 'desc' }];
-    case 'newest':
-      return [{ createdAt: 'desc' }];
-    case 'recommended':
-    default:
-      return [{ hasPlatformDeal: 'desc' }, { ratingAvg: 'desc' }, { createdAt: 'desc' }];
-  }
-}
-
 export async function listPublishedProperties(query: PropertySearchQuery) {
-  const rows = await prisma.property.findMany({
-    where: buildWhere(query),
-    include: publishedInclude,
-    orderBy: buildOrderBy(query.sort),
-  });
-
-  return rows.map(toPublicPropertySummary);
+  return searchPublishedProperties(query);
 }
 
 export async function getPublishedPropertyBySlug(slug: string) {
   const row = await prisma.property.findFirst({
     where: { slug, status: PropertyStatus.published },
-    include: publishedInclude,
+    include: { ...publishedInclude, owner: { select: { status: true } } },
   });
 
   if (!row) return null;
-  return toPublicPropertyDetail(row);
+  const [stats, reviews, promoMap, placeMap] = await Promise.all([
+    getPublishedReviewStats([row.id]),
+    listPublishedReviewsForProperty(row.id),
+    loadLivePromotionsByProperty([row.id]),
+    loadLivePlacementsByPropertyIds([row.id]),
+  ]);
+  const detail = applyPlacementFlags(
+    [applyLiveRating(toPublicPropertyDetail(row), stats.get(row.id))],
+    placeMap,
+  )[0]!;
+  const bookable = row.owner.status === OwnerStatus.approved;
+  const offers = promoMap.get(row.id) ?? [];
+  return {
+    ...detail,
+    reviews,
+    hasActivePromotion: offers.length > 0,
+    activeOffers: offers.map((o) => ({
+      id: o.id,
+      titleAr: o.titleAr,
+      titleEn: o.titleEn,
+      discountType: o.discountType,
+      discountValue: o.discountValue,
+      period: o.period,
+      startsAt: o.startsAt,
+      endsAt: o.endsAt,
+    })),
+    bookingDisabled: !bookable,
+    bookingDisabledReason: bookable
+      ? null
+      : 'This property is not accepting new bookings',
+  };
 }
 
 export async function listSimilarProperties(slug: string, city: string, limit = 2) {
@@ -121,8 +65,20 @@ export async function listSimilarProperties(slug: string, city: string, limit = 
     },
     include: publishedInclude,
     take: limit,
-    orderBy: { ratingAvg: 'desc' },
+    orderBy: { createdAt: 'desc' },
   });
 
-  return rows.map(toPublicPropertySummary);
+  const stats = await getPublishedReviewStats(rows.map((r) => r.id));
+  const ids = rows.map((r) => r.id);
+  const [promoMap, placeMap] = await Promise.all([
+    loadLivePromotionsByProperty(ids),
+    loadLivePlacementsByPropertyIds(ids),
+  ]);
+  return applyPlacementFlags(
+    rows.map((r) => ({
+      ...applyLiveRating(toPublicPropertySummary(r), stats.get(r.id)),
+      hasActivePromotion: (promoMap.get(r.id) ?? []).length > 0,
+    })),
+    placeMap,
+  );
 }

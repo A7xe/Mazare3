@@ -8,6 +8,8 @@ import {
   LayoutDashboard,
   Building2,
   Banknote,
+  Star,
+  LifeBuoy,
 } from 'lucide-react';
 import { OwnerGuard } from './owner-guard';
 import { cn } from '@/lib/utils';
@@ -17,7 +19,9 @@ const navItems = [
   { href: '/owner/properties', icon: Building2, labelKey: 'nav.properties' as const },
   { href: '/owner/bookings', icon: CalendarDays, labelKey: 'nav.bookings' as const },
   { href: '/owner/payouts', icon: Banknote, labelKey: 'nav.payouts' as const },
+  { href: '/owner/reviews', icon: Star, labelKey: 'nav.reviews' as const },
   { href: '/owner/availability', icon: CalendarRange, labelKey: 'nav.availability' as const },
+  { href: '/contact', icon: LifeBuoy, labelKey: 'nav.help' as const },
 ];
 
 export function OwnerShell({ children }: { children: React.ReactNode }) {
@@ -38,13 +42,15 @@ export function OwnerShell({ children }: { children: React.ReactNode }) {
                 const active =
                   href === '/owner'
                     ? pathname === '/owner'
-                    : pathname.startsWith(href);
+                    : href === '/contact'
+                      ? pathname.startsWith('/contact')
+                      : pathname.startsWith(href);
                 return (
                   <Link
                     key={href}
                     href={href}
                     className={cn(
-                      'flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                      'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                       active
                         ? 'bg-primary text-primary-foreground shadow-soft'
                         : 'text-muted hover:bg-primary-soft hover:text-navy',

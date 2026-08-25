@@ -1,9 +1,13 @@
+'use client';
+
+import { useTranslations } from 'next-intl';
 import { Waves, Flame, Users, Moon, Wifi, Car, UtensilsCrossed } from 'lucide-react';
 
 const AMENITY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   pool: Waves,
   heated_pool: Flame,
   heated: Flame,
+  indoor_pool: Waves,
   football: Users,
   overnight: Moon,
   wifi: Wifi,
@@ -17,6 +21,7 @@ interface AmenityPillsProps {
 }
 
 export function AmenityPills({ keys, max = 4 }: AmenityPillsProps) {
+  const t = useTranslations('search');
   const shown = keys.slice(0, max);
 
   return (
@@ -29,7 +34,7 @@ export function AmenityPills({ keys, max = 4 }: AmenityPillsProps) {
             className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary-soft px-2 py-0.5 text-xs text-navy"
           >
             <Icon className="h-3 w-3 text-primary" aria-hidden />
-            {key.replace('_', ' ')}
+            {t(`amenity.${key}`)}
           </span>
         );
       })}

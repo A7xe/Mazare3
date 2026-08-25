@@ -15,6 +15,10 @@ import {
   RotateCcw,
   AlertTriangle,
   Banknote,
+  Star,
+  Ticket,
+  Megaphone,
+  LifeBuoy,
 } from 'lucide-react';
 import { AdminGuard } from './admin-guard';
 import { cn } from '@/lib/utils';
@@ -28,7 +32,11 @@ const navItems = [
   { href: '/admin/payments', icon: Wallet, labelKey: 'nav.payments' as const },
   { href: '/admin/refunds', icon: RotateCcw, labelKey: 'nav.refunds' as const },
   { href: '/admin/disputes', icon: AlertTriangle, labelKey: 'nav.disputes' as const },
+  { href: '/admin/support', icon: LifeBuoy, labelKey: 'nav.support' as const },
   { href: '/admin/payouts', icon: Banknote, labelKey: 'nav.payouts' as const },
+  { href: '/admin/reviews', icon: Star, labelKey: 'nav.reviews' as const },
+  { href: '/admin/coupons', icon: Ticket, labelKey: 'nav.coupons' as const },
+  { href: '/admin/sponsorship', icon: Megaphone, labelKey: 'nav.sponsorship' as const },
   { href: '/admin/availability', icon: CalendarRange, labelKey: 'nav.availability' as const },
   { href: '/admin/audit-logs', icon: ScrollText, labelKey: 'nav.auditLogs' as const },
 ];
@@ -58,7 +66,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                     key={href}
                     href={href}
                     className={cn(
-                      'flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                      'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                       active
                         ? 'bg-primary text-primary-foreground shadow-soft'
                         : 'text-muted hover:bg-primary-soft hover:text-navy',

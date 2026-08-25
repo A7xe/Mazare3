@@ -4,16 +4,26 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link, useRouter } from '@/i18n/navigation';
 import { Calendar, Loader2, MapPin, MessageSquareWarning, RotateCcw, XCircle } from 'lucide-react';
-import type { CancellationPolicyView, DisputeType, PublicBookingSummary } from '@mazare3/shared';
+import type { CancellationPolicyView, DisputeType, PublicBookingSummary, SupportTicketSummary } from '@mazare3/shared';
 import { DISPUTE_TYPES } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { BookingApiError, cancelBooking, fetchMyBookings } from '@/lib/api-bookings';
-import { openDispute, requestRefund, OperationsApiError } from '@/lib/api-operations';
+import {
+  fetchMySupportTickets,
+  openDispute,
+  requestRefund,
+  OperationsApiError,
+} from '@/lib/api-operations';
 import { getMe } from '@/lib/api-auth';
 import { PriceDisplay } from '@/components/marketplace/price-display';
+import { formatPlatformDateTime, formatRemainingDuration } from '@/lib/format-platform-time';
+import { BookingReviewForm } from '@/components/account/booking-review-form';
+import { AccountSubnav } from '@/components/account/account-subnav';
+import { BookingExactMap } from '@/components/maps/booking-exact-map';
+import { BookingSupportForm } from '@/components/account/booking-support-form';
 
 function policySummaryText(
   t: ReturnType<typeof useTranslations<'bookings'>>,
@@ -35,6 +45,7 @@ export function MyBookingsView() {
   const router = useRouter();
 
   const [bookings, setBookings] = useState<PublicBookingSummary[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicketSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
@@ -43,20 +54,33 @@ export function MyBookingsView() {
     Record<string, { type: DisputeType; description: string }>
   >({});
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const tmr = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(tmr);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       await getMe();
-      const res = await fetchMyBookings();
-      setBookings(res.data);
+      const bookingRes = await fetchMyBookings();
+      setBookings(bookingRes.data);
+      const supportRes = await fetchMySupportTickets().catch(() => ({ data: [] as SupportTicketSummary[] }));
+      setSupportTickets(supportRes.data);
     } catch {
       router.push('/login?returnUrl=' + encodeURIComponent('/account/bookings'));
     } finally {
       setLoading(false);
     }
   }, [router]);
+
+  const refreshSupportTickets = useCallback(async () => {
+    const supportRes = await fetchMySupportTickets().catch(() => ({ data: [] as SupportTicketSummary[] }));
+    setSupportTickets(supportRes.data);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -117,7 +141,7 @@ export function MyBookingsView() {
   }
 
   const canCancelBooking = (b: PublicBookingSummary) => {
-    if (b.status === 'pending_payment') return true;
+    if (b.canCancel) return true;
     return b.status === 'confirmed' && b.cancellationPolicy?.canCancel === true;
   };
 
@@ -131,7 +155,8 @@ export function MyBookingsView() {
   }
 
   return (
-    <div className="space-y-8 pb-4">
+    <div className="space-y-8 pb-4" data-testid="my-bookings">
+      <AccountSubnav />
       <div>
         <h1 className="text-3xl font-bold text-navy">{t('title')}</h1>
         <p className="mt-2 text-muted">{t('subtitle')}</p>
@@ -160,7 +185,11 @@ export function MyBookingsView() {
             const title = locale === 'ar' ? b.propertyTitleAr : b.propertyTitleEn;
             const policy = b.cancellationPolicy;
             return (
-              <Card key={b.id} className="glass-panel overflow-hidden rounded-3xl border-primary/12">
+              <Card
+                key={b.id}
+                className="glass-panel overflow-hidden rounded-3xl border-primary/12"
+                data-testid="booking-card"
+              >
                 <div className="gradient-primary h-1" />
                 <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-2">
                   <div>
@@ -187,6 +216,14 @@ export function MyBookingsView() {
                         {t(`paymentStatus.${b.paymentStatus}`)}
                       </Badge>
                     )}
+                    {b.paymentState && (
+                      <Badge
+                        variant={b.paymentState === 'balance_overdue' ? 'default' : 'highlight'}
+                        data-testid={`booking-payment-state-${b.paymentState}`}
+                      >
+                        {t(`paymentState.${b.paymentState}`)}
+                      </Badge>
+                    )}
                     {b.paidInFull && (
                       <Badge variant="highlight" data-testid="booking-paid-in-full">
                         {t('paidInFull')}
@@ -203,13 +240,121 @@ export function MyBookingsView() {
                       <span className="font-medium text-navy">{t('periodLabel')}:</span>{' '}
                       {t(`period.${b.period}`)}
                     </p>
+                    {b.startAtLocal && b.endAtLocal && (
+                      <p data-testid="booking-local-times">
+                        <span className="font-medium text-navy">{t('localTimes')}:</span>{' '}
+                        {b.startAtLocal} – {b.endAtLocal} ({b.timeZone})
+                      </p>
+                    )}
                     <p>
                       <span className="font-medium text-navy">{t('guests')}:</span> {b.guestsCount}
                     </p>
+                    {b.arrival && (
+                      <div
+                        className="rounded-xl border border-primary/15 bg-primary-soft/40 p-3"
+                        data-testid={`booking-arrival-${b.id}`}
+                      >
+                        <p className="font-medium text-navy">{t('arrivalTitle')}</p>
+                        {b.arrival.exactAddress ? (
+                          <p className="mt-1">
+                            <span className="font-medium text-navy">{t('arrivalExactAddress')}:</span>{' '}
+                            {b.arrival.exactAddress}
+                          </p>
+                        ) : null}
+                        {(locale === 'ar'
+                          ? b.arrival.arrivalInstructionsAr || b.arrival.arrivalInstructionsEn
+                          : b.arrival.arrivalInstructionsEn || b.arrival.arrivalInstructionsAr) ? (
+                          <p className="mt-1">
+                            <span className="font-medium text-navy">{t('arrivalInstructions')}:</span>{' '}
+                            {locale === 'ar'
+                              ? b.arrival.arrivalInstructionsAr || b.arrival.arrivalInstructionsEn
+                              : b.arrival.arrivalInstructionsEn || b.arrival.arrivalInstructionsAr}
+                          </p>
+                        ) : null}
+                        <BookingExactMap
+                          latitudeExact={b.arrival.latitudeExact}
+                          longitudeExact={b.arrival.longitudeExact}
+                          label={t('exactMapLabel')}
+                          testId={`booking-exact-map-${b.id}`}
+                        />
+                        {b.arrival.googleMapsDirectionsUrl ? (
+                          <a
+                            href={b.arrival.googleMapsDirectionsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex font-medium text-primary hover:underline"
+                            data-testid={`booking-maps-link-${b.id}`}
+                          >
+                            {t('openInGoogleMaps')}
+                          </a>
+                        ) : null}
+                      </div>
+                    )}
                     <p>
                       <span className="font-medium text-navy">{t('bookingTotal')}:</span>{' '}
                       <PriceDisplay amount={b.totalAmount} currency={b.currency} locale={locale} />
                     </p>
+                    {b.depositPaidAmount != null && b.paymentCollectionMode !== 'full' && (
+                      <p>
+                        <span className="font-medium text-navy">{t('depositPaid')}:</span>{' '}
+                        <PriceDisplay
+                          amount={b.depositPaidAmount}
+                          currency={b.currency}
+                          locale={locale}
+                        />
+                      </p>
+                    )}
+                    {b.remainingAmount != null &&
+                      b.remainingAmount > 0 &&
+                      !b.isFullyPaid &&
+                      b.status !== 'cancelled' &&
+                      b.status !== 'expired' && (
+                        <p>
+                          <span className="font-medium text-navy">{t('remainingBalance')}:</span>{' '}
+                          <PriceDisplay
+                            amount={b.remainingAmount}
+                            currency={b.currency}
+                            locale={locale}
+                          />
+                        </p>
+                      )}
+                    {b.balanceDueAt && !b.isFullyPaid && b.status === 'confirmed' && (
+                      <p data-testid="booking-balance-due-at">
+                        <span className="font-medium text-navy">{t('balanceDueAt')}:</span>{' '}
+                        {formatPlatformDateTime(b.balanceDueAt, locale, b.timeZone)}
+                      </p>
+                    )}
+                    {b.ownerApprovalRequired && (
+                      <div className="space-y-1 text-primary">
+                        <p>{t('awaitingOwnerApproval')}</p>
+                        {b.ownerApprovalExpiresAt && (
+                          <p data-testid="customer-approval-deadline">
+                            {t('responseDeadline')}:{' '}
+                            {formatPlatformDateTime(b.ownerApprovalExpiresAt, locale, b.timeZone)} (
+                            {t('timeRemaining')}:{' '}
+                            {formatRemainingDuration(b.ownerApprovalExpiresAt, locale, now)})
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {b.ownerDecisionState === 'expired' && (
+                      <div className="space-y-2">
+                        <p className="text-muted">{t('ownerDidNotRespond')}</p>
+                        <p className="text-muted">{t('noPaymentTaken')}</p>
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={`/properties/${b.propertySlug}`}>{t('browseAgain')}</Link>
+                        </Button>
+                      </div>
+                    )}
+                    {b.ownerDecisionState === 'accepted' && b.status === 'pending_payment' && (
+                      <p className="text-primary">{t('acceptedPayDeposit')}</p>
+                    )}
+                    {b.ownerRejectionReason && (
+                      <p>
+                        <span className="font-medium text-navy">{t('ownerRejectionReason')}:</span>{' '}
+                        {b.ownerRejectionReason}
+                      </p>
+                    )}
                     {policy && b.status !== 'cancelled' && (
                       <div className="rounded-xl border border-primary/10 bg-primary-soft/20 p-3 text-xs">
                         <p className="font-medium text-navy">{t('cancellationPolicy')}</p>
@@ -240,17 +385,28 @@ export function MyBookingsView() {
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-3">
-                    {b.customerPayableAmount != null && b.status === 'pending_payment' && (
-                      <PriceDisplay
-                        amount={b.customerPayableAmount}
-                        currency={b.currency}
-                        locale={locale}
-                        large
-                      />
+                    {b.canRebook && (
+                      <Button asChild size="sm" className="shadow-soft" data-testid={`book-again-${b.id}`}>
+                        <Link
+                          href={`/properties/${b.propertySlug}?rebook=${b.id}&guests=${b.guestsCount}`}
+                        >
+                          {t('bookAgain')}
+                        </Link>
+                      </Button>
                     )}
-                    {b.status === 'pending_payment' && (
+                    {b.canPayDeposit && (
+                      <Button asChild size="sm" className="shadow-soft" data-testid="pay-deposit">
+                        <Link href={`/checkout/${b.id}`}>{t('payDeposit')}</Link>
+                      </Button>
+                    )}
+                    {b.canPayBalance && (
+                      <Button asChild size="sm" className="shadow-soft" data-testid="pay-balance">
+                        <Link href={`/checkout/${b.id}`}>{t('payBalance')}</Link>
+                      </Button>
+                    )}
+                    {b.paymentCollectionMode === 'full' && b.status === 'pending_payment' && (
                       <Button asChild size="sm" className="shadow-soft">
-                        <Link href={`/checkout/${b.id}`}>{t('completePayment')}</Link>
+                        <Link href={`/checkout/${b.id}`}>{t('payDeposit')}</Link>
                       </Button>
                     )}
                     {canCancelBooking(b) && (
@@ -359,8 +515,17 @@ export function MyBookingsView() {
                         </Button>
                       </div>
                     )}
+                    <BookingSupportForm
+                      bookingId={b.id}
+                      bookingPublicCode={b.publicCode}
+                      tickets={supportTickets.filter((ticket) => ticket.bookingId === b.id)}
+                      onSubmitted={refreshSupportTickets}
+                    />
                   </div>
                 </CardContent>
+                <div className="px-6 pb-4">
+                  <BookingReviewForm booking={b} onSubmitted={load} />
+                </div>
               </Card>
             );
           })}

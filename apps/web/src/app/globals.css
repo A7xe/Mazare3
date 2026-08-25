@@ -2,6 +2,7 @@
 
 @theme {
   /* Phase 2C — Final Brand Palette Lock */
+  /* Public marketplace surfaces: background, surface, primary CTAs, navy text, muted labels. */
   --color-background: #fbfbfb;
   --color-surface: #ffffff;
   --color-primary: #0e6ba8;
@@ -19,7 +20,7 @@
   --color-warning: #d97706;
   --color-danger: #dc2626;
   --font-sans: var(--font-inter), system-ui, sans-serif;
-  --font-arabic: var(--font-cairo), system-ui, sans-serif;
+  --font-arabic: var(--font-tajawal), system-ui, sans-serif;
   --radius-lg: 1.25rem;
   --radius-xl: 1.5rem;
   --radius-2xl: 1.75rem;
@@ -101,4 +102,76 @@
   .glass-panel {
     @apply border border-primary/12 bg-surface/92 shadow-premium backdrop-blur-xl;
   }
+
+  /* Soft thin scrollbar for filter sheets / carousels */
+  .scrollbar-soft {
+    scrollbar-width: thin;
+    scrollbar-color: #c5d4ea transparent;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-thumb {
+    background: #c5d4ea;
+    border-radius: 999px;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-thumb:hover {
+    background: #9db4d4;
+  }
+
+  /* Homepage typography — Arabic DIN-style hierarchy (Tajawal) */
+  .home-typography {
+    color: #0d2046;
+  }
+}
+
+/* Leaflet maps — keep tiles/controls LTR and below site chrome */
+.mazare3-map .leaflet-container {
+  height: 100%;
+  width: 100%;
+  z-index: 0;
+  font-family: inherit;
+  background: #e8f1f8;
+}
+
+.mazare3-map .leaflet-control-attribution {
+  font-size: 10px;
+  max-width: min(100%, 22rem);
+}
+
+.mazare3-pin {
+  background: transparent !important;
+  border: none !important;
+}
+
+.mazare3-pin-dot {
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: 8px auto 0;
+  border-radius: 50% 50% 50% 0;
+  background: #0e6ba8;
+  transform: rotate(-45deg);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgb(0 28 85 / 0.35);
+}
+
+.mazare3-pin-approx .mazare3-pin-dot {
+  margin-top: 7px;
+  border-radius: 50%;
+  transform: none;
+  background: #fff;
+  border: 3px dashed #0e6ba8;
+}
+
+.mazare3-pin-active .mazare3-pin-dot {
+  box-shadow: 0 0 0 3px rgb(14 107 168 / 0.35), 0 2px 8px rgb(0 28 85 / 0.35);
 }

@@ -1,7 +1,9 @@
 import {
   prisma,
+  BookingPaymentState,
   BookingStatus,
   PaymentStatus,
+  Prisma,
   RefundRequestStatus,
   RefundStatus,
   PayoutStatus,
@@ -12,11 +14,22 @@ import type {
   RefundRequestSummary,
   AdminRefundRequestRow,
 } from '@mazare3/shared';
-import { BLOCKING_REFUND_REQUEST_STATUSES } from '@mazare3/shared';
+import {
+  BLOCKING_REFUND_REQUEST_STATUSES,
+  assertPaymentStateTransition,
+  filsToJod,
+  jodToFils,
+  paymentStateAfterRefund,
+} from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { notifyRefundRequested } from './notification.service.js';
 import { evaluateCancellationPolicy } from './payment-policy.service.js';
 import { syncPayoutStatusForPayment } from './payment-payout.service.js';
+import { refundableCapturedFils } from '../lib/booking-ledger.js';
+import { releaseSlotIfUnheld } from './booking-hold.service.js';
+import { getPaymentGateway, throwPaymentProviderError } from './payment/payment-provider.registry.js';
+import { providerRefundIdempotencyKey } from './payment/payment-provider.interface.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 function decimalToNumber(value: { toNumber(): number } | number): number {
@@ -58,11 +71,8 @@ async function getPaidBookingForCustomer(userId: string, bookingId: string) {
     where: { id: bookingId, userId },
     include: {
       slot: { select: { date: true } },
-      payments: {
-        where: { status: PaymentStatus.succeeded },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-      },
+      payments: true,
+      refundRequests: true,
     },
   });
   if (!booking) {
@@ -71,11 +81,19 @@ async function getPaidBookingForCustomer(userId: string, bookingId: string) {
   if (booking.status !== BookingStatus.confirmed) {
     throw new AppError(400, 'INVALID_STATUS', 'Refund requests are only for confirmed paid bookings');
   }
-  const payment = booking.payments[0];
-  if (!payment) {
+  if (booking.paymentState === BookingPaymentState.refunded) {
+    throw new AppError(400, 'INVALID_STATUS', 'This booking is already fully refunded');
+  }
+  const capturedPayments = booking.payments.filter((p) => p.status === PaymentStatus.succeeded);
+  if (capturedPayments.length === 0) {
     throw new AppError(400, 'INVALID_STATUS', 'No successful payment for this booking');
   }
-  return { booking, payment };
+  const funds = refundableCapturedFils(booking.payments, booking.refundRequests);
+  if (funds.refundable <= 0) {
+    throw new AppError(400, 'INVALID_STATUS', 'No captured amount remains to refund');
+  }
+  const payment = capturedPayments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]!;
+  return { booking, payment, funds };
 }
 
 export async function createRefundRequest(
@@ -84,7 +102,7 @@ export async function createRefundRequest(
   input: CreateRefundRequestInput,
   req?: AuthenticatedRequest,
 ): Promise<RefundRequestSummary> {
-  const { booking, payment } = await getPaidBookingForCustomer(userId, bookingId);
+  const { booking, payment, funds } = await getPaidBookingForCustomer(userId, bookingId);
 
   const existing = await prisma.refundRequest.findFirst({
     where: {
@@ -96,16 +114,20 @@ export async function createRefundRequest(
     throw new AppError(409, 'REFUND_REQUEST_EXISTS', 'A refund request is already pending review');
   }
 
-  const payable = decimalToNumber(payment.customerPayableAmount);
-  const policy = evaluateCancellationPolicy(payable, booking.slot.date);
-  const policyRefundAmount = policy.refundableAmount;
+  const capturedJod = filsToJod(funds.captured);
+  const refundableJod = filsToJod(funds.refundable);
+  const policy = evaluateCancellationPolicy(capturedJod, booking.slot.date);
+  const policyRefundAmount = Math.min(policy.refundableAmount, refundableJod);
   const requestedAmount =
     input.requestedAmount != null
-      ? Math.min(input.requestedAmount, payable)
+      ? input.requestedAmount
       : policyRefundAmount;
 
-  if (requestedAmount > payable) {
+  if (input.requestedAmount != null && jodToFils(input.requestedAmount) > funds.refundable) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Requested amount cannot exceed amount paid');
+  }
+  if (requestedAmount <= 0) {
+    throw new AppError(400, 'VALIDATION_ERROR', 'Requested amount must be greater than zero');
   }
 
   const row = await prisma.refundRequest.create({
@@ -141,10 +163,17 @@ export async function createRefundRequest(
       publicCode: booking.publicCode,
       policyRefundAmount,
       requestedAmount,
+      capturedAmount: capturedJod,
+      refundableAmount: refundableJod,
       tier: policy.tier,
     },
     req,
   });
+
+  void notifyRefundRequested({
+    refundRequestId: row.id,
+    publicCode: booking.publicCode,
+  }).catch((err) => console.error('[notifications] refund.requested', err));
 
   return toRefundRequestSummary(row);
 }
@@ -169,7 +198,7 @@ export async function listAdminRefundRequests(): Promise<AdminRefundRequestRow[]
           user: { select: { name: true, email: true } },
         },
       },
-      payment: { select: { customerPayableAmount: true } },
+      payment: { select: { customerPayableAmount: true, bookingId: true } },
     },
   });
 
@@ -207,6 +236,9 @@ export async function patchAdminRefundRequest(
         include: {
           property: { select: { slug: true, titleAr: true, titleEn: true } },
           user: { select: { name: true, email: true } },
+          slot: { select: { date: true } },
+          payments: true,
+          refundRequests: true,
         },
       },
       payment: true,
@@ -216,7 +248,12 @@ export async function patchAdminRefundRequest(
     throw new AppError(404, 'NOT_FOUND', 'Refund request not found');
   }
 
-  const approvedAmount =
+  const funds = refundableCapturedFils(
+    row.booking.payments,
+    row.booking.refundRequests.filter((r) => r.id !== id),
+  );
+
+  let approvedAmount =
     input.approvedAmount ??
     (input.status === RefundRequestStatus.approved || input.status === RefundRequestStatus.processed
       ? decimalToNumber(row.requestedAmount)
@@ -224,7 +261,54 @@ export async function patchAdminRefundRequest(
         ? decimalToNumber(row.approvedAmount)
         : null);
 
+  if (
+    (input.status === RefundRequestStatus.approved ||
+      input.status === RefundRequestStatus.processed) &&
+    approvedAmount != null
+  ) {
+    const maxJod = filsToJod(funds.refundable);
+    if (approvedAmount > maxJod + 0.001) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Approved amount cannot exceed captured funds');
+    }
+    approvedAmount = Math.min(approvedAmount, maxJod);
+  }
+
+  // Route PSP refund through the gateway when marking processed — limits/state machine stay local.
+  let providerRefund: {
+    providerRef: string;
+    status: string;
+    providerStatus?: string | null;
+    profileMode?: string | null;
+  } | null = null;
+  if (input.status === RefundRequestStatus.processed) {
+    try {
+      const gateway = getPaymentGateway(row.payment.provider);
+      const refundAmount = approvedAmount ?? decimalToNumber(row.requestedAmount);
+      const result = await gateway.refundPayment({
+        paymentId: row.paymentId,
+        providerRef: row.payment.providerRef,
+        amount: refundAmount,
+        currency: row.payment.currency,
+        refundRequestId: id,
+        idempotencyKey: providerRefundIdempotencyKey(id),
+      });
+      providerRefund = {
+        providerRef: result.providerRef,
+        status: result.status,
+        providerStatus: result.providerStatus ?? null,
+        profileMode: result.profileMode ?? null,
+      };
+      if (result.status === 'failed') {
+        throw new AppError(502, 'PAYMENT_PROVIDER_ERROR', 'Payment provider refund was not accepted');
+      }
+    } catch (err) {
+      throwPaymentProviderError(err);
+    }
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM "Booking" WHERE id = ${row.bookingId} FOR UPDATE`);
+
     const rr = await tx.refundRequest.update({
       where: { id },
       data: {
@@ -236,21 +320,50 @@ export async function patchAdminRefundRequest(
 
     let paymentRefundStatus = row.payment.refundStatus;
     let payoutStatus = row.payment.payoutStatus;
+    let bookingCancelled = false;
+    let nextPaymentState: BookingPaymentState | null = null;
 
-    if (input.status === RefundRequestStatus.approved) {
-      paymentRefundStatus = RefundStatus.approved;
+    if (input.status === RefundRequestStatus.approved || input.status === RefundRequestStatus.processed) {
+      paymentRefundStatus =
+        input.status === RefundRequestStatus.processed
+          ? RefundStatus.processed
+          : RefundStatus.approved;
       payoutStatus = PayoutStatus.blocked;
+      const remainingCapturedFils = Math.max(
+        0,
+        funds.refundable - jodToFils(approvedAmount ?? 0),
+      );
+      nextPaymentState = paymentStateAfterRefund({ remainingCapturedFils }) as BookingPaymentState;
+      assertPaymentStateTransition(row.booking.paymentState, nextPaymentState);
+
+      const slotDate = row.booking.slot.date;
+      const todayUtc = new Date();
+      todayUtc.setUTCHours(0, 0, 0, 0);
+      const isFuture =
+        Date.UTC(slotDate.getUTCFullYear(), slotDate.getUTCMonth(), slotDate.getUTCDate()) >
+        todayUtc.getTime();
+
+      await tx.booking.update({
+        where: { id: row.bookingId },
+        data: {
+          paymentState: nextPaymentState,
+          ...(nextPaymentState === BookingPaymentState.refunded && isFuture
+            ? { status: BookingStatus.cancelled, cancelledAt: new Date() }
+            : {}),
+        },
+      });
+      if (nextPaymentState === BookingPaymentState.refunded && isFuture) {
+        bookingCancelled = true;
+        await releaseSlotIfUnheld(tx, row.booking.availabilitySlotId, row.bookingId);
+      }
     } else if (input.status === RefundRequestStatus.rejected) {
       paymentRefundStatus = RefundStatus.rejected;
-    } else if (input.status === RefundRequestStatus.processed) {
-      paymentRefundStatus = RefundStatus.processed;
-      payoutStatus = PayoutStatus.blocked;
     } else if (input.status === RefundRequestStatus.cancelled) {
       paymentRefundStatus = RefundStatus.none;
     }
 
-    await tx.payment.update({
-      where: { id: row.paymentId },
+    await tx.payment.updateMany({
+      where: { bookingId: row.bookingId, status: PaymentStatus.succeeded },
       data: {
         refundStatus: paymentRefundStatus,
         payoutStatus,
@@ -259,7 +372,7 @@ export async function patchAdminRefundRequest(
       },
     });
 
-    return rr;
+    return { rr, nextPaymentState, bookingCancelled };
   });
 
   const actionMap: Record<string, string> = {
@@ -274,14 +387,27 @@ export async function patchAdminRefundRequest(
     action,
     entityType: 'refund_request',
     entityId: id,
-    metadata: { status: input.status, approvedAmount },
+    metadata: {
+      status: input.status,
+      approvedAmount,
+      paymentState: updated.nextPaymentState,
+      bookingCancelled: updated.bookingCancelled,
+      capturedFils: funds.captured,
+      refundableFils: funds.refundable,
+      providerRefundRef: providerRefund?.providerRef ?? null,
+      providerRefundStatus: providerRefund?.status ?? null,
+      providerStatus: providerRefund?.providerStatus ?? null,
+      ...(providerRefund?.profileMode
+        ? { paytabsProfileMode: providerRefund.profileMode }
+        : {}),
+    },
     req,
   });
 
   await syncPayoutStatusForPayment(row.paymentId);
 
   const list = await listAdminRefundRequests();
-  const found = list.find((r) => r.id === updated.id);
+  const found = list.find((r) => r.id === updated.rr.id);
   if (!found) {
     throw new AppError(500, 'INTERNAL_ERROR', 'Failed to load updated refund request');
   }

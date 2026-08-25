@@ -1,6 +1,6 @@
 'use client';
 
-import type { OwnerPayoutSummaryRow } from '@mazare3/shared';
+import type { OwnerPayoutSummaryRow, OwnerSettlementSummary } from '@mazare3/shared';
 import { getApiBaseUrl } from './api';
 
 async function ownerFetch<T>(path: string): Promise<T> {
@@ -17,4 +17,8 @@ async function ownerFetch<T>(path: string): Promise<T> {
 
 export async function fetchOwnerPayouts() {
   return ownerFetch<{ data: OwnerPayoutSummaryRow[] }>('/owner/payouts');
+}
+
+export async function fetchOwnerSettlements() {
+  return ownerFetch<{ data: OwnerSettlementSummary[] }>('/owner/settlements');
 }

@@ -6,8 +6,10 @@ import {
   type UserRole,
 } from '@mazare3/db';
 import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
+import { expireOwnerApprovalIfNeeded } from './owner-approval-expiry.service.js';
 import { toPaymentDisplayStatus } from '../mappers/payment.mapper.js';
 import { resolveOwnerScope, type OwnerScope } from './owner-access.js';
+import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
 import type {
   OwnerAvailabilityQuery,
   OwnerAvailabilitySlotRow,
@@ -16,6 +18,9 @@ import type {
   OwnerPropertyCard,
   OwnerPropertyDetail,
   PatchOwnerAvailabilityInput,
+  AvailabilityRuleInput,
+  GenerateAvailabilityInput,
+  ApplyRuleToFutureInput,
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
@@ -24,6 +29,25 @@ import {
   resolvePayoutStatus,
 } from './payment-policy.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { mapOwnerSlotRow, occupancyTimes, slotTimesOrNull } from '../lib/availability-times.js';
+import { intervalsOverlap } from '@mazare3/shared';
+import {
+  classifyOwnerInboxGroup,
+  formatLocalTime,
+  getPlatformTimeZone,
+} from '@mazare3/shared';
+import {
+  listPropertyAvailabilityRules,
+  putPropertyAvailabilityRules,
+  deletePropertyAvailabilityRule,
+  previewApplyRuleToFuture,
+  applyRuleToFutureSlots,
+  getPropertyAvailabilityHealth,
+} from './availability-rules.service.js';
+import {
+  generateAvailabilityForProperty,
+  previewAvailabilityGeneration,
+} from './availability-generation.service.js';
 
 function parseDateOnly(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -205,7 +229,7 @@ export async function listOwnerProperties(
     basePrice: decimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
-    imageUrl: p.media[0]?.url,
+    imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
   }));
 }
 
@@ -246,7 +270,7 @@ export async function getOwnerPropertyById(
     basePrice: decimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
-    imageUrl: p.media[0]?.url,
+    imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
     capacity: p.capacity,
     allowsOvernight: p.allowsOvernight,
     upcomingBookingsCount: p._count.bookings,
@@ -259,6 +283,18 @@ export async function listOwnerBookings(
 ): Promise<OwnerBookingRow[]> {
   const scope = await resolveOwnerScope(userId, role);
 
+  const overdue = await prisma.booking.findMany({
+    where: {
+      property: propertyWhere(scope),
+      status: BookingStatus.pending_owner_approval,
+      ownerApprovalExpiresAt: { lte: new Date() },
+    },
+    select: { id: true },
+  });
+  for (const row of overdue) {
+    await expireOwnerApprovalIfNeeded(row.id);
+  }
+
   const bookings = await prisma.booking.findMany({
     where: {
       property: propertyWhere(scope),
@@ -266,8 +302,9 @@ export async function listOwnerBookings(
     orderBy: [{ slot: { date: 'desc' } }, { createdAt: 'desc' }],
     include: {
       property: { select: { slug: true, titleAr: true, titleEn: true } },
-      slot: { select: { date: true, period: true } },
+      slot: { select: { date: true, period: true, startAt: true, endAt: true } },
       payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+      user: { select: { name: true } },
     },
   });
 
@@ -281,12 +318,18 @@ export async function listOwnerBookings(
       pay?.status === PaymentStatus.succeeded
         ? resolvePayoutStatus({
             paymentSucceeded: true,
+            bookingFullyPaid: b.paymentState === 'fully_paid',
             bookingCancelled: b.status === BookingStatus.cancelled,
             refundStatus: pay.refundStatus,
             payoutAvailableAt,
           })
         : pay?.payoutStatus ?? null;
 
+    const timed = occupancyTimes({
+      bookingStartAt: b.bookingStartAt,
+      bookingEndAt: b.bookingEndAt,
+      slot: b.slot,
+    });
     return {
       id: b.id,
       publicCode: b.publicCode,
@@ -297,15 +340,46 @@ export async function listOwnerBookings(
       propertyTitleEn: b.property.titleEn ?? b.property.titleAr,
       date: formatDateOnly(b.slot.date),
       period: b.slot.period,
+      startAtLocal: timed ? formatLocalTime(timed.startAt, getPlatformTimeZone()) : null,
+      endAtLocal: timed ? formatLocalTime(timed.endAt, getPlatformTimeZone()) : null,
+      timeZone: getPlatformTimeZone(),
+      inboxGroup: classifyOwnerInboxGroup({
+        status: b.status,
+        date: formatDateOnly(b.slot.date),
+        timeZone: getPlatformTimeZone(),
+      }),
       guestsCount: b.guestsCount,
       totalAmount: decimalToNumber(b.totalAmount),
       currency: b.currency,
+      depositAmount: decimalToNumber(b.depositAmount),
+      customerName: b.user.name,
+      instantBookingEnabled: b.instantBookingEnabled,
+      ownerDecisionAt: b.ownerDecisionAt?.toISOString() ?? null,
+      ownerDecisionReason: b.ownerDecisionReason,
+      ownerApprovalExpiresAt: b.ownerApprovalExpiresAt?.toISOString() ?? null,
+      ownerDecisionState: !b.instantBookingEnabled
+        ? b.status === BookingStatus.pending_owner_approval
+          ? 'pending'
+          : b.status === BookingStatus.expired
+            ? 'expired'
+            : b.status === BookingStatus.cancelled && b.ownerDecisionAt
+              ? 'rejected'
+              : b.status === BookingStatus.pending_payment || b.status === BookingStatus.confirmed
+                ? 'accepted'
+                : 'not_applicable'
+        : 'not_applicable',
+      canAccept: b.status === BookingStatus.pending_owner_approval,
+      canReject: b.status === BookingStatus.pending_owner_approval,
       createdAt: b.createdAt.toISOString(),
       paymentStatus: toPaymentDisplayStatus(pay, b.status),
       customerPayableAmount: pay ? decimalToNumber(pay.customerPayableAmount) : null,
       ownerNetPayoutAmount: pay ? decimalToNumber(pay.ownerNetPayoutAmount) : null,
-      payoutStatus,
-      payoutAvailableAt: payoutAvailableAt?.toISOString() ?? null,
+      payoutStatus:
+        b.paymentState === 'fully_paid' && pay?.purpose !== 'deposit' ? payoutStatus : 'not_ready',
+      payoutAvailableAt:
+        b.paymentState === 'fully_paid' ? payoutAvailableAt?.toISOString() ?? null : null,
+      paymentState: b.paymentState,
+      isFullyPaid: b.paymentState === 'fully_paid',
     };
   });
 }
@@ -336,16 +410,12 @@ export async function listOwnerAvailability(
     },
   });
 
-  return slots.map((s) => ({
-    id: s.id,
-    propertyId: s.propertyId,
-    date: formatDateOnly(s.date),
-    period: s.period,
-    price: decimalToNumber(s.price),
-    currency: 'JOD',
-    status: s.status,
-    hasActiveBooking: s.bookings.length > 0 || s.status === AvailabilitySlotStatus.booked,
-  }));
+  return slots.map((s) =>
+    mapOwnerSlotRow({
+      ...s,
+      hasActiveBooking: s.bookings.length > 0 || s.status === AvailabilitySlotStatus.booked,
+    }),
+  );
 }
 
 export async function patchOwnerAvailabilitySlot(
@@ -391,15 +461,49 @@ export async function patchOwnerAvailabilitySlot(
   const prevStatus = slot.status;
   const prevPrice = decimalToNumber(slot.price);
 
-  const data: { status?: AvailabilitySlotStatus; price?: number } = {};
+  const data: {
+    status?: AvailabilitySlotStatus;
+    price?: number;
+    priceOverridden?: boolean;
+  } = {};
   if (input.status !== undefined) {
     data.status =
       input.status === 'blocked'
         ? AvailabilitySlotStatus.blocked
         : AvailabilitySlotStatus.available;
   }
+  if (input.status === 'available' && slot.status === AvailabilitySlotStatus.blocked) {
+    const interval = slotTimesOrNull(slot);
+    if (interval) {
+      const holdings = await prisma.booking.findMany({
+        where: {
+          propertyId: slot.propertyId,
+          status: { in: SLOT_HOLDING_STATUSES },
+        },
+        select: {
+          availabilitySlotId: true,
+          bookingStartAt: true,
+          bookingEndAt: true,
+          slot: { select: { startAt: true, endAt: true } },
+        },
+      });
+      const conflict = holdings.some((h) => {
+        if (h.availabilitySlotId === slot.id) return false;
+        const occ = occupancyTimes(h);
+        return occ ? intervalsOverlap(occ.startAt, occ.endAt, interval.startAt, interval.endAt) : false;
+      });
+      if (conflict) {
+        throw new AppError(
+          409,
+          'SLOT_OVERLAP_CONFLICT',
+          'Cannot reopen this slot while another overlapping booking is active',
+        );
+      }
+    }
+  }
   if (input.price !== undefined) {
     data.price = input.price;
+    data.priceOverridden = true;
   }
 
   const updated = await prisma.availabilitySlot.update({
@@ -445,14 +549,107 @@ export async function patchOwnerAvailabilitySlot(
     });
   }
 
-  return {
-    id: updated.id,
-    propertyId: updated.propertyId,
-    date: formatDateOnly(updated.date),
-    period: updated.period,
-    price: decimalToNumber(updated.price),
-    currency: 'JOD',
-    status: updated.status,
+  return mapOwnerSlotRow({
+    ...updated,
     hasActiveBooking: false,
-  };
+  });
+}
+
+export async function listOwnerAvailabilityRules(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return listPropertyAvailabilityRules(propertyId);
+}
+
+export async function putOwnerAvailabilityRules(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  rules: AvailabilityRuleInput[],
+  req?: AuthenticatedRequest,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return putPropertyAvailabilityRules(propertyId, rules, userId, req);
+}
+
+export async function deleteOwnerAvailabilityRule(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  ruleId: string,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  await deletePropertyAvailabilityRule(propertyId, ruleId);
+}
+
+export async function previewOwnerAvailabilityGeneration(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  input: GenerateAvailabilityInput,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return previewAvailabilityGeneration(propertyId, input);
+}
+
+export async function generateOwnerAvailability(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  input: GenerateAvailabilityInput,
+  req?: AuthenticatedRequest,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  const result = await generateAvailabilityForProperty(propertyId, input);
+  await createAuditLog({
+    actorUserId: userId,
+    action: 'owner.availability_generated',
+    entityType: 'property',
+    entityId: propertyId,
+    metadata: { ...result },
+    req,
+  });
+  return result;
+}
+
+export async function previewOwnerApplyRuleToFuture(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  ruleId: string,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return previewApplyRuleToFuture(propertyId, ruleId);
+}
+
+export async function applyOwnerRuleToFuture(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+  ruleId: string,
+  input: ApplyRuleToFutureInput,
+  req?: AuthenticatedRequest,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return applyRuleToFutureSlots(propertyId, ruleId, input, userId, req);
+}
+
+export async function getOwnerAvailabilityHealth(
+  userId: string,
+  role: UserRole,
+  propertyId: string,
+) {
+  const scope = await resolveOwnerScope(userId, role);
+  await assertPropertyAccess(scope, propertyId);
+  return getPropertyAvailabilityHealth(propertyId);
 }
