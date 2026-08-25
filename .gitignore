@@ -16,6 +16,7 @@ packages/db/.env.local
 .DS_Store
 .turbo
 packages/db/generated
+uploads/
 test-results/
 playwright-report/
 blob-report/

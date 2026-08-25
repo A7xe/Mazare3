@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { ArrowLeft, Loader2, MapPin, Save } from 'lucide-react';
-import type { AdminPropertyDetail, PatchAdminPropertyStatusInput } from '@mazare3/shared';
+import Image from 'next/image';
+import {
+  assessPropertyMedia,
+  type AdminPropertyDetail,
+  type PatchAdminPropertyStatusInput,
+} from '@mazare3/shared';
+import { PropertyMediaQualityBox } from '@/components/property/property-media-quality-box';
+import { AdminPropertyPlacementsPanel } from '@/components/admin/admin-property-placements-panel';
 
 const PROPERTY_STATUSES: PatchAdminPropertyStatusInput['status'][] = [
   'draft',
@@ -19,7 +26,13 @@ const PROPERTY_STATUSES: PatchAdminPropertyStatusInput['status'][] = [
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { fetchAdminProperty, patchAdminPropertyStatus } from '@/lib/api-admin';
+import {
+  AdminApiError,
+  disableAdminCoupon,
+  disableAdminPromotion,
+  fetchAdminProperty,
+  patchAdminPropertyStatus,
+} from '@/lib/api-admin';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 
 export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) {
@@ -53,7 +66,15 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
       setProperty(res.data);
       setStatus(res.data.status);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('saveError'));
+      if (e instanceof AdminApiError && e.code === 'PROPERTY_MIN_MEDIA_REQUIRED') {
+        setError(t('mediaMinRequired'));
+      } else if (e instanceof AdminApiError && e.code === 'AVAILABILITY_SCHEDULE_REQUIRED') {
+        setError(t('availabilityScheduleRequired'));
+      } else if (e instanceof AdminApiError && e.code === 'AVAILABILITY_SLOTS_REQUIRED') {
+        setError(t('availabilitySlotsRequired'));
+      } else {
+        setError(e instanceof Error ? e.message : t('saveError'));
+      }
     } finally {
       setSaving(false);
     }
@@ -83,12 +104,15 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
   if (!property) return null;
 
   const title = locale === 'ar' ? property.titleAr : property.titleEn;
+  const media = property.media ?? [];
+  const coverUrl = media[0]?.url ?? property.imageUrl;
+  const mediaAssessment = assessPropertyMedia(media.map((m) => ({ sortOrder: m.sortOrder })));
 
   return (
     <div className="space-y-6">
       <Button variant="ghost" size="sm" asChild className="gap-1">
         <Link href="/admin/properties">
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
           {t('backToProperties')}
         </Link>
       </Button>
@@ -97,11 +121,10 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
       )}
       <Card className="glass-panel overflow-hidden rounded-2xl border-primary/12">
         <div className="gradient-primary h-1" />
-        {property.imageUrl && (
-          <div
-            className="h-48 bg-cover bg-center"
-            style={{ backgroundImage: `url(${property.imageUrl})` }}
-          />
+        {coverUrl && (
+          <div className="relative h-48 bg-cover bg-center">
+            <Image src={coverUrl} alt={title} fill className="object-cover" priority />
+          </div>
         )}
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -123,6 +146,107 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
               {t('bookingsCount', { count: property.bookingsCount })}
             </p>
           </div>
+          <PropertyMediaQualityBox
+            media={media.map((m) => ({ sortOrder: m.sortOrder }))}
+            namespace="admin"
+          />
+          {property.availabilityHealth && (
+            <div
+              data-testid="admin-availability-health"
+              className="rounded-2xl border border-primary/12 bg-primary-soft/20 p-4 text-sm"
+            >
+              <p className="font-medium text-navy">{t('availabilityHealthTitle')}</p>
+              <p className="mt-2 text-muted">
+                {t('availabilityHealthRules', {
+                  count: property.availabilityHealth.enabledRuleCount,
+                })}
+              </p>
+              <p className="text-muted">
+                {t('availabilityHealthFuture', {
+                  count: property.availabilityHealth.futureBookableCount,
+                })}
+              </p>
+              {property.availabilityHealth.earliestAvailableDate &&
+                property.availabilityHealth.latestAvailableDate && (
+                  <p className="text-muted">
+                    {t('availabilityHealthRange', {
+                      from: property.availabilityHealth.earliestAvailableDate,
+                      to: property.availabilityHealth.latestAvailableDate,
+                    })}
+                  </p>
+                )}
+              {property.availabilityHealth.usesLegacyFallback && (
+                <p className="mt-1 text-muted">{t('availabilityHealthLegacy')}</p>
+              )}
+              {property.availabilityHealth.warning && (
+                <p className="mt-2 text-navy">
+                  {t(`availabilityWarning.${property.availabilityHealth.warning}`)}
+                </p>
+              )}
+            </div>
+          )}
+
+          {property.promotions && property.promotions.length > 0 ? (
+            <div className="space-y-2" data-testid="admin-promotions">
+              <p className="font-medium text-navy">{t('promotionsTitle')}</p>
+              {property.promotions.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-sm"
+                >
+                  <span>
+                    {p.titleAr} · {p.status} ·{' '}
+                    {p.discountType === 'percentage' ? `${p.discountValue}%` : `${p.discountValue} JOD`}
+                  </span>
+                  {p.status === 'active' ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void disableAdminPromotion(property.id, p.id).then(() =>
+                          fetchAdminProperty(property.id).then((r) => setProperty(r.data)),
+                        )
+                      }
+                    >
+                      {t('disablePromotion')}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {property.coupons && property.coupons.length > 0 ? (
+            <div className="space-y-2" data-testid="admin-coupons">
+              <p className="font-medium text-navy">{t('couponsTitle')}</p>
+              {property.coupons.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-sm"
+                >
+                  <span>
+                    {c.normalizedCode} · {c.status} · {c.discountValue}% · uses {c.usageCount}
+                  </span>
+                  {c.status === 'active' ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void disableAdminCoupon(property.id, c.id).then(() =>
+                          fetchAdminProperty(property.id).then((r) => setProperty(r.data)),
+                        )
+                      }
+                    >
+                      {t('disableCoupon')}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <AdminPropertyPlacementsPanel propertyId={property.id} />
+
           <div className="flex flex-wrap gap-2">
             {(property.status === 'pending_review' ||
               property.status === 'approved' ||
@@ -130,7 +254,7 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
               <Button
                 size="sm"
                 className="shadow-soft"
-                disabled={saving}
+                disabled={saving || !mediaAssessment.canPublish}
                 data-testid="admin-property-publish"
                 onClick={() => void applyStatus('published')}
               >
@@ -168,6 +292,24 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
               </Button>
             )}
           </div>
+
+          {media.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-navy">{t('propertyMediaGallery')}</p>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {media.map((m, i) => (
+                  <div
+                    key={m.id}
+                    className={`relative aspect-[4/3] overflow-hidden rounded-xl border ${
+                      i === 0 ? 'border-primary/60' : 'border-border'
+                    }`}
+                  >
+                    <Image src={m.url} alt={title} fill className="object-cover" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-navy">{t('changeStatus')}</span>
@@ -185,7 +327,11 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
             </label>
             <Button
               className="shadow-soft"
-              disabled={saving || status === property.status}
+              disabled={
+                saving ||
+                status === property.status ||
+                (status === 'published' && !mediaAssessment.canPublish)
+              }
               onClick={() => void saveStatus()}
             >
               <Save className="h-4 w-4" />

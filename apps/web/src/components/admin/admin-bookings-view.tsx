@@ -75,7 +75,11 @@ export function AdminBookingsView() {
           {bookings.map((b) => {
             const title = locale === 'ar' ? b.propertyTitleAr : b.propertyTitleEn;
             return (
-              <tr key={b.id} className="border-b border-border/60">
+              <tr
+                key={b.id}
+                className="border-b border-border/60"
+                data-testid={`admin-booking-row-${b.publicCode}`}
+              >
                 <td className="px-4 py-3 font-mono text-xs">{b.publicCode}</td>
                 <td className="px-4 py-3">
                   <span className="block">{b.customerName ?? '—'}</span>
@@ -118,7 +122,7 @@ export function AdminBookingsView() {
                     </p>
                   )}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" data-testid={`admin-booking-owner-net-${b.publicCode}`}>
                   {b.ownerNetPayoutAmount != null ? (
                     <PriceDisplay
                       amount={b.ownerNetPayoutAmount}

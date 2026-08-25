@@ -20,6 +20,10 @@ test('customer refund request appears in admin refunds', async ({ page }) => {
   await page.waitForURL(/\/ar\/checkout\//, { timeout: 30_000 });
   await page.getByTestId('checkout-simulate-success').click();
   await page.waitForURL(/\/ar\/account\/bookings/, { timeout: 30_000 });
+  await page.getByTestId('pay-balance').first().click();
+  await page.waitForURL(/\/ar\/checkout\//, { timeout: 30_000 });
+  await page.getByTestId('checkout-simulate-success').click();
+  await page.waitForURL(/\/ar\/account\/bookings/, { timeout: 30_000 });
 
   const reasonInput = page.locator('[data-testid^="refund-reason-"]').first();
   await expect(reasonInput).toBeVisible({ timeout: 15_000 });

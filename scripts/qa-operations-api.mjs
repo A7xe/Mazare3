@@ -51,7 +51,7 @@ function todayPlus(days) {
   return d.toISOString().slice(0, 10);
 }
 
-async function findAvailableSlot(min = 50, max = 80) {
+async function findAvailableSlot(min = 5, max = 120) {
   const from = todayPlus(min);
   const to = todayPlus(max);
   const { status, json } = await api(
@@ -60,8 +60,13 @@ async function findAvailableSlot(min = 50, max = 80) {
     null,
     false,
   );
-  if (status !== 200) return null;
-  return json.data?.find((s) => s.status === 'available') ?? null;
+  if (status === 200) {
+    const found = json.data?.find((s) => s.status === 'available');
+    if (found) return found;
+  }
+  const ensured = await api('POST', `/internal/properties/${SLUG}/ensure-available-slot`, {}, false);
+  if (ensured.status === 200 && ensured.json.data?.date) return ensured.json.data;
+  return null;
 }
 
 async function login(creds) {
@@ -72,20 +77,42 @@ async function login(creds) {
 
 async function createPaidBooking() {
   const slot = await findAvailableSlot();
-  if (!slot) return null;
+  if (!slot) {
+    console.log('    (createPaidBooking: no slot)');
+    return null;
+  }
   let r = await api('POST', '/bookings', {
     propertySlug: SLUG,
     date: slot.date,
     period: slot.period,
     guestsCount: 4,
   });
-  if (r.status !== 201) return null;
+  if (r.status !== 201) {
+    console.log(`    (createPaidBooking: book ${r.status} ${r.json.code})`);
+    return null;
+  }
   const bookingId = r.json.data.id;
-  r = await api('POST', '/payments/create-intent', { bookingId, method: 'manual_test' });
-  if (r.status !== 201) return null;
+  r = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'deposit' });
+  if (r.status !== 201) {
+    console.log(`    (createPaidBooking: deposit intent ${r.status} ${r.json.code})`);
+    return null;
+  }
+  r = await api('POST', `/payments/${r.json.data.id}/simulate-success`, {});
+  if (r.status !== 200) {
+    console.log(`    (createPaidBooking: deposit success ${r.status})`);
+    return null;
+  }
+  r = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'balance' });
+  if (r.status !== 201) {
+    console.log(`    (createPaidBooking: balance intent ${r.status} ${r.json.code})`);
+    return null;
+  }
   const paymentId = r.json.data.id;
   r = await api('POST', `/payments/${paymentId}/simulate-success`, {});
-  if (r.status !== 200) return null;
+  if (r.status !== 200) {
+    console.log(`    (createPaidBooking: balance success ${r.status})`);
+    return null;
+  }
   return { bookingId, paymentId, slot };
 }
 
@@ -202,31 +229,35 @@ async function main() {
 
   if (!(await login(CUSTOMER))) fail('customer re-login', 'failed');
   else {
-    await api('POST', `/internal/bookings/${bookingId}/backdate-slot`, {
-      date: '2020-06-15',
-    });
-    pass('QA backdate slot for dispute');
-    r = await api('POST', `/me/bookings/${bookingId}/disputes`, {
-      type: 'property_mismatch',
-      description: 'الوصف لا يطابق ما ظهر في المنصة — اختبار QA',
-    });
-    if (r.status === 201) pass('POST dispute');
-    else fail('POST dispute', `status ${r.status} ${JSON.stringify(r.json)}`);
-  }
-
-  if (!(await login(ADMIN))) fail('admin login 2', 'failed');
-  else {
-    r = await api('GET', '/admin/disputes');
-    if (r.status === 200 && r.json.data?.some((d) => d.bookingId === bookingId)) {
-      pass('admin lists dispute');
-      const disputeId = r.json.data.find((d) => d.bookingId === bookingId).id;
-      r = await api('PATCH', `/admin/disputes/${disputeId}/status`, {
-        status: 'resolved',
-        adminNote: 'QA resolved',
+    const disputePaid = await createPaidBooking();
+    if (!disputePaid) {
+      fail('paid booking for dispute', 'failed');
+    } else {
+      pass('paid booking for dispute (separate from refunded booking)');
+      await api('POST', `/internal/bookings/${disputePaid.bookingId}/backdate-slot`, {});
+      pass('QA backdate slot for dispute');
+      r = await api('POST', `/me/bookings/${disputePaid.bookingId}/disputes`, {
+        type: 'property_mismatch',
+        description: 'الوصف لا يطابق ما ظهر في المنصة — اختبار QA',
       });
-      if (r.status === 200) pass('admin resolves dispute');
-      else fail('admin resolve dispute', `status ${r.status}`);
-    } else fail('admin dispute list', 'missing row');
+      if (r.status === 201) pass('POST dispute');
+      else fail('POST dispute', `status ${r.status} ${JSON.stringify(r.json)}`);
+
+      if (!(await login(ADMIN))) fail('admin login 2', 'failed');
+      else {
+        r = await api('GET', '/admin/disputes');
+        if (r.status === 200 && r.json.data?.some((d) => d.bookingId === disputePaid.bookingId)) {
+          pass('admin lists dispute');
+          const disputeId = r.json.data.find((d) => d.bookingId === disputePaid.bookingId).id;
+          r = await api('PATCH', `/admin/disputes/${disputeId}/status`, {
+            status: 'resolved',
+            adminNote: 'QA resolved',
+          });
+          if (r.status === 200) pass('admin resolves dispute');
+          else fail('admin resolve dispute', `status ${r.status}`);
+        } else fail('admin dispute list', 'missing row');
+      }
+    }
   }
 
   const paid2 = await (async () => {

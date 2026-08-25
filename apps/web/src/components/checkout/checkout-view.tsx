@@ -17,9 +17,12 @@ import {
   simulatePaymentSuccess,
 } from '@/lib/api-payments';
 import { Link } from '@/i18n/navigation';
+import { formatPlatformDateTime } from '@/lib/format-platform-time';
+import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
 
 export function CheckoutView({ bookingId }: { bookingId: string }) {
   const t = useTranslations('checkout');
+  const tBookings = useTranslations('bookings');
   const locale = useLocale() as 'ar' | 'en';
   const router = useRouter();
 
@@ -47,19 +50,26 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
         configRes.data.simulateEnabled ||
         (configRes.data.livePaymentsEnabled && configRes.data.provider !== 'test');
 
-      if (
-        res.data.status === 'pending_payment' &&
-        !res.data.payment &&
+      const duePurpose = res.data.duePurpose;
+      const needsIntent =
+        Boolean(duePurpose) &&
+        !res.data.isFullyPaid &&
         canCreateIntent &&
-        configRes.data.simulateEnabled
-      ) {
-        const intent = await createPaymentIntent({ bookingId, method });
-        setPayment(intent.data);
-      } else if (
-        res.data.status === 'pending_payment' &&
+        configRes.data.simulateEnabled;
+
+      const activeMatches =
         res.data.payment &&
-        ['initiated', 'pending'].includes(res.data.payment.status)
-      ) {
+        ['initiated', 'pending'].includes(res.data.payment.status) &&
+        (res.data.payment.purpose === duePurpose || !duePurpose);
+
+      if (needsIntent && !activeMatches && duePurpose) {
+        const intent = await createPaymentIntent({
+          bookingId,
+          method,
+          purpose: duePurpose,
+        });
+        setPayment(intent.data);
+      } else if (activeMatches) {
         setPayment(res.data.payment);
       }
     } catch (e) {
@@ -103,6 +113,30 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     }
   }
 
+  async function handlePaytabsCheckout() {
+    setActing(true);
+    setError(null);
+    try {
+      const duePurpose = booking?.duePurpose;
+      if (!duePurpose) throw new Error(t('payError'));
+      const intent = await createPaymentIntent({
+        bookingId,
+        method: 'card',
+        purpose: duePurpose,
+      });
+      setPayment(intent.data);
+      if (intent.data.redirectUrl) {
+        window.location.assign(intent.data.redirectUrl);
+        return;
+      }
+      setError(t('payError'));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('payError'));
+    } finally {
+      setActing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div data-testid="checkout-loading" className="flex justify-center py-20">
@@ -121,20 +155,46 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
 
   if (!booking) return null;
 
+  if (booking.status === 'pending_owner_approval') {
+    return (
+      <Card className="glass-panel rounded-3xl border-primary/12">
+        <CardHeader>
+          <CardTitle>{t('awaitingOwnerApprovalTitle')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm text-muted">
+          <p>{t('awaitingOwnerApprovalBody')}</p>
+          {booking.ownerApprovalExpiresAt && (
+            <p>
+              {formatPlatformDateTime(booking.ownerApprovalExpiresAt, locale, booking.timeZone)}
+            </p>
+          )}
+          <Button asChild variant="outline">
+            <Link href="/account/bookings">{t('viewBookings')}</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const title = locale === 'ar' ? booking.propertyTitleAr : booking.propertyTitleEn;
-  const isPaid = booking.status === 'confirmed' || payment?.status === 'succeeded';
+  const isFullyPaid = booking.isFullyPaid === true;
   const showSimulate = payConfig?.simulateEnabled === true;
+  const liveHosted =
+    payConfig?.livePaymentsEnabled === true &&
+    (payConfig.provider === 'paytabs' || payConfig.provider === 'card_gateway');
+  const awaitingPay = Boolean(booking.duePurpose) && !isFullyPaid;
   const showLiveNotReady =
-    !showSimulate &&
-    !payConfig?.livePaymentsEnabled &&
-    booking.status === 'pending_payment' &&
-    !isPaid;
-  const dueNow = booking.pricing.customerPayableAmount;
+    !showSimulate && !payConfig?.livePaymentsEnabled && awaitingPay;
+  const dueNow = booking.dueNowAmount;
+  const isDeposit = booking.duePurpose === 'deposit';
+  const isBalance = booking.duePurpose === 'balance';
+  const isFull = booking.duePurpose === 'full' || booking.paymentCollectionMode === 'full';
+  const serviceFee = booking.pricing.customerServiceFeeAmount;
 
   return (
     <div data-testid="checkout-page" className="mx-auto max-w-2xl space-y-6">
       {showSimulate && (
-        <div className="rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <div className="flex gap-2">
             <AlertTriangle className="h-5 w-5 shrink-0" />
             <p>{t('devNotice')}</p>
@@ -173,15 +233,37 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
               {booking.date} — {t(`period.${booking.period}`)} — {booking.guestsCount}{' '}
               {t('guests')}
             </p>
+            {booking.startAtLocal && booking.endAtLocal && (
+              <p data-testid="checkout-booking-times" className="text-sm text-navy">
+                {booking.startAtLocal} – {booking.endAtLocal} ({booking.timeZone})
+              </p>
+            )}
+            {booking.usesLegacyTiming && (
+              <p data-testid="checkout-legacy-timing" className="text-xs text-muted">
+                {t('legacyTimingNote')}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant="muted">{t(`bookingStatus.${booking.status}`)}</Badge>
-            <Badge variant="highlight" data-testid="checkout-full-payment-badge">
-              {t('fullPaymentBadge')}
-            </Badge>
-            {booking.paymentStatus && (
-              <Badge variant={isPaid ? 'highlight' : 'default'}>
-                {t(`paymentStatus.${booking.paymentStatus}`)}
+            {isDeposit && (
+              <Badge variant="highlight" data-testid="checkout-deposit-badge">
+                {t('depositBadge')}
+              </Badge>
+            )}
+            {isBalance && (
+              <Badge variant="highlight" data-testid="checkout-balance-badge">
+                {t('balanceBadge')}
+              </Badge>
+            )}
+            {isFull && booking.paymentCollectionMode === 'full' && (
+              <Badge variant="highlight" data-testid="checkout-full-payment-badge">
+                {t('fullPaymentBadge')}
+              </Badge>
+            )}
+            {booking.paymentState && (
+              <Badge variant={isFullyPaid ? 'highlight' : 'default'}>
+                {tBookings(`paymentState.${booking.paymentState}`)}
               </Badge>
             )}
           </div>
@@ -195,19 +277,60 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
                 locale={locale}
               />
             </div>
-            {!isPaid && (
+            {serviceFee > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-navy">{t('serviceFee')}</span>
+                <PriceDisplay amount={serviceFee} currency={booking.currency} locale={locale} />
+              </div>
+            )}
+            {booking.depositAmount != null && booking.paymentCollectionMode !== 'full' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="text-navy">
+                  {t('depositLabel')}
+                  {booking.depositPercent != null ? ` (${booking.depositPercent}%)` : ''}
+                </span>
+                <PriceDisplay
+                  amount={booking.depositAmount}
+                  currency={booking.currency}
+                  locale={locale}
+                />
+              </div>
+            )}
+            {booking.remainingAmount != null && booking.paymentCollectionMode !== 'full' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="text-navy">{t('remainingBalance')}</span>
+                <PriceDisplay
+                  amount={booking.remainingAmount}
+                  currency={booking.currency}
+                  locale={locale}
+                />
+              </div>
+            )}
+            {booking.balanceDueAt && booking.paymentCollectionMode !== 'full' && (
+              <p className="text-xs text-muted" data-testid="checkout-balance-due-at">
+                {t('balanceDueAt')}:{' '}
+                {formatPlatformDateTime(booking.balanceDueAt, locale, booking.timeZone)}
+              </p>
+            )}
+            {awaitingPay && (
               <div
                 className="flex flex-wrap items-center justify-between gap-2 border-t border-primary/10 pt-3"
                 data-testid="checkout-due-now"
               >
-                <span className="text-sm font-semibold text-navy">{t('dueNow')}</span>
+                <span className="text-sm font-semibold text-navy">
+                  {isDeposit ? t('depositLabel') : t('dueNow')}
+                </span>
                 <PriceDisplay amount={dueNow} currency={booking.currency} locale={locale} large />
               </div>
             )}
-            <p className="text-xs text-muted">{t('fullPaymentNote')}</p>
+            {isDeposit && <p className="text-xs text-muted">{t('depositNote')}</p>}
+            {booking.paymentCollectionMode === 'full' && (
+              <p className="text-xs text-muted">{t('fullPaymentNote')}</p>
+            )}
+            {awaitingPay ? <LegalCommitmentNotice testId="checkout-legal-notice" /> : null}
           </div>
 
-          {showSimulate && !isPaid && booking.status === 'pending_payment' && (
+          {showSimulate && awaitingPay && (
             <>
               <div className="space-y-2">
                 <p className="text-sm font-medium text-navy">{t('chooseMethod')}</p>
@@ -255,7 +378,19 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
             </>
           )}
 
-          {isPaid && (
+          {liveHosted && awaitingPay && (
+            <Button
+              className="w-full shadow-soft"
+              data-testid="checkout-paytabs-pay"
+              disabled={acting}
+              onClick={() => void handlePaytabsCheckout()}
+            >
+              {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+              {acting ? t('redirectingToPaytabs') : t('payWithCard')}
+            </Button>
+          )}
+
+          {isFullyPaid && (
             <Button asChild className="w-full shadow-soft">
               <Link href="/account/bookings">{t('viewBookings')}</Link>
             </Button>

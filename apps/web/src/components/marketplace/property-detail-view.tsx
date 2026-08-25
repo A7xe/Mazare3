@@ -1,24 +1,38 @@
 import Image from 'next/image';
 import { getTranslations } from 'next-intl/server';
-import type { PublicPropertyDetail, PublicPropertySummary } from '@mazare3/shared';
+import type { AvailabilityPeriod, PublicPropertyDetail, PublicPropertySummary } from '@mazare3/shared';
 import { Link } from '@/i18n/navigation';
-import { MapPin, Star, Users, ChevronLeft } from 'lucide-react';
+import { MapPin, Users, ChevronLeft, Star } from 'lucide-react';
 import { getPropertyTitle } from '@/lib/property-helpers';
 import { VerifiedBadge } from './verified-badge';
 import { AmenityPills } from './amenity-pills';
-import { BookingPanel } from './booking-panel';
+import { PropertyBookingAside } from './property-booking-aside';
 import { MobileBookCta } from './mobile-book-cta';
 import { PropertyCard } from './property-card';
 import { TrustBadges } from './trust-badges';
 import { Badge } from '@/components/ui/badge';
+import { FavoriteButton } from '@/components/favorites/favorite-button';
+import { PublicApproxLocation } from '@/components/maps/public-approx-location';
 
 interface PropertyDetailViewProps {
   property: PublicPropertyDetail;
   similar: PublicPropertySummary[];
   locale: 'ar' | 'en';
+  initialDate?: string;
+  initialPeriod?: AvailabilityPeriod;
+  initialGuests?: number;
+  rebookId?: string;
 }
 
-export async function PropertyDetailView({ property, similar, locale }: PropertyDetailViewProps) {
+export async function PropertyDetailView({
+  property,
+  similar,
+  locale,
+  initialDate,
+  initialPeriod,
+  initialGuests,
+  rebookId,
+}: PropertyDetailViewProps) {
   const t = await getTranslations('property');
   const tCommon = await getTranslations('common');
   const title = getPropertyTitle(property, locale);
@@ -80,23 +94,58 @@ export async function PropertyDetailView({ property, similar, locale }: Property
           <div className="mt-8">
             <div className="flex flex-wrap items-start gap-3">
               <h1 className="text-2xl font-bold text-navy sm:text-3xl">{title}</h1>
+              <FavoriteButton propertyId={property.id} variant="inline" />
               <VerifiedBadge status={property.verificationStatus} />
-              {property.hasPlatformDeal && (
-                <Badge variant="highlight">{tCommon('platformDeal')}</Badge>
-              )}
+              {property.isSponsored ? (
+                <Badge variant="muted" data-testid="placement-badge-sponsored">
+                  {tCommon('sponsored')}
+                </Badge>
+              ) : property.isFeatured ? (
+                <Badge variant="highlight" data-testid="placement-badge-featured">
+                  {tCommon('featured')}
+                </Badge>
+              ) : null}
             </div>
 
             <p className="mt-3 flex items-center gap-2 text-muted">
               <MapPin className="h-4 w-4 shrink-0 text-primary" />
-              {property.approximateLocation}
+              {property.city} · {property.area}
             </p>
-            <p className="mt-1 text-xs text-muted">{t('approxLocationNote')}</p>
+            <section
+              className="mt-4 rounded-2xl border border-primary/15 bg-primary-soft/40 p-4"
+              data-testid="property-location-section"
+            >
+              <h2 className="text-sm font-semibold text-navy">{t('locationTitle')}</h2>
+              <div className="mt-2">
+                <PublicApproxLocation
+                  city={property.city}
+                  area={property.area}
+                  approximateLocation={property.approximateLocation}
+                  latitudeApprox={property.latitudeApprox}
+                  longitudeApprox={property.longitudeApprox}
+                  mapLabel={t('approxMapLabel')}
+                  textOnlyHint={t('approxMapUnavailable')}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted">{t('approxLocationNote')}</p>
+              <p className="mt-1 text-xs text-muted">{t('exactLocationPrivacyNote')}</p>
+            </section>
+
+            <div className="mt-4" data-testid="property-reviews-summary">
+              {property.reviewCount > 0 ? (
+                <p className="flex items-center gap-2 text-navy">
+                  <Star className="h-5 w-5 fill-primary text-primary" />
+                  <span className="text-lg font-semibold">{property.rating.toFixed(1)}</span>
+                  <span className="text-sm text-muted">
+                    ({property.reviewCount} {t('reviews')})
+                  </span>
+                </p>
+              ) : (
+                <p className="text-sm text-muted">{t('noReviews')}</p>
+              )}
+            </div>
 
             <div className="mt-5 flex flex-wrap gap-3 text-sm">
-              <span className="inline-flex items-center gap-1.5 rounded-xl bg-surface px-3 py-1.5 font-semibold shadow-card">
-                <Star className="h-4 w-4 fill-royal text-royal" />
-                {property.rating} ({property.reviewCount})
-              </span>
               <span className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-muted">
                 <Users className="h-4 w-4 text-primary" />
                 {property.capacity} {tCommon('guests')}
@@ -137,6 +186,27 @@ export async function PropertyDetailView({ property, similar, locale }: Property
                 </ul>
               </section>
             )}
+
+            <section className="mt-8" data-testid="property-reviews-list">
+              <h2 className="text-xl font-semibold text-navy">{t('guestReviews')}</h2>
+              {(property.reviews ?? []).length === 0 ? (
+                <p className="mt-3 text-sm text-muted">{t('noReviews')}</p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {(property.reviews ?? []).map((review) => (
+                    <li key={review.id} className="rounded-2xl border border-border bg-surface p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium text-navy">
+                        <Star className="h-4 w-4 fill-primary text-primary" />
+                        {review.rating}/5 · {review.customerDisplayName}
+                      </div>
+                      {review.comment ? (
+                        <p className="mt-2 text-sm leading-relaxed text-muted">{review.comment}</p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
         </div>
 
@@ -144,14 +214,25 @@ export async function PropertyDetailView({ property, similar, locale }: Property
           id="booking-panel"
           className="scroll-mt-24 lg:col-span-1 lg:sticky lg:top-24 lg:self-start"
         >
-          <BookingPanel property={property} locale={locale} />
+          <PropertyBookingAside
+            property={property}
+            locale={locale}
+            initialDate={initialDate}
+            initialPeriod={initialPeriod}
+            initialGuests={initialGuests}
+            rebookId={rebookId}
+          />
         </aside>
       </div>
 
-      <MobileBookCta basePrice={property.basePrice} currency={property.currency} />
+      <MobileBookCta
+        basePrice={property.basePrice}
+        currency={property.currency}
+        exact={Boolean(initialDate && initialPeriod)}
+      />
 
       {similar.length > 0 && (
-        <section className="mt-16 border-t border-border pt-12 pb-24 lg:pb-8">
+        <section className="mt-16 border-t border-border pt-12 pb-36">
           <h2 className="text-xl font-semibold text-navy">{t('similarTitle')}</h2>
           <div className="mt-6 grid gap-6 sm:grid-cols-2">
             {similar.map((p) => (

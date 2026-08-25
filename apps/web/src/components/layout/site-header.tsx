@@ -1,70 +1,34 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Link, useRouter } from '@/i18n/navigation';
+import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { LocaleSwitcher } from './locale-switcher';
-import { getMe, logout, type AuthUser } from '@/lib/api-auth';
-import { Loader2 } from 'lucide-react';
+import { logout } from '@/lib/api-auth';
+import { Loader2, LogOut } from 'lucide-react';
+import { NotificationBell } from './notification-bell';
+import { useAuthSession } from '@/components/auth/auth-session';
 
 export function SiteHeader() {
   const t = useTranslations('common');
   const tNav = useTranslations('nav');
   const router = useRouter();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const pathname = usePathname();
+  const { user, ready, refresh } = useAuthSession();
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await getMe();
-        if (!cancelled) setUser(res.data.user);
-      } catch {
-        if (!cancelled) setUser(null);
-      } finally {
-        if (!cancelled) setAuthLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const showOwnerPanel =
-    user?.role === 'owner' && user.ownerProfileStatus === 'approved';
+  const showOwnerPanel = user?.role === 'owner' && user.ownerProfileStatus === 'approved';
   const showAdminPanel = user?.role === 'admin';
+  const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/signup');
 
   async function handleLogout() {
     try {
       await logout();
     } finally {
-      setUser(null);
+      await refresh();
       router.push('/');
       router.refresh();
     }
   }
-
-  const ownerNavLink = showOwnerPanel ? (
-    <Link
-      href="/owner"
-      data-testid="nav-owner-dashboard"
-      className="text-sm font-medium text-muted transition-colors hover:text-primary"
-    >
-      {tNav('ownerDashboard')}
-    </Link>
-  ) : null;
-
-  const adminNavLink = showAdminPanel ? (
-    <Link
-      href="/admin"
-      data-testid="nav-admin-dashboard"
-      className="text-sm font-medium text-muted transition-colors hover:text-primary"
-    >
-      {tNav('adminDashboard')}
-    </Link>
-  ) : null;
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/80 bg-surface/92 shadow-card backdrop-blur-xl">
@@ -79,35 +43,12 @@ export function SiteHeader() {
           </div>
         </Link>
 
-        <nav className="hidden min-w-0 items-center gap-4 md:flex lg:gap-6">
-          <Link
-            href="/search"
-            className="text-sm font-medium text-muted transition-colors hover:text-primary"
-          >
-            {tNav('search')}
-          </Link>
-          {ownerNavLink}
-          {adminNavLink}
-          <Link
-            href="/become-owner"
-            className="text-sm font-medium text-muted transition-colors hover:text-primary"
-          >
-            {tNav('becomeOwner')}
-          </Link>
-          <Link
-            href="/account/bookings"
-            className="text-sm font-medium text-muted transition-colors hover:text-primary"
-          >
-            {tNav('myBookings')}
-          </Link>
-        </nav>
-
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           {showOwnerPanel && (
             <Link
               href="/owner"
-              data-testid="nav-owner-dashboard-mobile"
-              className="text-xs font-medium text-primary transition-colors hover:text-navy md:hidden"
+              data-testid="nav-owner-dashboard"
+              className="text-sm font-medium text-primary transition-colors hover:text-navy"
             >
               {tNav('ownerDashboard')}
             </Link>
@@ -115,17 +56,28 @@ export function SiteHeader() {
           {showAdminPanel && (
             <Link
               href="/admin"
-              data-testid="nav-admin-dashboard-mobile"
-              className="text-xs font-medium text-primary transition-colors hover:text-navy md:hidden"
+              data-testid="nav-admin-dashboard"
+              className="text-sm font-medium text-primary transition-colors hover:text-navy"
             >
               {tNav('adminDashboard')}
             </Link>
           )}
           <LocaleSwitcher />
-          {authLoading ? (
+          {!ready ? (
             <Loader2 className="h-5 w-5 animate-spin text-muted" aria-hidden />
-          ) : user ? (
+          ) : user && !isAuthPage ? (
             <>
+              <NotificationBell />
+              <Button
+                variant="ghost"
+                size="icon"
+                data-testid="nav-logout-mobile"
+                className="sm:hidden"
+                aria-label={t('logout')}
+                onClick={() => void handleLogout()}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -136,16 +88,13 @@ export function SiteHeader() {
                 {t('logout')}
               </Button>
             </>
-          ) : (
-            <>
-              <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
-                <Link href="/login">{t('login')}</Link>
-              </Button>
-              <Button size="sm" asChild className="shadow-soft">
-                <Link href="/signup">{t('signup')}</Link>
-              </Button>
-            </>
-          )}
+          ) : !user && isAuthPage ? (
+            <Button size="sm" asChild className="shadow-soft">
+              <Link href={pathname.startsWith('/signup') ? '/login' : '/signup'}>
+                {pathname.startsWith('/signup') ? t('login') : t('signup')}
+              </Link>
+            </Button>
+          ) : null}
         </div>
       </div>
     </header>

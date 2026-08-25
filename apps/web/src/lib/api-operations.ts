@@ -3,8 +3,11 @@
 import type {
   CreateDisputeInput,
   CreateRefundRequestInput,
+  CreateBookingSupportTicketInput,
+  CreateGeneralSupportTicketInput,
   DisputeSummary,
   RefundRequestSummary,
+  SupportTicketSummary,
 } from '@mazare3/shared';
 import { getApiBaseUrl } from './api';
 
@@ -54,4 +57,26 @@ export async function openDispute(bookingId: string, input: CreateDisputeInput) 
 
 export async function fetchMyDisputes() {
   return meFetch<{ data: DisputeSummary[] }>('/me/disputes');
+}
+
+export async function createBookingSupport(bookingId: string, input: CreateBookingSupportTicketInput) {
+  return meFetch<{ data: SupportTicketSummary }>(`/me/bookings/${bookingId}/support`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchMySupportTickets() {
+  return meFetch<{ data: SupportTicketSummary[] }>('/me/support');
+}
+
+export async function fetchMySupportTicket(id: string) {
+  return meFetch<{ data: SupportTicketSummary }>(`/me/support/${id}`);
+}
+
+export async function submitGeneralSupport(input: CreateGeneralSupportTicketInput) {
+  return meFetch<{ data: SupportTicketSummary }>('/support/contact', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }

@@ -5,21 +5,64 @@ import { ApiError } from '@/lib/api';
 import { PropertyDetailView } from '@/components/marketplace/property-detail-view';
 import { ErrorState } from '@/components/marketplace/error-state';
 import { getTranslations } from 'next-intl/server';
+import { AVAILABILITY_PERIODS, type AvailabilityPeriod } from '@mazare3/shared';
+import { Link } from '@/i18n/navigation';
+
+export const dynamic = 'force-dynamic';
 
 type Props = {
   params: Promise<{ locale: string; slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function PropertyDetailPage({ params }: Props) {
+function first(raw: Record<string, string | string[] | undefined>, key: string) {
+  const v = raw[key];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function PropertyDetailPage({ params, searchParams }: Props) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
   const t = await getTranslations('property');
+  const raw = await searchParams;
+  const date = first(raw, 'date') || undefined;
+  const periodRaw = first(raw, 'period');
+  const period =
+    periodRaw && (AVAILABILITY_PERIODS as readonly string[]).includes(periodRaw)
+      ? (periodRaw as AvailabilityPeriod)
+      : undefined;
+  const guestsRaw = first(raw, 'guests');
+  const guests = guestsRaw ? Number(guestsRaw) : undefined;
+  const rebookId = first(raw, 'rebook') || undefined;
 
   try {
     const { property, similar } = await fetchPropertyBySlug(slug);
-    return <PropertyDetailView property={property} similar={similar} locale={locale as 'ar' | 'en'} />;
+    return (
+      <PropertyDetailView
+        property={property}
+        similar={similar}
+        locale={locale as 'ar' | 'en'}
+        initialDate={rebookId ? undefined : date}
+        initialPeriod={rebookId ? undefined : period}
+        initialGuests={Number.isFinite(guests) ? guests : undefined}
+        rebookId={rebookId}
+      />
+    );
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
+      if (rebookId) {
+        return (
+          <div className="mx-auto max-w-lg px-4 py-16 text-center sm:px-6">
+            <h1 className="text-xl font-semibold text-navy">{t('rebookUnavailable')}</h1>
+            <p className="mt-2 text-sm text-muted">{t('rebookUnavailableHint')}</p>
+            <p className="mt-6">
+              <Link href="/search" className="font-medium text-primary">
+                {t('rebookSearchCta')}
+              </Link>
+            </p>
+          </div>
+        );
+      }
       notFound();
     }
 

@@ -25,9 +25,25 @@ import type {
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import {
+  notifyOwnerApproved,
+  notifyPropertyChangesRequested,
+  notifyPropertyPublished,
+} from './notification.service.js';
+import { assertMediaForPublish } from '../lib/property-media-guards.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
 import { toPaymentDisplayStatus } from '../mappers/payment.mapper.js';
+import { mapOwnerSlotRow } from '../lib/availability-times.js';
+import {
+  assertAndGenerateForPublish,
+  getPropertyAvailabilityHealth,
+} from './availability-rules.service.js';
+import { approvePartner, rejectPartner, suspendPartner } from './partner-admin.service.js';
+import { listAdminPropertyPromotions } from './promotion.service.js';
+import { listAdminPropertyCoupons } from './coupon.service.js';
+import { listAdminPropertyPlacements } from './placement.service.js';
+import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
 
 function parseDateOnly(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -307,66 +323,34 @@ export async function patchAdminOwnerStatus(
   input: PatchAdminOwnerStatusInput,
   req?: AuthenticatedRequest,
 ): Promise<AdminOwnerRow> {
-  const profile = await prisma.ownerProfile.findUnique({
-    where: { id: ownerProfileId },
-    include: { user: { select: { id: true, role: true } } },
-  });
-  if (!profile) {
-    throw new AppError(404, 'NOT_FOUND', 'Owner profile not found');
-  }
-
-  const prevStatus = profile.status;
-  const data: {
-    status: OwnerStatus;
-    rejectionReason?: string | null;
-  } = {
-    status: input.status as OwnerStatus,
-  };
-
-  if (input.status === 'rejected') {
-    data.rejectionReason = input.rejectionReason?.trim() || 'Application rejected';
-  } else if (input.status === 'approved') {
-    data.rejectionReason = null;
-  } else if (input.status === 'pending') {
-    data.rejectionReason = null;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.ownerProfile.update({
-      where: { id: ownerProfileId },
-      data,
+  if (input.status === 'approved') {
+    await approvePartner({
+      actorUserId,
+      ownerProfileId,
+      input: {},
+      req,
     });
-
-    if (input.status === 'approved') {
-      await tx.user.update({
-        where: { id: profile.userId },
-        data: { role: UserRole.owner },
-      });
-    } else if (input.status === 'rejected' || input.status === 'suspended') {
-      if (profile.user.role === UserRole.owner) {
-        await tx.user.update({
-          where: { id: profile.userId },
-          data: { role: UserRole.customer },
-        });
-      }
-    }
-  });
-
-  const actionMap = {
-    approved: 'admin.owner_approved',
-    rejected: 'admin.owner_rejected',
-    suspended: 'admin.owner_suspended',
-    pending: 'admin.owner_status_updated',
-  } as const;
-
-  await createAuditLog({
-    actorUserId,
-    action: actionMap[input.status] ?? 'admin.owner_status_updated',
-    entityType: 'owner_profile',
-    entityId: ownerProfileId,
-    metadata: { previousStatus: prevStatus, newStatus: input.status },
-    req,
-  });
+  } else if (input.status === 'rejected') {
+    await rejectPartner({
+      actorUserId,
+      ownerProfileId,
+      reason: input.rejectionReason?.trim() || '',
+      req,
+    });
+  } else if (input.status === 'suspended') {
+    await suspendPartner({
+      actorUserId,
+      ownerProfileId,
+      reason: input.rejectionReason?.trim() || 'Owner account suspended',
+      req,
+    });
+  } else {
+    throw new AppError(
+      400,
+      'USE_PARTNER_WORKFLOW',
+      'Use the partner onboarding endpoints to change application status. Pending reset is not supported.',
+    );
+  }
 
   const owners = await listAdminOwners();
   const row = owners.find((o) => o.id === ownerProfileId);
@@ -400,7 +384,7 @@ export async function listAdminProperties(): Promise<AdminPropertyRow[]> {
     basePrice: decimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
-    imageUrl: p.media[0]?.url,
+    imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
   }));
 }
 
@@ -409,7 +393,7 @@ export async function getAdminPropertyById(id: string): Promise<AdminPropertyDet
     where: { id },
     include: {
       owner: { include: { user: { select: { email: true } } } },
-      media: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      media: { orderBy: { sortOrder: 'asc' } },
       amenities: { include: { amenity: true } },
       _count: { select: { bookings: true } },
     },
@@ -430,15 +414,37 @@ export async function getAdminPropertyById(id: string): Promise<AdminPropertyDet
     basePrice: decimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
-    imageUrl: p.media[0]?.url,
+    imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
+    media: p.media.map((m) => ({
+      id: m.id,
+      propertyId: m.propertyId,
+      url: resolvePropertyMediaPublicUrl(m),
+      storageKey: m.storageKey ?? null,
+      type: 'image',
+      altAr: m.altAr,
+      altEn: m.altEn,
+      sortOrder: m.sortOrder,
+      isCover: m.sortOrder === 0,
+      createdAt: m.createdAt.toISOString(),
+    })),
     capacity: p.capacity,
     allowsOvernight: p.allowsOvernight,
     descriptionAr: p.descriptionAr,
     descriptionEn: p.descriptionEn ?? '',
     approximateAddress: p.approximateAddress,
     exactAddress: p.exactAddress,
+    latitudeApprox: p.latitudeApprox,
+    longitudeApprox: p.longitudeApprox,
+    latitudeExact: p.latitudeExact,
+    longitudeExact: p.longitudeExact,
+    arrivalInstructionsAr: p.arrivalInstructionsAr,
+    arrivalInstructionsEn: p.arrivalInstructionsEn,
     type: p.type,
     amenityKeys: p.amenities.map((a) => a.amenity.key),
+    availabilityHealth: await getPropertyAvailabilityHealth(id),
+    promotions: await listAdminPropertyPromotions(id),
+    coupons: await listAdminPropertyCoupons(id),
+    placements: await listAdminPropertyPlacements(id),
   };
 }
 
@@ -448,9 +454,17 @@ export async function patchAdminPropertyStatus(
   input: PatchAdminPropertyStatusInput,
   req?: AuthenticatedRequest,
 ): Promise<AdminPropertyDetail> {
-  const property = await prisma.property.findUnique({ where: { id: propertyId } });
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    include: { owner: { select: { userId: true } } },
+  });
   if (!property) {
     throw new AppError(404, 'NOT_FOUND', 'Property not found');
+  }
+
+  if (input.status === 'published') {
+    await assertMediaForPublish(propertyId);
+    await assertAndGenerateForPublish(propertyId, property.status);
   }
 
   await prisma.property.update({
@@ -466,6 +480,21 @@ export async function patchAdminPropertyStatus(
     metadata: { previousStatus: property.status, newStatus: input.status },
     req,
   });
+
+  if (input.status === 'published') {
+    void notifyPropertyPublished({
+      ownerUserId: property.owner.userId,
+      propertyId,
+      titleAr: property.titleAr,
+      titleEn: property.titleEn ?? property.titleAr,
+    }).catch((err) => console.error('[notifications] admin.property_published', err));
+  } else if (input.status === 'changes_requested') {
+    void notifyPropertyChangesRequested({
+      ownerUserId: property.owner.userId,
+      propertyId,
+      titleAr: property.titleAr,
+    }).catch((err) => console.error('[notifications] admin.property_changes_requested', err));
+  }
 
   const detail = await getAdminPropertyById(propertyId);
   return detail!;
@@ -504,15 +533,19 @@ export async function listAdminBookings(): Promise<AdminBookingRow[]> {
       createdAt: b.createdAt.toISOString(),
       paymentStatus: toPaymentDisplayStatus(pay, b.status),
       customerPayableAmount: pay ? decimalToNumber(pay.customerPayableAmount) : null,
-      platformCommissionAmount: pay ? decimalToNumber(pay.platformCommissionAmount) : null,
-      ownerNetPayoutAmount: pay ? decimalToNumber(pay.ownerNetPayoutAmount) : null,
-      payoutStatus: pay?.payoutStatus ?? null,
-      payoutAvailableAt: pay?.payoutAvailableAt?.toISOString() ?? null,
+      platformCommissionAmount: decimalToNumber(b.platformCommissionAmount),
+      ownerNetPayoutAmount: decimalToNumber(b.ownerNetPayoutAmount),
+      payoutStatus: b.paymentState === 'fully_paid' ? pay?.payoutStatus ?? null : 'not_ready',
+      payoutAvailableAt:
+        b.paymentState === 'fully_paid' ? pay?.payoutAvailableAt?.toISOString() ?? null : null,
       refundStatus: pay?.refundStatus ?? null,
       cancellationRefundAmount:
         pay?.cancellationRefundAmount != null
           ? decimalToNumber(pay.cancellationRefundAmount)
           : null,
+      paymentState: b.paymentState,
+      paymentCollectionMode: b.paymentCollectionMode,
+      isFullyPaid: b.paymentState === 'fully_paid',
     };
   });
 }
@@ -546,16 +579,12 @@ export async function listAdminAvailability(
     },
   });
 
-  return slots.map((s) => ({
-    id: s.id,
-    propertyId: s.propertyId,
-    date: formatDateOnly(s.date),
-    period: s.period,
-    price: decimalToNumber(s.price),
-    currency: 'JOD',
-    status: s.status,
-    hasActiveBooking: s.bookings.length > 0 || s.status === AvailabilitySlotStatus.booked,
-  }));
+  return slots.map((s) =>
+    mapOwnerSlotRow({
+      ...s,
+      hasActiveBooking: s.bookings.length > 0 || s.status === AvailabilitySlotStatus.booked,
+    }),
+  );
 }
 
 export async function patchAdminAvailabilitySlot(
@@ -594,7 +623,11 @@ export async function patchAdminAvailabilitySlot(
   const prevStatus = slot.status;
   const prevPrice = decimalToNumber(slot.price);
 
-  const data: { status?: AvailabilitySlotStatus; price?: number } = {};
+  const data: {
+    status?: AvailabilitySlotStatus;
+    price?: number;
+    priceOverridden?: boolean;
+  } = {};
   if (input.status !== undefined) {
     data.status =
       input.status === 'blocked'
@@ -603,6 +636,7 @@ export async function patchAdminAvailabilitySlot(
   }
   if (input.price !== undefined) {
     data.price = input.price;
+    data.priceOverridden = true;
   }
 
   const updated = await prisma.availabilitySlot.update({
@@ -625,16 +659,10 @@ export async function patchAdminAvailabilitySlot(
     req,
   });
 
-  return {
-    id: updated.id,
-    propertyId: updated.propertyId,
-    date: formatDateOnly(updated.date),
-    period: updated.period,
-    price: decimalToNumber(updated.price),
-    currency: 'JOD',
-    status: updated.status,
+  return mapOwnerSlotRow({
+    ...updated,
     hasActiveBooking: false,
-  };
+  });
 }
 
 export async function listAdminAuditLogs(limit = 100): Promise<AdminAuditLogRow[]> {
@@ -644,4 +672,15 @@ export async function listAdminAuditLogs(limit = 100): Promise<AdminAuditLogRow[
     include: { actor: { select: { email: true, name: true } } },
   });
   return logs.map(mapAuditLog);
+}
+
+export async function getAdminAvailabilityHealth(propertyId: string) {
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    select: { id: true },
+  });
+  if (!property) {
+    throw new AppError(404, 'NOT_FOUND', 'Property not found');
+  }
+  return getPropertyAvailabilityHealth(propertyId);
 }

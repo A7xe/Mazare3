@@ -11,6 +11,7 @@ export type PaymentRow = {
   amount: { toNumber(): number } | number;
   currency: string;
   method: string;
+  purpose?: string | null;
   provider: string;
   status: DbPaymentStatus;
   bookingTotalAmount: { toNumber(): number } | number;
@@ -47,15 +48,20 @@ export function toPaymentFinancialBreakdown(p: PaymentRow): PaymentFinancialBrea
   };
 }
 
-export function toPaymentSummary(p: PaymentRow): PaymentSummary {
+export function toPaymentSummary(
+  p: PaymentRow,
+  extras?: { redirectUrl?: string | null },
+): PaymentSummary {
   return {
     id: p.id,
     bookingId: p.bookingId,
     amount: decimalToNumber(p.customerPayableAmount),
     currency: p.currency,
     method: p.method,
+    purpose: (p.purpose as PaymentSummary['purpose']) ?? 'full',
     provider: p.provider,
     status: p.status,
+    redirectUrl: extras?.redirectUrl ?? null,
     financial: toPaymentFinancialBreakdown(p),
     payoutStatus: p.payoutStatus,
     payoutAvailableAt: p.payoutAvailableAt?.toISOString() ?? null,

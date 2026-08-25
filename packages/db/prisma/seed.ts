@@ -85,7 +85,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: false,
     allowsOvernight: true,
-    basePrice: 280,
+    basePrice: 480,
     verificationStatus: 'platform_verified',
     hasPlatformDeal: true,
     ratingAvg: 4.9,
@@ -95,9 +95,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'heated_pool', 'bbq', 'ac', 'wifi', 'parking'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1200&q=80',
-        altAr: 'واجهة الشاليه',
-        altEn: 'Chalet exterior',
+        url: 'https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=1200&q=80',
+        altAr: 'شاليه بإطلالة ومسبح',
+        altEn: 'Chalet with pool view',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=1200&q=80',
+        altAr: 'منطقة المسبح',
+        altEn: 'Pool area',
       },
     ],
     rules: [
@@ -127,7 +132,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: true,
-    basePrice: 350,
+    basePrice: 620,
     verificationStatus: 'platform_reviewed',
     hasPlatformDeal: false,
     ratingAvg: 4.7,
@@ -137,9 +142,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'football', 'bbq', 'wifi', 'parking'],
     images: [
       {
+        url: 'https://images.unsplash.com/photo-1602343168117-bb8ffe3e2e9f?w=1200&q=80',
+        altAr: 'فيلا بمسبح خاص',
+        altEn: 'Villa with private pool',
+      },
+      {
         url: 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=1200&q=80',
-        altAr: 'الفيلا',
-        altEn: 'Villa',
+        altAr: 'واجهة الفيلا',
+        altEn: 'Villa exterior',
       },
     ],
     rules: [
@@ -168,7 +178,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: false,
-    basePrice: 220,
+    basePrice: 175,
     verificationStatus: 'owner_uploaded',
     hasPlatformDeal: true,
     ratingAvg: 4.8,
@@ -178,9 +188,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'bbq', 'garden', 'parking'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=1200&q=80',
-        altAr: 'الاستراحة',
-        altEn: 'Istiraha',
+        url: 'https://images.unsplash.com/photo-1518780664697-55e3ad937233?w=1200&q=80',
+        altAr: 'استراحة بين الطبيعة',
+        altEn: 'Countryside istiraha',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1200&q=80',
+        altAr: 'إطلالة الحقول',
+        altEn: 'Field view',
       },
     ],
     rules: [{ titleAr: 'يومي فقط — بدون مبيت', titleEn: 'Day use only' }],
@@ -207,19 +222,24 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: true,
-    basePrice: 300,
+    basePrice: 340,
     verificationStatus: 'unverified',
     hasPlatformDeal: false,
     ratingAvg: 4.6,
     reviewCount: 15,
     checkInTime: '12:00',
     checkOutTime: '12:00',
-    amenityKeys: ['pool', 'kids_pool', 'indoor_pool', 'bbq', 'events', 'football', 'parking'],
+    amenityKeys: ['pool', 'kids_pool', 'indoor_pool', 'bbq', 'events', 'football', 'parking', 'wifi'],
     images: [
       {
+        url: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=1200&q=80',
+        altAr: 'مزرعة ترفيهية خضراء',
+        altEn: 'Green leisure farm',
+      },
+      {
         url: 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=1200&q=80',
-        altAr: 'المزرعة',
-        altEn: 'Farm',
+        altAr: 'مسبح المزرعة',
+        altEn: 'Farm pool',
       },
     ],
     rules: [{ titleAr: 'عربون عبر المنصة عند الحجز', titleEn: 'Deposit via platform when booking' }],
@@ -246,7 +266,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: false,
     allowsOvernight: true,
-    basePrice: 240,
+    basePrice: 255,
     verificationStatus: 'platform_verified',
     hasPlatformDeal: true,
     ratingAvg: 4.85,
@@ -257,8 +277,13 @@ const PROPERTIES: PropertySeed[] = [
     images: [
       {
         url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=1200&q=80',
-        altAr: 'شاليه مادبا',
-        altEn: 'Madaba chalet',
+        altAr: 'شاليه مادبا العائلي',
+        altEn: 'Madaba family chalet',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1600566753086-00f18fb6b3ea?w=1200&q=80',
+        altAr: 'فناء الشاليه',
+        altEn: 'Chalet courtyard',
       },
     ],
     rules: [{ titleAr: 'احترام أوقات الدخول', titleEn: 'Respect check-in times' }],
@@ -285,7 +310,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: false,
     allowsOvernight: true,
-    basePrice: 195,
+    basePrice: 190,
     verificationStatus: 'platform_reviewed',
     hasPlatformDeal: false,
     ratingAvg: 4.75,
@@ -295,9 +320,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'heated_pool', 'wifi', 'parking', 'ac'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=1200&q=80',
-        altAr: 'المسبح',
-        altEn: 'Pool',
+        url: 'https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=1200&q=80',
+        altAr: 'بيت مسبح بإضاءة مسائية',
+        altEn: 'Evening pool house',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=1200&q=80',
+        altAr: 'واجهة البيت',
+        altEn: 'House exterior',
       },
     ],
     rules: [{ titleAr: 'ممنوع الحفلات الصاخبة', titleEn: 'No loud parties' }],
@@ -324,7 +354,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: true,
-    basePrice: 265,
+    basePrice: 410,
     verificationStatus: 'platform_verified',
     hasPlatformDeal: false,
     ratingAvg: 4.92,
@@ -334,9 +364,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'garden', 'bbq', 'wifi', 'parking'],
     images: [
       {
+        url: 'https://images.unsplash.com/photo-1449844908441-8829872d2607?w=1200&q=80',
+        altAr: 'فيلا وسط الطبيعة',
+        altEn: 'Forest-side villa',
+      },
+      {
         url: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=1200&q=80',
-        altAr: 'فيلا عجلون',
-        altEn: 'Ajloun villa',
+        altAr: 'حديقة الفيلا',
+        altEn: 'Villa garden',
       },
     ],
     rules: [{ titleAr: 'الحفاظ على نظافة الحديقة', titleEn: 'Keep garden clean' }],
@@ -363,19 +398,24 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: true,
-    basePrice: 275,
+    basePrice: 285,
     verificationStatus: 'owner_uploaded',
     hasPlatformDeal: true,
     ratingAvg: 4.55,
     reviewCount: 12,
     checkInTime: '12:00',
     checkOutTime: '12:00',
-    amenityKeys: ['pool', 'football', 'bbq', 'parking', 'events'],
+    amenityKeys: ['pool', 'football', 'bbq', 'parking', 'events', 'wifi'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1605276374101-dee2a0ed3cd6?w=1200&q=80',
-        altAr: 'المزرعة',
-        altEn: 'Farm',
+        url: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=1200&q=80',
+        altAr: 'مزرعة بإطلالة جبلية',
+        altEn: 'Farm with mountain view',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1200&q=80',
+        altAr: 'تلال المزرعة',
+        altEn: 'Farm hills',
       },
     ],
     rules: [{ titleAr: 'عدم إدخال ضيوف إضافيين', titleEn: 'No extra guests' }],
@@ -402,7 +442,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: false,
     allowsOvernight: true,
-    basePrice: 450,
+    basePrice: 750,
     verificationStatus: 'platform_verified',
     hasPlatformDeal: false,
     ratingAvg: 4.95,
@@ -412,9 +452,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'heated_pool', 'indoor_pool', 'events', 'bbq', 'wifi', 'parking', 'ac'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1600047509807-ba8f99d2cd7a?w=1200&q=80',
-        altAr: 'المنتجع',
-        altEn: 'Resort',
+        url: 'https://images.unsplash.com/photo-1540541338287-41700207dee6?w=1200&q=80',
+        altAr: 'منتجع خاص فاخر',
+        altEn: 'Luxury private resort',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1600047509358-9dc75507daeb?w=1200&q=80',
+        altAr: 'واجهة المنتجع',
+        altEn: 'Resort exterior',
       },
     ],
     rules: [
@@ -443,7 +488,7 @@ const PROPERTIES: PropertySeed[] = [
     allowsFamilies: true,
     allowsYouth: true,
     allowsOvernight: true,
-    basePrice: 210,
+    basePrice: 230,
     verificationStatus: 'platform_reviewed',
     hasPlatformDeal: true,
     ratingAvg: 4.7,
@@ -453,9 +498,14 @@ const PROPERTIES: PropertySeed[] = [
     amenityKeys: ['pool', 'bbq', 'wifi', 'parking', 'garden'],
     images: [
       {
-        url: 'https://images.unsplash.com/photo-1600566753190-17f0baa2a6a3?w=1200&q=80',
-        altAr: 'شاليه السلط',
-        altEn: 'Salt chalet',
+        url: 'https://images.unsplash.com/photo-1600585154526-990dced4db0d?w=1200&q=80',
+        altAr: 'شاليه بإطلالة بانوراما',
+        altEn: 'Panorama chalet',
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1600566753086-00f18fb6b3ea?w=1200&q=80',
+        altAr: 'مساحة خارجية',
+        altEn: 'Outdoor lounge',
       },
     ],
     rules: [{ titleAr: 'ممنوع التدخين في الداخل', titleEn: 'No indoor smoking' }],
@@ -469,12 +519,40 @@ async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
 
   await prisma.auditLog.deleteMany();
+  await prisma.notificationDelivery.deleteMany().catch(() => undefined);
+  await prisma.notification.deleteMany().catch(() => undefined);
+  await prisma.ownerSettlementItem.deleteMany();
+  await prisma.ownerSettlement.deleteMany();
+  await prisma.ownerPayout.deleteMany();
+  await prisma.dispute.deleteMany();
+  await prisma.refundRequest.deleteMany();
+  await prisma.paymentEvent.deleteMany();
+  await prisma.payment.deleteMany();
+  await prisma.review.deleteMany();
+  await prisma.supportTicket.deleteMany();
+  await prisma.couponRedemption.deleteMany();
+  await prisma.platformCouponRedemption.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.availabilitySlot.deleteMany();
+  await prisma.propertyAvailabilityRule.deleteMany();
   await prisma.favorite.deleteMany();
   await prisma.propertyAmenity.deleteMany();
   await prisma.propertyMedia.deleteMany();
   await prisma.propertyRule.deleteMany();
+  await prisma.propertyPromotion.deleteMany();
+  await prisma.propertyCoupon.deleteMany();
+  await prisma.propertyPlacement.deleteMany();
+  await prisma.sponsoredPlacementOrder.deleteMany();
+  await prisma.platformCoupon.deleteMany();
+  await prisma.sponsoredPlacementPackage.deleteMany();
+  await prisma.ownerDocument.deleteMany();
+  await prisma.partnerDocumentRequirement.deleteMany();
+  await prisma.partnerAgreementAcceptance.deleteMany();
+  await prisma.partnerAgreement.deleteMany();
+  await prisma.partnerCommercialTerms.deleteMany();
+  await prisma.ownerOnboardingChangeRequest.deleteMany();
+  await prisma.ownerPayoutProfile.deleteMany();
+  await prisma.ownerVerificationProfile.deleteMany();
   await prisma.property.deleteMany();
   await prisma.ownerProfile.deleteMany();
   await prisma.user.deleteMany();
@@ -563,6 +641,7 @@ async function main() {
         allowsFamilies: p.allowsFamilies,
         allowsYouth: p.allowsYouth,
         allowsOvernight: p.allowsOvernight,
+        instantBookingEnabled: true,
         checkInTime: p.checkInTime,
         checkOutTime: p.checkOutTime,
         status: PropertyStatus.published,

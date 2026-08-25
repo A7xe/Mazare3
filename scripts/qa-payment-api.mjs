@@ -53,18 +53,25 @@ function todayPlus(days) {
   return d.toISOString().slice(0, 10);
 }
 
-async function findAvailableSlot(minDaysAhead = 1) {
+async function findAvailableSlot(minDaysAhead = 1, rangeDays = 25) {
   const from = todayPlus(minDaysAhead);
-  const to = todayPlus(minDaysAhead + 25);
+  const to = todayPlus(minDaysAhead + rangeDays);
   const { status, json } = await api(
     'GET',
     `/properties/${SLUG}/availability?from=${from}&to=${to}`,
     null,
     false,
   );
-  if (status !== 200) return null;
-  const slot = json.data?.find((s) => s.status === 'available');
-  return slot ? { date: slot.date, period: slot.period } : null;
+  if (status === 200) {
+    const slots = json.data ?? [];
+    const slot = [...slots].reverse().find((s) => s.status === 'available') ?? slots.find((s) => s.status === 'available');
+    if (slot) return { date: slot.date, period: slot.period };
+  }
+  const ensured = await api('POST', `/internal/properties/${SLUG}/ensure-available-slot`, {}, false);
+  if (ensured.status === 200 && ensured.json.data?.date) {
+    return { date: ensured.json.data.date, period: ensured.json.data.period };
+  }
+  return null;
 }
 
 function roundMoney(n) {
@@ -97,7 +104,7 @@ async function createPendingBooking() {
 }
 
 async function main() {
-  console.log('\n💳 Phase 6B.1 Payments API QA (full payment + policy)\n');
+  console.log('\n💳 Phase 6B.1 / 10A Payments API QA (deposit + policy)\n');
 
   if (!(await login(CUSTOMER))) {
     fail('customer login', 'failed');
@@ -105,6 +112,9 @@ async function main() {
     process.exit(1);
   }
   pass('customer login');
+
+  const cfg = await api('GET', '/payments/config', null, false);
+  const depositPct = Number(cfg.json.data?.policy?.defaultDepositPercent ?? 30);
 
   const created = await createPendingBooking();
   if (!created) {
@@ -115,19 +125,25 @@ async function main() {
   const { booking } = created;
   pass('POST /bookings → pending_payment');
   const bookingId = booking.id;
+  const expectDeposit =
+    Math.round((Math.round(Number(booking.totalAmount) * 100) * depositPct) / 100) / 100;
 
   let r = await api('POST', '/payments/create-intent', {
     bookingId,
     method: 'card',
   });
-  if (r.status === 201 && r.json.data?.id && r.json.data?.status === 'pending') {
+  if (
+    r.status === 201 &&
+    r.json.data?.id &&
+    (r.json.data?.status === 'pending' || r.json.data?.status === 'initiated')
+  ) {
     pass('POST /payments/create-intent');
     const payable =
       r.json.data.financial?.customerPayableAmount ?? Number(r.json.data.amount);
-    if (payable === Number(booking.totalAmount)) {
-      pass('customerPayableAmount equals full booking amount');
+    if (payable === expectDeposit) {
+      pass('first intent amount equals deposit (not full total)');
     } else {
-      fail('customerPayableAmount', `expected ${booking.totalAmount} got ${payable}`);
+      fail('deposit intent amount', `expected ${expectDeposit} got ${payable}`);
     }
   } else {
     fail('POST /payments/create-intent', `${r.status} ${JSON.stringify(r.json)}`);
@@ -164,15 +180,10 @@ async function main() {
     } else {
       fail('ownerNetPayoutAmount', JSON.stringify(fin));
     }
-    if (r.json.data.payoutStatus && r.json.data.payoutStatus !== 'paid') {
-      pass('payoutStatus not paid immediately');
+    if (r.json.data.payoutStatus === 'not_ready' && !r.json.data.payoutAvailableAt) {
+      pass('deposit payoutStatus not_ready (no payout after العربون)');
     } else {
-      fail('payoutStatus', r.json.data.payoutStatus);
-    }
-    if (r.json.data.payoutAvailableAt) {
-      pass('payoutAvailableAt set after success');
-    } else {
-      fail('payoutAvailableAt', 'missing');
+      fail('payoutStatus after deposit', `${r.json.data.payoutStatus} ${r.json.data.payoutAvailableAt}`);
     }
   } else {
     fail('simulate-success', `${r.status} ${JSON.stringify(r.json)}`);
@@ -180,14 +191,30 @@ async function main() {
 
   r = await api('GET', `/me/bookings/${bookingId}`);
   if (r.status === 200 && r.json.data?.status === 'confirmed') {
-    pass('booking confirmed after payment');
+    pass('booking confirmed after deposit');
   } else {
     fail('booking confirmed', `${r.status} status=${r.json.data?.status}`);
   }
 
+  r = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'deposit' });
+  if (r.status === 400 && (r.json.code === 'DEPOSIT_ALREADY_PAID' || r.json.code === 'ALREADY_PAID')) {
+    pass('cannot create second deposit intent');
+  } else {
+    fail('second deposit intent', `status ${r.status} code ${r.json.code}`);
+  }
+
+  r = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'balance' });
+  const balancePid = r.json.data?.id;
+  if (r.status === 201 && balancePid) {
+    pass('create balance intent after deposit');
+    await api('POST', `/payments/${balancePid}/simulate-success`);
+  } else {
+    fail('balance intent', `status ${r.status} code ${r.json.code}`);
+  }
+
   r = await api('POST', '/payments/create-intent', { bookingId, method: 'card' });
   if (r.status === 400 && (r.json.code === 'ALREADY_PAID' || r.json.code === 'BOOKING_NOT_PAYABLE')) {
-    pass('cannot create intent for paid booking');
+    pass('cannot create intent after fully paid');
   } else {
     fail('intent on paid booking', `status ${r.status} code ${r.json.code}`);
   }
@@ -243,16 +270,17 @@ async function main() {
       fail('simulate-failure', `${r.status}`);
     }
     r = await api('GET', `/me/bookings/${bid2}`);
-    if (r.status === 200 && r.json.data?.status === 'cancelled') {
-      pass('booking cancelled after payment failure');
+    if (r.status === 200 && r.json.data?.status === 'pending_payment') {
+      pass('booking remains pending_payment after payment failure (retry)');
     } else {
       fail('booking after failure', `status ${r.json.data?.status}`);
     }
     r = await api('POST', '/payments/create-intent', { bookingId: bid2, method: 'card' });
-    if (r.status === 400 && r.json.code === 'BOOKING_NOT_PAYABLE') {
-      pass('cancelled booking cannot be paid');
+    if (r.status === 201) {
+      pass('failed deposit can be retried');
+      await api('POST', `/me/bookings/${bid2}/cancel`);
     } else {
-      fail('pay cancelled booking', `status ${r.status} code ${r.json.code}`);
+      fail('retry after failure', `status ${r.status} code ${r.json.code}`);
     }
   }
 
@@ -273,6 +301,10 @@ async function main() {
     if (r.status === 200) pass('internal backdate-expiry');
     else fail('backdate-expiry', `status ${r.status} (enable ENABLE_INTERNAL_QA_ROUTES)`);
 
+    r = await api('POST', `/internal/bookings/${expBid}/backdate-hold`, null, false);
+    if (r.status === 200) pass('internal backdate-hold (with intent)');
+    else fail('backdate-hold with intent', `status ${r.status}`);
+
     r = await api('POST', '/internal/payments/expire-stale', null, false);
     if (r.status === 200 && r.json.data?.expired >= 1) pass('expire-stale expires payment');
     else fail('expire-stale', JSON.stringify(r.json));
@@ -289,11 +321,9 @@ async function main() {
     if (r.status === 200 && r.json.data?.status === 'expired') pass('booking status expired');
     else fail('booking expired', `status ${r.json.data?.status}`);
 
-    const from = todayPlus(0);
-    const to = todayPlus(25);
     const avail = await api(
       'GET',
-      `/properties/${SLUG}/availability?from=${from}&to=${to}`,
+      `/properties/${SLUG}/availability?from=${expDate}&to=${expDate}`,
       null,
       false,
     );
@@ -327,7 +357,7 @@ async function main() {
     fail('paid booking policy view', JSON.stringify(r.json.data));
   }
 
-  const farSlot = await findAvailableSlot(10);
+  const farSlot = await findAvailableSlot(4, 86);
   if (farSlot) {
     const farBook = await api('POST', '/bookings', {
       propertySlug: SLUG,
@@ -338,25 +368,30 @@ async function main() {
     if (farBook.status === 201 && farBook.json.data?.id) {
       const farId = farBook.json.data.id;
       const farTotal = Number(farBook.json.data.totalAmount);
-      r = await api('POST', '/payments/create-intent', { bookingId: farId, method: 'card' });
-      const farPid = r.json.data?.id;
-      if (farPid) {
-        await api('POST', `/payments/${farPid}/simulate-success`);
-        r = await api('POST', `/me/bookings/${farId}/cancel`);
-        if (r.status === 200 && r.json.data?.status === 'cancelled') {
-          pass('paid booking cancel with policy → cancelled');
-        } else {
-          fail('paid booking cancel', `status ${r.status} code ${r.json.code}`);
+      r = await api('POST', '/payments/create-intent', { bookingId: farId, method: 'card', purpose: 'deposit' });
+      const farDep = r.json.data?.id;
+      if (farDep) {
+        await api('POST', `/payments/${farDep}/simulate-success`);
+        r = await api('POST', '/payments/create-intent', { bookingId: farId, method: 'card', purpose: 'balance' });
+        const farPid = r.json.data?.id;
+        if (farPid) {
+          await api('POST', `/payments/${farPid}/simulate-success`);
+          r = await api('POST', `/me/bookings/${farId}/cancel`);
+          if (r.status === 200 && r.json.data?.status === 'cancelled') {
+            pass('paid booking cancel with policy → cancelled');
+          } else {
+            fail('paid booking cancel', `status ${r.status} code ${r.json.code}`);
+          }
+          await login(ADMIN);
+          r = await api('GET', '/admin/payments');
+          const farPay = r.json.data?.find((p) => p.bookingId === farId);
+          if (farPay?.refundStatus === 'pending' && farPay.cancellationRefundAmount > 0) {
+            pass('cancellation sets refundStatus pending (no real refund)');
+          } else {
+            fail('refund foundation', JSON.stringify(farPay));
+          }
+          await login(CUSTOMER);
         }
-        await login(ADMIN);
-        r = await api('GET', '/admin/payments');
-        const farPay = r.json.data?.find((p) => p.bookingId === farId);
-        if (farPay?.refundStatus === 'pending' && farPay.cancellationRefundAmount > 0) {
-          pass('cancellation sets refundStatus pending (no real refund)');
-        } else {
-          fail('refund foundation', JSON.stringify(farPay));
-        }
-        await login(CUSTOMER);
       }
     }
   } else {

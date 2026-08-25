@@ -1,11 +1,14 @@
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
-import { Cairo, Inter } from 'next/font/google';
+import { Tajawal, Inter } from 'next/font/google';
 import { LOCALES, type Locale } from '@mazare3/shared';
 import { routing } from '@/i18n/routing';
-import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
+import { SiteChrome } from '@/components/layout/site-chrome';
+import { FavoritesProvider } from '@/components/favorites/favorites-context';
+import { AuthSessionProvider } from '@/components/auth/auth-session';
+import { getSessionUser } from '@/lib/get-session-user';
 import '../globals.css';
 
 const inter = Inter({
@@ -14,9 +17,10 @@ const inter = Inter({
   display: 'swap',
 });
 
-const cairo = Cairo({
+const tajawal = Tajawal({
   subsets: ['arabic', 'latin'],
-  variable: '--font-cairo',
+  weight: ['400', '500', '700'],
+  variable: '--font-tajawal',
   display: 'swap',
 });
 
@@ -39,15 +43,20 @@ export default async function LocaleLayout({
 
   setRequestLocale(locale);
   const messages = await getMessages();
+  const initialUser = await getSessionUser();
   const dir = locale === 'ar' ? 'rtl' : 'ltr';
 
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>
-      <body className={`${inter.variable} ${cairo.variable} min-h-screen flex flex-col`}>
+      <body className={`${inter.variable} ${tajawal.variable} min-h-screen flex flex-col`}>
         <NextIntlClientProvider messages={messages}>
-          <SiteHeader />
-          <main className="flex-1">{children}</main>
-          <SiteFooter />
+          <AuthSessionProvider initialUser={initialUser}>
+            <FavoritesProvider>
+              <SiteChrome />
+              <main className="flex-1 pb-[4.75rem] sm:pb-20 md:pb-8">{children}</main>
+              <SiteFooter />
+            </FavoritesProvider>
+          </AuthSessionProvider>
         </NextIntlClientProvider>
       </body>
     </html>

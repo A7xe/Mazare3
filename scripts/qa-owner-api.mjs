@@ -58,6 +58,12 @@ function todayPlus(days) {
   return d.toISOString().slice(0, 10);
 }
 
+async function ensureQaSlot(slug) {
+  const r = await api('POST', `/internal/properties/${slug}/ensure-available-slot`, {}, false);
+  if (r.status === 200 && r.json.data?.date) return r.json.data;
+  return null;
+}
+
 async function main() {
   console.log('\n🔐 Phase 4A Owner API QA\n');
 
@@ -82,8 +88,9 @@ async function main() {
     if (emerald) pass('owner1 includes chalet-emerald-dead-sea');
     else fail('owner1 includes chalet-emerald', 'missing');
 
-    const from = todayPlus(1);
-    const to = todayPlus(10);
+    const qaSlot = await ensureQaSlot('chalet-emerald-dead-sea');
+    const from = qaSlot?.date ?? todayPlus(1);
+    const to = qaSlot?.date ?? todayPlus(80);
     const avail = await api(
       'GET',
       `/owner/availability?propertyId=${emerald.id}&from=${from}&to=${to}`,
@@ -127,9 +134,12 @@ async function main() {
     const jerash = o2props.json.data?.find((p) => p.slug === 'istiraha-jerash-olive');
     let otherSlotId = null;
     if (jerash) {
+      const jerashSlot = await ensureQaSlot('istiraha-jerash-olive');
+      const jFrom = jerashSlot?.date ?? todayPlus(1);
+      const jTo = jerashSlot?.date ?? todayPlus(80);
       const crossAvail = await api(
         'GET',
-        `/owner/availability?propertyId=${jerash.id}&from=${from}&to=${to}`,
+        `/owner/availability?propertyId=${jerash.id}&from=${jFrom}&to=${jTo}`,
       );
       otherSlotId = crossAvail.json.data?.[0]?.id;
     }
@@ -153,9 +163,7 @@ async function main() {
       false,
     );
     const bookable = pubAvail.json.data?.find((s) => s.status === 'available');
-    if (!bookable) {
-      fail('customer books slot', 'no public available slot');
-    }
+    if (bookable) {
     const bookBody = {
       propertySlug: 'chalet-emerald-dead-sea',
       date: bookable.date,
@@ -192,7 +200,10 @@ async function main() {
     } else {
       fail('customer books slot', `status ${created.status}`);
     }
-  }
+    } else {
+      fail('customer books slot', 'no public available slot');
+    }
+    }
 
   console.log(`\n📊 ${passed} passed, ${failed} failed\n`);
   if (failures.length) {

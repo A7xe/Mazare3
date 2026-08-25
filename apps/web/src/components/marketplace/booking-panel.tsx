@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { usePathname, useRouter } from '@/i18n/navigation';
 import { Calendar, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
-import type { AvailabilityPeriod, PublicAvailabilitySlot, PublicPropertyDetail } from '@mazare3/shared';
+import type { AvailabilityPeriod, CouponValidationResult, PublicAvailabilitySlot, PublicPropertyDetail } from '@mazare3/shared';
 import { AVAILABILITY_PERIODS } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,12 +19,22 @@ import {
   createBooking,
   loadBookingDraft,
   saveBookingDraft,
+  validatePlatformCoupon,
+  validatePropertyCoupon,
 } from '@/lib/api-bookings';
 import { getMe } from '@/lib/api-auth';
+import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+
+import { todayIsoInPlatformZone } from '@/lib/format-platform-time';
 
 interface BookingPanelProps {
   property: PublicPropertyDetail;
   locale: 'ar' | 'en';
+  initialDate?: string;
+  initialPeriod?: AvailabilityPeriod | '';
+  initialGuests?: number;
+  preferredPeriod?: AvailabilityPeriod;
+  rebookMode?: boolean;
 }
 
 function addDays(iso: string, days: number): string {
@@ -34,32 +44,50 @@ function addDays(iso: string, days: number): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayIsoInPlatformZone();
 }
 
-export function BookingPanel({ property, locale }: BookingPanelProps) {
+export function BookingPanel({
+  property,
+  locale,
+  initialDate = '',
+  initialPeriod = '',
+  initialGuests,
+  preferredPeriod,
+  rebookMode = false,
+}: BookingPanelProps) {
   const t = useTranslations('property');
   const tCommon = useTranslations('common');
   const tHome = useTranslations('home');
   const router = useRouter();
   const pathname = usePathname();
 
-  const [date, setDate] = useState('');
-  const [period, setPeriod] = useState<AvailabilityPeriod | ''>('');
-  const [guests, setGuests] = useState(Math.min(10, property.capacity));
+  const [date, setDate] = useState(initialDate);
+  const [period, setPeriod] = useState<AvailabilityPeriod | ''>(initialPeriod);
+  const [guests, setGuests] = useState(
+    initialGuests ? Math.min(initialGuests, property.capacity) : Math.min(10, property.capacity),
+  );
   const [slots, setSlots] = useState<PublicAvailabilitySlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [couponInput, setCouponInput] = useState('');
+  const [coupon, setCoupon] = useState<CouponValidationResult | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
 
   const minDate = todayIso();
 
   useEffect(() => {
+    if (initialGuests) setGuests(Math.min(initialGuests, property.capacity));
+  }, [initialGuests, property.capacity]);
+
+  useEffect(() => {
+    if (rebookMode || initialDate) return;
     const draft = loadBookingDraft(property.slug);
     if (draft?.date) setDate(draft.date);
     if (draft?.period) setPeriod(draft.period as AvailabilityPeriod);
     if (draft?.guests) setGuests(Math.min(draft.guests, property.capacity));
-  }, [property.slug, property.capacity]);
+  }, [property.slug, property.capacity, initialDate, rebookMode]);
 
   useEffect(() => {
     if (!date && !period) return;
@@ -95,15 +123,71 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
     [slots, date],
   );
 
+  useEffect(() => {
+    if (!date || !preferredPeriod || loadingSlots) return;
+    const ok = slotsForDate.some((s) => s.period === preferredPeriod && s.bookable);
+    if (ok) setPeriod(preferredPeriod);
+  }, [date, preferredPeriod, loadingSlots, slotsForDate]);
+
   const selectedSlot = useMemo(
-    () => slotsForDate.find((s) => s.period === period && s.status === 'available'),
+    () => slotsForDate.find((s) => s.period === period && s.bookable),
     [slotsForDate, period],
   );
 
+  useEffect(() => {
+    setCoupon(null);
+  }, [date, period]);
+
+  function couponErrorMessage(code?: string) {
+    if (code === 'COUPON_INVALID') return t('couponInvalid');
+    if (code === 'COUPON_EXPIRED' || code === 'COUPON_PAUSED') return t('couponExpired');
+    if (code === 'COUPON_USAGE_LIMIT') return t('couponUsageLimit');
+    if (code === 'COUPON_ALREADY_USED') return t('couponAlreadyUsed');
+    if (code === 'COUPON_MIN_AMOUNT') return t('couponMinAmount');
+    if (code === 'DISCOUNT_NOT_STACKABLE') return t('couponNotStackable');
+    return t('couponInvalid');
+  }
+
+  async function applyCoupon() {
+    if (!date || !period || !couponInput.trim()) return;
+    setCouponBusy(true);
+    setError(null);
+    try {
+      const res = await validatePropertyCoupon(property.slug, {
+        code: couponInput,
+        date,
+        period,
+      });
+      setCoupon(res.data);
+    } catch (err) {
+      if (err instanceof BookingApiError && err.code === 'COUPON_INVALID') {
+        try {
+          const platform = await validatePlatformCoupon(property.slug, {
+            code: couponInput,
+            date,
+            period,
+          });
+          setCoupon(platform.data);
+          return;
+        } catch (platformErr) {
+          setCoupon(null);
+          setError(
+            platformErr instanceof BookingApiError
+              ? couponErrorMessage(platformErr.code)
+              : t('couponInvalid'),
+          );
+          return;
+        }
+      }
+      setCoupon(null);
+      setError(err instanceof BookingApiError ? couponErrorMessage(err.code) : t('couponInvalid'));
+    } finally {
+      setCouponBusy(false);
+    }
+  }
+
   const availablePeriods = useMemo(() => {
-    const set = new Set(
-      slotsForDate.filter((s) => s.status === 'available').map((s) => s.period),
-    );
+    const set = new Set(slotsForDate.filter((s) => s.bookable).map((s) => s.period));
     return AVAILABILITY_PERIODS.filter((p) => {
       if (p === 'overnight' && !property.allowsOvernight) return false;
       return set.has(p);
@@ -136,14 +220,26 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
         date,
         period: period as AvailabilityPeriod,
         guestsCount: guests,
+        expectedTotalAmount: coupon?.finalPrice ?? selectedSlot.price,
+        couponCode: coupon?.normalizedCode,
       });
       clearBookingDraft(property.slug);
-      router.push(`/checkout/${res.data.id}`);
+      if (res.data.status === 'pending_owner_approval') {
+        router.push('/account/bookings');
+      } else {
+        router.push(`/checkout/${res.data.id}`);
+      }
     } catch (err) {
       if (err instanceof BookingApiError && err.code === 'SLOT_UNAVAILABLE') {
         if (date) await loadSlots(date);
         setError(t('slotUnavailable'));
         setPeriod('');
+      } else if (err instanceof BookingApiError && err.code === 'PRICING_CHANGED') {
+        if (date) await loadSlots(date);
+        setCoupon(null);
+        setError(t('pricingChanged'));
+      } else if (err instanceof BookingApiError && err.code) {
+        setError(couponErrorMessage(err.code));
       } else {
         setError(err instanceof Error ? err.message : t('bookingError'));
       }
@@ -153,7 +249,11 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
   }
 
   const title = locale === 'ar' ? property.titleAr : property.titleEn;
-  const displayPrice = selectedSlot?.price ?? property.basePrice;
+  const displayPrice = coupon?.finalPrice ?? selectedSlot?.price ?? property.basePrice;
+  const displayOriginal = coupon?.originalPrice ?? selectedSlot?.originalPrice;
+  const displayDeposit = coupon?.depositAmount ?? selectedSlot?.depositAmount;
+  const displayRemaining = coupon?.remainingAmount ?? selectedSlot?.remainingAmount;
+  const displayDiscount = coupon?.discountAmount ?? selectedSlot?.discountAmount;
 
   return (
     <Card
@@ -169,13 +269,18 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
             {tHome('trustBooking')}
           </Badge>
         </div>
+        {property.instantBookingEnabled === false && (
+          <p className="text-sm text-muted">{t('ownerApprovalHint')}</p>
+        )}
         <PriceDisplay
           amount={displayPrice}
           currency={selectedSlot?.currency ?? property.currency}
           locale={locale}
-          fromLabel={selectedSlot ? '' : tCommon('from')}
-          perDayLabel={tCommon('perDay')}
+          fromLabel={selectedSlot ? undefined : tCommon('from')}
+          perDayLabel={selectedSlot ? undefined : tCommon('perDay')}
+          exact={Boolean(selectedSlot)}
           large
+          originalAmount={displayOriginal}
         />
       </CardHeader>
       <CardContent className="space-y-4">
@@ -216,7 +321,7 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 {availablePeriods.map((p) => {
-                  const slot = slotsForDate.find((s) => s.period === p && s.status === 'available');
+                  const slot = slotsForDate.find((s) => s.period === p && s.bookable);
                   return (
                     <button
                       key={p}
@@ -233,6 +338,10 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
                       <span className="font-medium">{t(`period.${p}`)}</span>
                       {slot && (
                         <span className="mt-0.5 block text-xs text-muted">
+                          {slot.startAtLocal && slot.endAtLocal
+                            ? `${slot.startAtLocal} – ${slot.endAtLocal}`
+                            : null}
+                          {slot.startAtLocal ? ' · ' : ''}
                           {slot.price} {slot.currency}
                         </span>
                       )}
@@ -275,14 +384,70 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
               <li>
                 <span className="text-navy">{t('summaryPeriod')}:</span> {t(`period.${period}`)}
               </li>
+              {selectedSlot.startAtLocal && selectedSlot.endAtLocal && (
+                <li data-testid="booking-summary-times">
+                  <span className="text-navy">{t('summaryTimes')}:</span>{' '}
+                  {selectedSlot.startAtLocal} – {selectedSlot.endAtLocal} ({selectedSlot.timeZone})
+                </li>
+              )}
               <li>
                 <span className="text-navy">{t('summaryGuests')}:</span> {guests}
               </li>
-              <li>
-                <span className="text-navy">{t('summaryPrice')}:</span> {selectedSlot.price}{' '}
+              <li data-testid="booking-summary-price">
+                <span className="text-navy">{t('summaryPrice')}:</span> {displayPrice}{' '}
                 {selectedSlot.currency}
               </li>
+              {displayDiscount ? (
+                <li data-testid="booking-summary-discount">
+                  <span className="text-navy">{t('summaryDiscount')}:</span>{' '}
+                  {displayDiscount} {selectedSlot.currency}
+                  {displayOriginal ? ` (${displayOriginal} → ${displayPrice})` : ''}
+                </li>
+              ) : null}
+              <li data-testid="booking-summary-deposit">
+                <span className="text-navy">{t('summaryDeposit')}:</span> {displayDeposit}{' '}
+                {selectedSlot.currency} ({t('depositPartOfTotal')})
+              </li>
+              <li data-testid="booking-summary-remaining">
+                <span className="text-navy">{t('summaryRemaining')}:</span>{' '}
+                {displayRemaining} {selectedSlot.currency}
+              </li>
             </ul>
+            {selectedSlot.bookable ? (
+              <div className="mt-3 space-y-2" data-testid="coupon-box">
+                <p className="text-sm font-medium text-navy">{t('couponPrompt')}</p>
+                <div className="flex gap-2">
+                  <Input
+                    data-testid="coupon-input"
+                    value={couponInput}
+                    onChange={(e) => setCouponInput(e.target.value)}
+                    disabled={Boolean(coupon)}
+                  />
+                  {coupon ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      data-testid="coupon-remove"
+                      onClick={() => {
+                        setCoupon(null);
+                        setCouponInput('');
+                      }}
+                    >
+                      {t('couponRemove')}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      data-testid="coupon-apply"
+                      disabled={couponBusy || !couponInput.trim()}
+                      onClick={() => void applyCoupon()}
+                    >
+                      {t('couponApply')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : null}
             <p className="mt-3 rounded-lg border border-primary/15 bg-surface/80 px-3 py-2 text-xs leading-relaxed text-muted">
               {t('paymentAtCheckout')}
             </p>
@@ -316,6 +481,7 @@ export function BookingPanel({ property, locale }: BookingPanelProps) {
           )}
         </Button>
 
+        <LegalCommitmentNotice testId="booking-legal-notice" />
         <p className="text-center text-xs leading-relaxed text-muted">{t('bookingPanelNote')}</p>
         <div className="border-t border-border pt-4">
           <TrustBadges showSupport compact />

@@ -58,6 +58,13 @@ export async function simulatePaymentFailure(id: string) {
   });
 }
 
+/** Informational only — never marks payment succeeded. */
+export async function acknowledgeBrowserPaymentReturn(id: string) {
+  return paymentFetch<{ data: PaymentSummary }>(`/payments/${id}/browser-return`, {
+    method: 'POST',
+  });
+}
+
 export async function fetchPaymentConfig() {
   return paymentFetch<{ data: PaymentPublicConfig }>('/payments/config', {
     cache: 'no-store',

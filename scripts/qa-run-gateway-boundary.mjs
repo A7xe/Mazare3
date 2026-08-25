@@ -1,0 +1,100 @@
+/**
+ * Gateway boundary regression only (mock provider). No PayTabs network calls.
+ */
+import { execSync, spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const API_DIR = path.join(ROOT, 'apps', 'api');
+const QA_PORT = process.env.QA_API_PORT ?? '4038';
+const QA_BASE = `http://localhost:${QA_PORT}/api/v1`;
+const USE_SHELL = process.platform === 'win32';
+
+async function waitHealth(timeoutMs = 90_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${QA_BASE}/health`);
+      if (res.ok) return true;
+    } catch {
+      /* starting */
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+function tryFreeListenPort(port) {
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
+      for (const line of out.split('\n')) {
+        if (!line.includes('LISTENING')) continue;
+        const pid = line.trim().split(/\s+/).at(-1);
+        if (pid && /^\d+$/.test(pid)) execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' });
+      }
+    }
+  } catch {
+    /* free */
+  }
+}
+
+function startQaApiServer() {
+  return spawn('pnpm', ['exec', 'dotenv', '-e', '../../.env', '--', 'tsx', 'src/index.ts'], {
+    cwd: API_DIR,
+    shell: USE_SHELL,
+    env: {
+      ...process.env,
+      API_PORT: QA_PORT,
+      DISABLE_AUTH_RATE_LIMIT: 'true',
+      ENABLE_INTERNAL_QA_ROUTES: 'true',
+      APP_ENV: 'local',
+      PAYMENT_GATEWAY_PROVIDER: 'mock',
+      PAYMENT_PROVIDER: 'test',
+      PAYMENT_SIMULATE_ENABLED: 'true',
+      PAYTABS_PROFILE_MODE: 'test',
+      PAYTABS_ALLOW_LIVE_OUTSIDE_PRODUCTION: '',
+      PRISMA_DISABLE_QUERY_LOG: 'true',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+async function main() {
+  tryFreeListenPort(QA_PORT);
+  await new Promise((r) => setTimeout(r, 500));
+  const server = startQaApiServer();
+  let serverExited = false;
+  server.on('exit', () => {
+    serverExited = true;
+  });
+  server.stderr?.on('data', (chunk) => process.stderr.write(`[qa-api] ${chunk}`));
+  const killServer = () => {
+    if (!serverExited && server.pid) {
+      try {
+        if (process.platform === 'win32') execSync(`taskkill /PID ${server.pid} /T /F`, { stdio: 'ignore' });
+        else server.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  try {
+    if (!(await waitHealth())) {
+      console.error('QA API did not become healthy');
+      process.exit(1);
+    }
+    const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'qa-payment-gateway-boundary-api.mjs')], {
+      cwd: ROOT,
+      env: { ...process.env, API_BASE: QA_BASE },
+      stdio: 'inherit',
+    });
+    const code = await new Promise((resolve) => child.on('exit', resolve));
+    if (code !== 0) process.exit(code ?? 1);
+  } finally {
+    killServer();
+  }
+}
+
+main();

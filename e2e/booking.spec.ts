@@ -45,7 +45,8 @@ test.describe('Booking E2E — Arabic', () => {
     await clickBookNow(page);
     await page.waitForURL(/\/ar\/checkout\//);
     await expect(page.getByTestId('checkout-page')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('checkout-full-payment-badge')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await expect(page.getByTestId('checkout-deposit-badge')).toBeVisible();
     await expect(page.getByTestId('checkout-due-now')).toBeVisible();
 
     await page.getByTestId('checkout-simulate-success').click();
@@ -54,8 +55,22 @@ test.describe('Booking E2E — Arabic', () => {
     await expect(page.getByRole('heading', { name: 'حجوزاتي' })).toBeVisible();
     await expect(page.getByText(slot.date).first()).toBeVisible();
     await expect(page.getByText('مؤكد').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('مدفوع').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('booking-payment-state-deposit_paid').first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await page.getByTestId('pay-balance').first().click();
+    await page.waitForURL(/\/ar\/checkout\//);
+    await expect(page.getByTestId('checkout-balance-badge')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('checkout-simulate-success').click();
+    await page.waitForURL(/\/ar\/account\/bookings/);
     await expect(page.getByTestId('booking-paid-in-full').first()).toBeVisible({ timeout: 15_000 });
+    const paidCard = page
+      .getByTestId('booking-card')
+      .filter({ has: page.getByTestId('booking-paid-in-full') })
+      .first();
+    await expect(paidCard.getByTestId('pay-deposit')).toHaveCount(0);
+    await expect(paidCard.getByTestId('pay-balance')).toHaveCount(0);
   });
 
   test('checkout simulate failure does not confirm booking', async ({ page }) => {
@@ -74,9 +89,8 @@ test.describe('Booking E2E — Arabic', () => {
     await failBtn.click();
     expect((await failRes).ok()).toBeTruthy();
     const checkout = page.getByTestId('checkout-page');
-    await expect(checkout.getByText('ملغى')).toBeVisible({ timeout: 15_000 });
-    await expect(checkout.getByText('فشل', { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('checkout-simulate-success')).toHaveCount(0);
+    await expect(checkout.getByText('بانتظار الدفع')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('checkout-simulate-success')).toBeVisible();
   });
 
   test('cancel pending_payment booking shows cancelled status', async ({ page }) => {

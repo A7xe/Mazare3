@@ -13,3 +13,16 @@ export const authRateLimiter = rateLimit({
   },
   keyGenerator: (req) => req.ip ?? req.socket.remoteAddress ?? 'unknown',
 });
+
+export const supportRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isAuthRateLimitDisabled(),
+  message: {
+    error: 'Too many support requests. Please try again later.',
+    code: 'RATE_LIMITED',
+  },
+  keyGenerator: (req) => req.ip ?? req.socket.remoteAddress ?? 'unknown',
+});

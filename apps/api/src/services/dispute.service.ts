@@ -15,6 +15,7 @@ import type {
 import { BLOCKING_DISPUTE_STATUSES } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { notifyDisputeOpened } from './notification.service.js';
 import { syncPayoutStatusForPayment } from './payment-payout.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 
@@ -75,8 +76,11 @@ export async function createDispute(
   if (!booking) {
     throw new AppError(404, 'NOT_FOUND', 'Booking not found');
   }
-  if (booking.status !== BookingStatus.confirmed || !booking.payments[0]) {
-    throw new AppError(400, 'INVALID_STATUS', 'Disputes require a confirmed paid booking');
+  if (booking.status !== BookingStatus.confirmed) {
+    throw new AppError(400, 'INVALID_STATUS', 'Disputes require a confirmed booking with a captured payment');
+  }
+  if (!booking.payments.length) {
+    throw new AppError(400, 'INVALID_STATUS', 'Disputes require a captured payment');
   }
 
   if (!bookingDayEnded(booking.slot.date)) {
@@ -122,6 +126,11 @@ export async function createDispute(
     metadata: { bookingId, type: input.type, publicCode: booking.publicCode },
     req,
   });
+
+  void notifyDisputeOpened({
+    disputeId: row.id,
+    publicCode: booking.publicCode,
+  }).catch((err) => console.error('[notifications] dispute.opened', err));
 
   return toDisputeSummary(row, {
     bookingPublicCode: booking.publicCode,

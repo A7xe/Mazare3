@@ -1,20 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useRouter } from '@/i18n/navigation';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { Link, useRouter } from '@/i18n/navigation';
+import { ArrowLeft, ImagePlus, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   AMENITY_KEYS,
   PROPERTY_TYPES,
   type CreateOwnerPropertyInput,
   type OwnerPropertyEdit,
+  type UpdateOwnerPropertyInput,
+  assessPropertyMedia,
 } from '@mazare3/shared';
+import { PropertyMediaQualityBox } from '@/components/property/property-media-quality-box';
+import { OwnerPropertyMediaEditor } from '@/components/owner/owner-property-media-editor';
+import { OwnerLocationPicker } from '@/components/maps/owner-location-picker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   createOwnerProperty,
   submitOwnerPropertyReview,
+  uploadOwnerPropertyMediaFile,
   updateOwnerProperty,
   OwnerApiError,
 } from '@/lib/api-owner';
@@ -28,9 +34,16 @@ const emptyRule = { titleAr: '', titleEn: '' };
 
 export function OwnerPropertyForm({ mode, initial }: Props) {
   const t = useTranslations('ownerProperty');
+  const tOwner = useTranslations('owner');
+  const tCommon = useTranslations('common');
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [media, setMedia] = useState<OwnerPropertyEdit['media']>(initial?.media ?? []);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [createFileInputKey, setCreateFileInputKey] = useState(0);
+  const [pendingPreviews, setPendingPreviews] = useState<string[]>([]);
+  const createFileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
     type: initial?.type ?? 'farm',
@@ -42,11 +55,18 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     area: initial?.area ?? '',
     approximateAddress: initial?.approximateAddress ?? '',
     exactAddress: initial?.exactAddress ?? '',
+    latitudeApprox: initial?.latitudeApprox != null ? String(initial.latitudeApprox) : '',
+    longitudeApprox: initial?.longitudeApprox != null ? String(initial.longitudeApprox) : '',
+    latitudeExact: initial?.latitudeExact != null ? String(initial.latitudeExact) : '',
+    longitudeExact: initial?.longitudeExact != null ? String(initial.longitudeExact) : '',
+    arrivalInstructionsAr: initial?.arrivalInstructionsAr ?? '',
+    arrivalInstructionsEn: initial?.arrivalInstructionsEn ?? '',
     basePrice: initial ? String(initial.basePrice) : '',
     capacity: initial ? String(initial.capacity) : '10',
     allowsOvernight: initial?.allowsOvernight ?? true,
     allowsFamilies: initial?.allowsFamilies ?? true,
     allowsYouth: initial?.allowsYouth ?? false,
+    instantBookingEnabled: initial?.instantBookingEnabled ?? true,
     poolsCount: initial ? String(initial.poolsCount) : '0',
     amenityKeys: initial?.amenityKeys ?? ([] as string[]),
     imageUrls: initial?.imageUrls?.length ? initial.imageUrls : [''],
@@ -55,9 +75,31 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
       : [emptyRule],
   });
 
+  const [locationSaved, setLocationSaved] = useState(false);
+
+  function parseOptionalCoord(raw: string): number | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    return Number(trimmed);
+  }
+
+  function buildLocationPayload() {
+    return {
+      city: form.city,
+      area: form.area,
+      approximateAddress: form.approximateAddress,
+      exactAddress: form.exactAddress,
+      latitudeApprox: parseOptionalCoord(form.latitudeApprox),
+      longitudeApprox: parseOptionalCoord(form.longitudeApprox),
+      latitudeExact: parseOptionalCoord(form.latitudeExact),
+      longitudeExact: parseOptionalCoord(form.longitudeExact),
+      arrivalInstructionsAr: form.arrivalInstructionsAr.trim() || null,
+      arrivalInstructionsEn: form.arrivalInstructionsEn.trim() || null,
+    };
+  }
+
   function buildPayload(): CreateOwnerPropertyInput {
     const urls = form.imageUrls.map((u) => u.trim()).filter(Boolean);
-    if (!urls.length) throw new Error(t('imagesRequired'));
     return {
       type: form.type as CreateOwnerPropertyInput['type'],
       titleAr: form.titleAr,
@@ -68,11 +110,18 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
       area: form.area,
       approximateAddress: form.approximateAddress,
       exactAddress: form.exactAddress,
+      latitudeApprox: parseOptionalCoord(form.latitudeApprox),
+      longitudeApprox: parseOptionalCoord(form.longitudeApprox),
+      latitudeExact: parseOptionalCoord(form.latitudeExact),
+      longitudeExact: parseOptionalCoord(form.longitudeExact),
+      arrivalInstructionsAr: form.arrivalInstructionsAr.trim() || null,
+      arrivalInstructionsEn: form.arrivalInstructionsEn.trim() || null,
       basePrice: Number(form.basePrice),
       capacity: Number(form.capacity),
       allowsOvernight: form.allowsOvernight,
       allowsFamilies: form.allowsFamilies,
       allowsYouth: form.allowsYouth,
+      instantBookingEnabled: form.instantBookingEnabled,
       poolsCount: Number(form.poolsCount) || 0,
       amenityKeys: form.amenityKeys,
       imageUrls: urls,
@@ -82,8 +131,33 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     };
   }
 
+  function getEffectiveMediaForQuality(): { sortOrder: number }[] {
+    if (mode === 'edit') {
+      return (media ?? []).map((m) => ({ sortOrder: m.sortOrder }));
+    }
+    const urlCount = form.imageUrls.map((u) => u.trim()).filter(Boolean).length;
+    const total = urlCount + pendingFiles.length;
+    return Array.from({ length: total }, (_, i) => ({ sortOrder: i }));
+  }
+
+  const mediaForQuality = getEffectiveMediaForQuality();
+  const mediaAssessment = assessPropertyMedia(mediaForQuality);
+
+  useEffect(() => {
+    if (mode !== 'create') return;
+    const urls = pendingFiles.map((file) => URL.createObjectURL(file));
+    setPendingPreviews(urls);
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url);
+    };
+  }, [mode, pendingFiles]);
+
   async function handleSave(submitReview: boolean) {
     setError(null);
+    if (submitReview && !mediaAssessment.canSubmitReview) {
+      setError(t('mediaSubmitRequired'));
+      return;
+    }
     setSaving(true);
     try {
       const payload = buildPayload();
@@ -91,13 +165,26 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
       if (mode === 'create') {
         const res = await createOwnerProperty(payload);
         propertyId = res.data.id;
+
+        // Upload selected files after creating the property.
+        if (pendingFiles.length) {
+          for (const f of pendingFiles) {
+            const up = await uploadOwnerPropertyMediaFile(propertyId, f);
+            setMedia(up.data.media);
+          }
+          setPendingFiles([]);
+          setCreateFileInputKey((k) => k + 1);
+        }
       } else if (initial) {
-        await updateOwnerProperty(initial.id, payload);
+        const { imageUrls, ...rest } = payload;
+        void imageUrls;
+        await updateOwnerProperty(initial.id, rest as UpdateOwnerPropertyInput);
       }
       if (submitReview && propertyId) {
         await submitOwnerPropertyReview(propertyId);
       }
-      router.push('/owner/properties');
+
+      router.push(mode === 'create' ? `/owner/properties/${propertyId}/edit` : '/owner/properties');
       router.refresh();
     } catch (e) {
       if (e instanceof OwnerApiError) {
@@ -110,11 +197,57 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     }
   }
 
+  async function handleSaveBookingMode() {
+    if (!initial?.id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateOwnerProperty(initial.id, {
+        instantBookingEnabled: form.instantBookingEnabled,
+      });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof OwnerApiError ? e.message : t('saveError'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveLocation() {
+    if (!initial?.id) return;
+    setSaving(true);
+    setError(null);
+    setLocationSaved(false);
+    try {
+      await updateOwnerProperty(initial.id, buildLocationPayload());
+      setLocationSaved(true);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof OwnerApiError ? e.message : t('saveError'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function syncMediaToForm(nextMedia: NonNullable<OwnerPropertyEdit['media']>) {
+    setMedia(nextMedia);
+    setForm((f) => ({
+      ...f,
+      imageUrls: nextMedia.map((m) => m.url),
+    }));
+  }
+
   const canSubmitReview =
     !initial || initial.status === 'draft' || initial.status === 'changes_requested';
 
   return (
     <div data-testid="owner-property-form" className="space-y-6">
+      <Button variant="ghost" size="sm" asChild className="gap-1">
+        <Link href={initial ? `/owner/properties/${initial.id}` : '/owner/properties'}>
+          <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+          {tCommon('back')}
+        </Link>
+      </Button>
       {error && (
         <p className="rounded-xl border border-danger/20 bg-danger/10 px-4 py-3 text-danger">
           {error}
@@ -122,11 +255,12 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
       )}
       {initial && (
         <p className="text-sm text-muted">
-          {t('currentStatus')}: <span className="font-medium text-navy">{initial.status}</span>
+          {t('currentStatus')}:{' '}
+          <span className="font-medium text-navy">{tOwner(`propertyStatus.${initial.status}`)}</span>
         </p>
       )}
 
-      <div className="glass-panel space-y-4 rounded-2xl border-primary/12 p-6">
+      <div className="glass-panel space-y-4 rounded-2xl border-primary/12 p-4 sm:p-6">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm font-medium text-navy">{t('type')}</label>
@@ -187,39 +321,6 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-navy">{t('city')}</label>
-            <Input
-              required
-              value={form.city}
-              onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-navy">{t('area')}</label>
-            <Input
-              required
-              value={form.area}
-              onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2 sm:col-span-2">
-            <label className="text-sm font-medium text-navy">{t('approximateAddress')}</label>
-            <Input
-              required
-              value={form.approximateAddress}
-              onChange={(e) => setForm((f) => ({ ...f, approximateAddress: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2 sm:col-span-2">
-            <label className="text-sm font-medium text-navy">{t('exactAddress')}</label>
-            <Input
-              required
-              value={form.exactAddress}
-              onChange={(e) => setForm((f) => ({ ...f, exactAddress: e.target.value }))}
-            />
-            <p className="text-xs text-muted">{t('exactAddressHint')}</p>
-          </div>
-          <div className="space-y-2">
             <label className="text-sm font-medium text-navy">{t('capacity')}</label>
             <Input
               type="number"
@@ -267,6 +368,167 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
           </label>
         </div>
 
+        <fieldset
+          className="space-y-3 rounded-2xl border border-primary/15 bg-primary-soft/20 p-4"
+          data-testid="owner-location-section"
+        >
+          <legend className="px-1 text-sm font-medium text-navy">{t('locationSectionTitle')}</legend>
+          <p className="text-xs text-muted">{t('locationSectionHint')}</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('city')}</label>
+              <Input
+                required
+                value={form.city}
+                onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('area')}</label>
+              <Input
+                required
+                value={form.area}
+                onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-navy">{t('approximateAddress')}</label>
+              <Input
+                required
+                value={form.approximateAddress}
+                onChange={(e) => setForm((f) => ({ ...f, approximateAddress: e.target.value }))}
+              />
+              <p className="text-xs text-muted">{t('approximateAddressHint')}</p>
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-navy">{t('exactAddress')}</label>
+              <Input
+                required
+                value={form.exactAddress}
+                onChange={(e) => setForm((f) => ({ ...f, exactAddress: e.target.value }))}
+              />
+              <p className="text-xs text-muted">{t('exactAddressHint')}</p>
+            </div>
+            <OwnerLocationPicker
+              latitudeExact={form.latitudeExact}
+              longitudeExact={form.longitudeExact}
+              latitudeApprox={form.latitudeApprox}
+              longitudeApprox={form.longitudeApprox}
+              onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('latitudeApprox')}</label>
+              <Input
+                inputMode="decimal"
+                placeholder="31.55"
+                data-testid="owner-latitude-approx"
+                value={form.latitudeApprox}
+                onChange={(e) => setForm((f) => ({ ...f, latitudeApprox: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('longitudeApprox')}</label>
+              <Input
+                inputMode="decimal"
+                placeholder="35.47"
+                data-testid="owner-longitude-approx"
+                value={form.longitudeApprox}
+                onChange={(e) => setForm((f) => ({ ...f, longitudeApprox: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('latitudeExact')}</label>
+              <Input
+                inputMode="decimal"
+                placeholder="31.5482"
+                data-testid="owner-latitude-exact"
+                value={form.latitudeExact}
+                onChange={(e) => setForm((f) => ({ ...f, latitudeExact: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-navy">{t('longitudeExact')}</label>
+              <Input
+                inputMode="decimal"
+                placeholder="35.4731"
+                data-testid="owner-longitude-exact"
+                value={form.longitudeExact}
+                onChange={(e) => setForm((f) => ({ ...f, longitudeExact: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-navy">{t('arrivalInstructionsAr')}</label>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm"
+                value={form.arrivalInstructionsAr}
+                onChange={(e) => setForm((f) => ({ ...f, arrivalInstructionsAr: e.target.value }))}
+                placeholder={t('arrivalInstructionsPlaceholderAr')}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium text-navy">{t('arrivalInstructionsEn')}</label>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm"
+                value={form.arrivalInstructionsEn}
+                onChange={(e) => setForm((f) => ({ ...f, arrivalInstructionsEn: e.target.value }))}
+                placeholder={t('arrivalInstructionsPlaceholderEn')}
+              />
+            </div>
+          </div>
+          {mode === 'edit' && (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={saving}
+                data-testid="owner-save-location"
+                onClick={() => void handleSaveLocation()}
+              >
+                {t('saveLocation')}
+              </Button>
+              {locationSaved && <p className="text-xs text-navy">{t('locationSaved')}</p>}
+            </div>
+          )}
+        </fieldset>
+
+        <fieldset className="space-y-2 rounded-2xl border border-primary/15 bg-primary-soft/20 p-4">
+          <legend className="px-1 text-sm font-medium text-navy">{t('bookingMode')}</legend>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="bookingMode"
+              checked={form.instantBookingEnabled}
+              onChange={() => setForm((f) => ({ ...f, instantBookingEnabled: true }))}
+            />
+            {t('instantBooking')}
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="bookingMode"
+              checked={!form.instantBookingEnabled}
+              onChange={() => setForm((f) => ({ ...f, instantBookingEnabled: false }))}
+            />
+            {t('ownerApprovalRequired')}
+          </label>
+          {mode === 'edit' && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={saving}
+              onClick={() => void handleSaveBookingMode()}
+            >
+              {t('saveBookingMode')}
+            </Button>
+          )}
+        </fieldset>
+
         <div>
           <p className="mb-2 text-sm font-medium text-navy">{t('amenities')}</p>
           <div className="flex flex-wrap gap-2">
@@ -293,46 +555,104 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
           </div>
         </div>
 
-        <div>
-          <p className="mb-2 text-sm font-medium text-navy">{t('imageUrls')}</p>
-          {form.imageUrls.map((url, i) => (
-            <div key={i} className="mb-2 flex gap-2">
-              <Input
-                placeholder="https://..."
-                value={url}
+        <PropertyMediaQualityBox media={mediaForQuality} namespace="ownerProperty" />
+
+        {mode === 'edit' && initial?.id ? (
+          <OwnerPropertyMediaEditor
+            propertyId={initial.id}
+            media={media ?? []}
+            onMediaChange={syncMediaToForm}
+            disabled={saving}
+          />
+        ) : (
+          <div>
+            <p className="mb-2 text-sm font-medium text-navy">{t('imageUrls')}</p>
+            <p className="mb-3 text-xs text-muted">{t('mediaGalleryHint')}</p>
+            {form.imageUrls.map((url, i) => (
+              <div key={i} className="mb-2 flex gap-2">
+                <Input
+                  placeholder={t('mediaUrlPlaceholder')}
+                  value={url}
+                  onChange={(e) => {
+                    const next = [...form.imageUrls];
+                    next[i] = e.target.value;
+                    setForm((f) => ({ ...f, imageUrls: next }));
+                  }}
+                />
+                {form.imageUrls.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        imageUrls: f.imageUrls.filter((_, j) => j !== i),
+                      }))
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setForm((f) => ({ ...f, imageUrls: [...f.imageUrls, ''] }))
+              }
+            >
+              <Plus className="h-4 w-4" />
+              {t('addImage')}
+            </Button>
+
+            <div className="mt-4 rounded-2xl border border-primary/15 bg-primary-soft/30 p-4">
+              <input
+                key={createFileInputKey}
+                ref={createFileInputRef}
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
                 onChange={(e) => {
-                  const next = [...form.imageUrls];
-                  next[i] = e.target.value;
-                  setForm((f) => ({ ...f, imageUrls: next }));
+                  setPendingFiles(Array.from(e.target.files ?? []));
                 }}
               />
-              {form.imageUrls.length > 1 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      imageUrls: f.imageUrls.filter((_, j) => j !== i),
-                    }))
-                  }
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+              <button
+                type="button"
+                onClick={() => createFileInputRef.current?.click()}
+                className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed border-primary/35 bg-surface px-4 py-6 text-center transition-colors hover:border-primary/60 hover:bg-primary-soft/50"
+              >
+                <ImagePlus className="h-8 w-8 text-primary" />
+                <span className="text-sm font-medium text-navy">{t('mediaChooseFiles')}</span>
+                <span className="text-xs text-muted">{t('mediaFormats')}</span>
+                <span className="text-xs text-muted">{t('mediaMaxSize')}</span>
+              </button>
+              {pendingFiles.length > 0 && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm text-navy">{t('mediaSelected', { count: pendingFiles.length })}</p>
+                  <p className="text-xs text-muted">{t('mediaCreateUploadHint')}</p>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {pendingPreviews.map((src, i) => (
+                      <div key={src} className="relative aspect-square overflow-hidden rounded-xl bg-primary-soft">
+                        {/* Local object URLs — not remote. */}
+                        <img
+                          src={src}
+                          alt={pendingFiles[i]?.name ?? t('imageUrls')}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-          ))}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setForm((f) => ({ ...f, imageUrls: [...f.imageUrls, ''] }))}
-          >
-            <Plus className="h-4 w-4" />
-            {t('addImage')}
-          </Button>
-        </div>
+          </div>
+        )}
 
         <div>
           <p className="mb-2 text-sm font-medium text-navy">{t('rules')}</p>
@@ -382,7 +702,7 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
           <Button
             variant="default"
             className="shadow-soft"
-            disabled={saving}
+            disabled={saving || !mediaAssessment.canSubmitReview}
             data-testid="owner-property-submit-review"
             onClick={() => void handleSave(true)}
           >

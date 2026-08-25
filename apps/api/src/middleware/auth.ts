@@ -24,6 +24,35 @@ export function requireAuth(req: AuthenticatedRequest, _res: Response, next: Nex
   }
 }
 
+/** Attach a session when a valid cookie is present; continue as anonymous otherwise. */
+export function optionalAuth(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
+  const token = req.cookies?.[COOKIE_NAME] as string | undefined;
+  if (!token) {
+    return next();
+  }
+  try {
+    req.session = verifySession(token);
+  } catch {
+    /* public contact may proceed without a session */
+  }
+  next();
+}
+
+export async function optionalAttachUser(
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction,
+) {
+  if (!req.session) {
+    return next();
+  }
+  const user = await getUserById(req.session.userId);
+  if (user) {
+    req.user = user;
+  }
+  next();
+}
+
 export async function attachUser(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
   if (!req.session) {
     return next();
@@ -41,18 +70,19 @@ export function requireRole(...roles: UserRole[]) {
     if (!req.session) {
       return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
     }
-    if (!roles.includes(req.session.role)) {
+    const liveRole = req.user?.role ?? req.session.role;
+    if (!roles.includes(liveRole as UserRole)) {
       return next(new AppError(403, 'FORBIDDEN', 'You do not have permission for this action'));
     }
     next();
   };
 }
 
-export const requireAdmin = [requireAuth, requireRole('admin')] as const;
-export const requireCustomer = [requireAuth, requireRole('customer', 'owner', 'admin')] as const;
+export const requireAdmin = [requireAuth, attachUser, requireRole('admin')] as const;
+export const requireCustomer = [requireAuth, attachUser, requireRole('customer', 'owner', 'admin')] as const;
 
-/** Customer-only (for owner application). */
-export const requireCustomerOnly = [requireAuth, requireRole('customer')] as const;
+/** Customer-only (for owner application). Uses live DB role when attachUser ran. */
+export const requireCustomerOnly = [requireAuth, attachUser, requireRole('customer')] as const;
 
 export async function requireApprovedOwner(
   req: AuthenticatedRequest,
@@ -62,11 +92,12 @@ export async function requireApprovedOwner(
   if (!req.session) {
     return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
   }
-  if (req.session.role === 'admin') {
-    return next();
+  const user = req.user ?? (await getUserById(req.session.userId));
+  if (!user || user.status !== 'active') {
+    return next(new AppError(403, 'ACCOUNT_SUSPENDED', 'Your account is not active'));
   }
-  if (req.session.role !== 'owner') {
-    return next(new AppError(403, 'FORBIDDEN', 'Owner access only'));
+  if (user.role === 'admin') {
+    return next();
   }
   const profile = await prisma.ownerProfile.findUnique({
     where: { userId: req.session.userId },
@@ -76,10 +107,16 @@ export async function requireApprovedOwner(
     return next(new AppError(403, 'OWNER_NOT_APPROVED', 'Owner profile not approved'));
   }
   if (profile.status === OwnerStatus.suspended) {
+    if (req.method === 'GET') {
+      return next();
+    }
     return next(new AppError(403, 'OWNER_SUSPENDED', 'Owner account is suspended'));
   }
   if (profile.status !== OwnerStatus.approved) {
     return next(new AppError(403, 'OWNER_NOT_APPROVED', 'Owner profile not approved'));
+  }
+  if (user.role !== 'owner') {
+    return next(new AppError(403, 'FORBIDDEN', 'Owner access only'));
   }
   next();
 }

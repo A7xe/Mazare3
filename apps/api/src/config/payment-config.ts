@@ -1,37 +1,45 @@
 import type { PaymentProvider } from '@mazare3/shared';
 import { PAYMENT_PROVIDERS } from '@mazare3/shared';
-
-export type CliqConfig = {
-  merchantAlias: string;
-  apiBaseUrl: string;
-  apiKey: string;
-  webhookSecret: string;
-};
-
-export type CardGatewayConfig = {
-  providerName: string;
-  apiBaseUrl: string;
-  merchantId: string;
-  apiKey: string;
-  webhookSecret: string;
-};
+import { isNonProductionAppEnv } from './app-env.js';
+import { isPaytabsConfigured, loadPaytabsConfig } from './paytabs-config.js';
 
 export type PaymentConfig = {
-  /** Platform-wide active provider mode. */
+  /**
+   * Platform-wide active gateway mode.
+   * Env: PAYMENT_GATEWAY_PROVIDER (preferred) or PAYMENT_PROVIDER.
+   * `mock` is an alias for the local/QA adapter stored as enum `test`.
+   */
   provider: PaymentProvider;
+  /** Raw gateway selector before mock→test normalization (for diagnostics). */
+  gatewayProviderRaw: string;
   currency: string;
   simulateEnabled: boolean;
   livePaymentsEnabled: boolean;
   cliq: { configured: boolean };
   cardGateway: { configured: boolean; providerName: string | null };
+  paytabs: {
+    configured: boolean;
+    region: string;
+    baseUrl: string;
+    profileMode: 'test' | 'live' | 'invalid';
+  };
 };
 
 function parseProvider(raw: string | undefined): PaymentProvider {
-  const value = (raw ?? 'test').trim().toLowerCase();
+  const value = (raw ?? 'mock').trim().toLowerCase();
+  if (value === 'mock') return 'test';
   if ((PAYMENT_PROVIDERS as readonly string[]).includes(value)) {
     return value as PaymentProvider;
   }
   return 'test';
+}
+
+function resolveGatewayProviderRaw(): string {
+  const gateway = process.env.PAYMENT_GATEWAY_PROVIDER?.trim();
+  if (gateway) return gateway.toLowerCase();
+  const legacy = process.env.PAYMENT_PROVIDER?.trim();
+  if (legacy) return legacy.toLowerCase();
+  return 'mock';
 }
 
 function isNonEmpty(value: string | undefined): boolean {
@@ -58,15 +66,15 @@ export function isCardGatewayConfigured(): boolean {
 }
 
 export function loadPaymentConfig(): PaymentConfig {
-  const provider = parseProvider(process.env.PAYMENT_PROVIDER);
+  const gatewayProviderRaw = resolveGatewayProviderRaw();
+  const provider = parseProvider(gatewayProviderRaw);
   const currency = (process.env.PAYMENT_CURRENCY ?? 'JOD').trim().toUpperCase();
-  const isProduction = (process.env.NODE_ENV ?? 'development') === 'production';
-
   const simulateEnabled =
-    !isProduction && process.env.PAYMENT_SIMULATE_ENABLED === 'true';
+    isNonProductionAppEnv() && process.env.PAYMENT_SIMULATE_ENABLED === 'true';
 
   const cliqConfigured = isCliqConfigured();
   const cardConfigured = isCardGatewayConfigured();
+  const paytabs = loadPaytabsConfig();
 
   const livePaymentsEnabled =
     provider === 'test'
@@ -75,10 +83,13 @@ export function loadPaymentConfig(): PaymentConfig {
         ? cliqConfigured
         : provider === 'card_gateway'
           ? cardConfigured
-          : false;
+          : provider === 'paytabs'
+            ? paytabs.configured
+            : false;
 
   return {
     provider,
+    gatewayProviderRaw,
     currency,
     simulateEnabled,
     livePaymentsEnabled,
@@ -87,10 +98,16 @@ export function loadPaymentConfig(): PaymentConfig {
       configured: cardConfigured,
       providerName: process.env.CARD_GATEWAY_PROVIDER?.trim() || null,
     },
+    paytabs: {
+      configured: paytabs.configured,
+      region: paytabs.region,
+      baseUrl: paytabs.baseUrl,
+      profileMode: paytabs.profileModeValid ? paytabs.profileMode : 'invalid',
+    },
   };
 }
 
-/** Provider used for new payment intents (test mode forces test adapter). */
+/** Provider used for new payment intents (mock/test mode forces mock adapter). */
 export function getActivePaymentProvider(): PaymentProvider {
   const { provider } = loadPaymentConfig();
   return provider;
@@ -102,6 +119,9 @@ export function resolveProviderForMethod(
   const active = getActivePaymentProvider();
   if (active === 'test') {
     return 'test';
+  }
+  if (active === 'paytabs') {
+    return 'paytabs';
   }
   switch (method) {
     case 'card':
@@ -127,6 +147,9 @@ export function assertProviderCanCreateIntent(provider: PaymentProvider): void {
   if (provider === 'card_gateway' && !config.cardGateway.configured) {
     throw new Error('PROVIDER_NOT_CONFIGURED:card_gateway');
   }
+  if (provider === 'paytabs' && !isPaytabsConfigured()) {
+    throw new Error('PROVIDER_NOT_CONFIGURED:paytabs');
+  }
 
   if (config.provider === 'cliq' && provider === 'card_gateway') {
     throw new Error('PAYMENT_METHOD_NOT_AVAILABLE:card');
@@ -134,4 +157,12 @@ export function assertProviderCanCreateIntent(provider: PaymentProvider): void {
   if (config.provider === 'card_gateway' && provider === 'cliq') {
     throw new Error('PAYMENT_METHOD_NOT_AVAILABLE:cliq');
   }
+  if (config.provider === 'paytabs' && provider !== 'paytabs' && provider !== 'test') {
+    throw new Error('PAYMENT_METHOD_NOT_AVAILABLE:alt');
+  }
+}
+
+/** True when the configured gateway is the local mock (`mock` / `test`). */
+export function isMockPaymentGateway(): boolean {
+  return loadPaymentConfig().provider === 'test';
 }

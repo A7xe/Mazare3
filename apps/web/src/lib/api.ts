@@ -16,17 +16,23 @@ export async function apiFetch<T>(
   path: string,
   options?: RequestInit & { next?: { revalidate?: number } },
 ): Promise<T> {
-  const { next, ...init } = options ?? {};
+  const { next, signal, ...init } = options ?? {};
   const url = `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 
   const res = await fetch(url, {
     ...init,
+    signal,
     headers: {
       'Content-Type': 'application/json',
       ...init.headers,
     },
     credentials: init.credentials ?? 'same-origin',
-    next: next ?? { revalidate: 60 },
+    // Next.js forbids combining cache: 'no-store' with next.revalidate.
+    ...(next !== undefined
+      ? { next }
+      : init.cache === 'no-store'
+        ? {}
+        : { next: { revalidate: 60 } }),
   });
 
   const body = await res.json().catch(() => ({}));

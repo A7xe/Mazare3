@@ -1,5 +1,15 @@
 import { PayoutStatus } from '@mazare3/db';
-import { loadPaymentPolicyConfig } from '../config/payment-policy.config.js';
+import {
+  calculateBookingFinancialSnapshot,
+  calculatePlatformFundedSnapshot,
+  computeBalanceDueAt,
+  computeBalanceDueAtFromStart,
+  type BookingFinancialSnapshot,
+} from '@mazare3/shared';
+import {
+  loadPaymentPolicyConfig,
+  resolveDepositPercent,
+} from '../config/payment-policy.config.js';
 
 export type BookingFinancialBreakdown = {
   bookingTotalAmount: number;
@@ -21,43 +31,101 @@ export type CancellationPolicyResult = {
   reason?: string;
 };
 
-/** Round to 2 decimal places (JOD fils). */
 export function roundMoney(value: number): number {
+  if (!Number.isFinite(value)) return 0;
   return Math.round(value * 100) / 100;
 }
 
-export function calculateBookingFinancials(bookingTotalAmount: number): BookingFinancialBreakdown {
+export function buildPlatformFundedSnapshot(params: {
+  merchantBookingValue: number;
+  platformDiscountAmount: number;
+  propertyDepositPercent?: number | null;
+  slotDate: Date;
+  bookingStartAt?: Date | null;
+  platformCommissionPercent?: number;
+}) {
   const config = loadPaymentPolicyConfig();
-  const bookingTotal = roundMoney(bookingTotalAmount);
-  const customerServiceFeeAmount = roundMoney(
-    (bookingTotal * config.customerServiceFeePercent) / 100,
-  );
-  const customerPayableAmount = roundMoney(bookingTotal + customerServiceFeeAmount);
-  const platformCommissionAmount = roundMoney(
-    (bookingTotal * config.platformCommissionPercent) / 100,
-  );
-  const ownerGrossAmount = bookingTotal;
-  const ownerNetPayoutAmount = roundMoney(bookingTotal - platformCommissionAmount);
-
-  return {
-    bookingTotalAmount: bookingTotal,
-    customerPayableAmount,
-    platformCommissionAmount,
-    customerServiceFeeAmount,
-    ownerGrossAmount,
-    ownerNetPayoutAmount,
+  const snapshot = calculatePlatformFundedSnapshot({
+    merchantBookingValue: params.merchantBookingValue,
+    platformDiscountAmount: params.platformDiscountAmount,
+    depositPercent: resolveDepositPercent(params.propertyDepositPercent),
+    platformCommissionPercent:
+      params.platformCommissionPercent ?? config.platformCommissionPercent,
+    customerServiceFeePercent: config.customerServiceFeePercent,
     currency: config.currency,
+  });
+  const balanceDueAt = params.bookingStartAt
+    ? computeBalanceDueAtFromStart(params.bookingStartAt, config.balanceDueHoursBeforeStart)
+    : computeBalanceDueAt(params.slotDate, config.balanceDueHoursBeforeStart);
+  return {
+    ...snapshot,
+    balanceDueAt,
   };
 }
 
-/** Booking slot date at 00:00 UTC. */
+export function buildBookingFinancialSnapshot(params: {
+  bookingTotalAmount: number;
+  propertyDepositPercent?: number | null;
+  fullPayment?: boolean;
+  slotDate: Date;
+  bookingStartAt?: Date | null;
+  platformCommissionPercent?: number;
+}): BookingFinancialSnapshot & { balanceDueAt: Date } {
+  const config = loadPaymentPolicyConfig();
+  const snapshot = calculateBookingFinancialSnapshot({
+    bookingTotalAmount: params.bookingTotalAmount,
+    depositPercent: resolveDepositPercent(params.propertyDepositPercent),
+    platformCommissionPercent:
+      params.platformCommissionPercent ?? config.platformCommissionPercent,
+    customerServiceFeePercent: config.customerServiceFeePercent,
+    currency: config.currency,
+    fullPayment: params.fullPayment,
+  });
+  const balanceDueAt = params.bookingStartAt
+    ? computeBalanceDueAtFromStart(params.bookingStartAt, config.balanceDueHoursBeforeStart)
+    : computeBalanceDueAt(params.slotDate, config.balanceDueHoursBeforeStart);
+  return {
+    ...snapshot,
+    balanceDueAt,
+  };
+}
+
+/** @deprecated Prefer buildBookingFinancialSnapshot — kept for callers that only need totals. */
+export function calculateBookingFinancials(bookingTotalAmount: number): BookingFinancialBreakdown {
+  const snap = buildBookingFinancialSnapshot({
+    bookingTotalAmount,
+    fullPayment: true,
+    slotDate: new Date(),
+  });
+  return {
+    bookingTotalAmount: snap.bookingTotalAmount,
+    customerPayableAmount: snap.customerPayableTotal,
+    platformCommissionAmount: snap.platformCommissionAmount,
+    customerServiceFeeAmount: snap.customerServiceFeeAmount,
+    ownerGrossAmount: snap.ownerGrossAmount,
+    ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
+    currency: snap.currency,
+  };
+}
+
+export function snapshotToBreakdown(snap: BookingFinancialSnapshot): BookingFinancialBreakdown {
+  return {
+    bookingTotalAmount: snap.bookingTotalAmount,
+    customerPayableAmount: snap.customerPayableTotal,
+    platformCommissionAmount: snap.platformCommissionAmount,
+    customerServiceFeeAmount: snap.customerServiceFeeAmount,
+    ownerGrossAmount: snap.ownerGrossAmount,
+    ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
+    currency: snap.currency,
+  };
+}
+
 export function bookingStartAt(slotDate: Date): Date {
   const d = new Date(slotDate);
   d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
-/** End of booking day UTC + owner payout delay. */
 export function computePayoutAvailableAt(slotDate: Date): Date {
   const config = loadPaymentPolicyConfig();
   const end = new Date(slotDate);
@@ -121,12 +189,13 @@ export function evaluateCancellationPolicy(
 
 export function resolvePayoutStatus(params: {
   paymentSucceeded: boolean;
+  bookingFullyPaid: boolean;
   bookingCancelled: boolean;
   refundStatus: string;
   payoutAvailableAt: Date | null;
   now?: Date;
 }): PayoutStatus {
-  if (!params.paymentSucceeded) {
+  if (!params.paymentSucceeded || !params.bookingFullyPaid) {
     return PayoutStatus.not_ready;
   }
   if (
@@ -150,6 +219,8 @@ export function getPublicPolicySummary() {
     currency: c.currency,
     platformCommissionPercent: c.platformCommissionPercent,
     customerServiceFeePercent: c.customerServiceFeePercent,
+    defaultDepositPercent: c.defaultDepositPercent,
+    balanceDueHoursBeforeStart: c.balanceDueHoursBeforeStart,
     cancellationFreeUntilHours: c.cancellationFreeUntilHours,
     cancellationPartialUntilHours: c.cancellationPartialUntilHours,
     cancellationPartialRefundPercent: c.cancellationPartialRefundPercent,

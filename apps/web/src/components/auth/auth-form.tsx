@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { login, signup } from '@/lib/api-auth';
+import { useAuthSession } from '@/components/auth/auth-session';
+import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
 
 type AuthMode = 'login' | 'signup';
 
@@ -23,6 +25,7 @@ export function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnUrl = searchParams.get('returnUrl');
+  const { refresh } = useAuthSession();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -42,6 +45,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       } else {
         await login({ email, password });
       }
+      await refresh();
       const dest = returnUrl && returnUrl.startsWith('/') ? returnUrl : '/';
       router.push(dest);
       router.refresh();
@@ -116,6 +120,11 @@ export function AuthForm({ mode }: AuthFormProps) {
                 : t('signupSubmit')}
           </Button>
         </form>
+        {mode === 'signup' ? (
+          <div className="mt-4">
+            <LegalCommitmentNotice testId="signup-legal-notice" />
+          </div>
+        ) : null}
         <p className="mt-6 text-center text-sm text-muted sm:text-start">
           {mode === 'login' ? t('noAccount') : t('hasAccount')}{' '}
           <Link

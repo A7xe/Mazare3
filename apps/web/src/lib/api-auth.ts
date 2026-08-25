@@ -8,6 +8,8 @@ export interface AuthUser {
   name: string | null;
   role: string;
   locale: string;
+  status?: string;
+  createdAt?: string;
   ownerProfileStatus?: string | null;
   ownerRejectionReason?: string | null;
 }

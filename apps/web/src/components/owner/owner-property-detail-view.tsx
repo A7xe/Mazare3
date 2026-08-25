@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { fetchOwnerProperty } from '@/lib/api-owner';
+import { OwnerPromotionsPanel } from '@/components/owner/owner-promotions-panel';
+import { OwnerSponsorshipPanel } from '@/components/owner/owner-sponsorship-panel';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 
 export function OwnerPropertyDetailView({ propertyId }: { propertyId: string }) {
@@ -53,7 +55,7 @@ export function OwnerPropertyDetailView({ propertyId }: { propertyId: string }) 
     <div className="space-y-6">
       <Button variant="ghost" size="sm" asChild className="gap-1">
         <Link href="/owner/properties">
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
           {t('backToProperties')}
         </Link>
       </Button>
@@ -99,6 +101,8 @@ export function OwnerPropertyDetailView({ propertyId }: { propertyId: string }) 
           </Button>
         </CardContent>
       </Card>
+      <OwnerSponsorshipPanel propertyId={property.id} published={property.status === 'published'} />
+      <OwnerPromotionsPanel propertyId={property.id} />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
 import type { AdminPayoutRow, MarkAdminPayoutPaidInput, OwnerPayoutSummaryRow } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { notifyPayoutMarkedPaid } from './notification.service.js';
 import { getBookingOperationsBlock } from '../lib/operations-blocking.js';
 import {
   computePayoutAvailableAt,
@@ -62,6 +63,8 @@ export async function listAdminPayouts(): Promise<AdminPayoutRow[]> {
 
   const rows: AdminPayoutRow[] = [];
   for (const p of payments) {
+    if (p.purpose === 'deposit') continue;
+    if (p.booking.paymentState !== 'fully_paid') continue;
     if (p.booking.status === BookingStatus.cancelled) continue;
 
     const block = await getBookingOperationsBlock(p.bookingId);
@@ -69,6 +72,7 @@ export async function listAdminPayouts(): Promise<AdminPayoutRow[]> {
       p.payoutAvailableAt ?? computePayoutAvailableAt(p.booking.slot.date);
     let payoutStatus = resolvePayoutStatus({
       paymentSucceeded: true,
+      bookingFullyPaid: true,
       bookingCancelled: false,
       refundStatus: p.refundStatus,
       payoutAvailableAt,
@@ -128,11 +132,29 @@ export async function markAdminPayoutPaid(
   if (!payment || payment.status !== PaymentStatus.succeeded) {
     throw new AppError(404, 'NOT_FOUND', 'Payment not found');
   }
+  if (payment.purpose === 'deposit') {
+    throw new AppError(400, 'PAYOUT_NOT_ELIGIBLE', 'Deposit payments are not eligible for owner payout');
+  }
+  if (payment.booking.paymentState !== 'fully_paid') {
+    throw new AppError(400, 'PAYOUT_NOT_ELIGIBLE', 'Owner payout requires the booking to be fully paid');
+  }
   if (payment.booking.status !== BookingStatus.confirmed) {
     throw new AppError(400, 'INVALID_STATUS', 'Payout is only for confirmed bookings');
   }
   if (payment.payoutRecord?.status === OwnerPayoutRecordStatus.paid) {
     throw new AppError(400, 'ALREADY_PAID', 'Payout already marked as paid');
+  }
+
+  const reserved = await prisma.ownerSettlementItem.findFirst({
+    where: {
+      paymentId,
+      releasedAt: null,
+      settlement: { status: { in: ['draft', 'ready', 'paid'] } },
+    },
+    select: { id: true },
+  });
+  if (reserved) {
+    throw new AppError(409, 'PAYOUT_IN_SETTLEMENT', 'Payout is already in an active settlement');
   }
 
   const block = await getBookingOperationsBlock(payment.bookingId);
@@ -213,6 +235,20 @@ export async function markAdminPayoutPaid(
     req,
   });
 
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { id: payment.booking.property.ownerId },
+    select: { userId: true },
+  });
+  if (ownerProfile) {
+    void notifyPayoutMarkedPaid({
+      ownerUserId: ownerProfile.userId,
+      paymentId,
+      amount,
+      currency: payment.currency,
+      manualReference: input.manualReference.trim(),
+    }).catch((err) => console.error('[notifications] payout.marked_paid', err));
+  }
+
   const list = await listAdminPayouts();
   const found = list.find((r) => r.paymentId === paymentId);
   if (!found) {
@@ -249,11 +285,14 @@ export async function listOwnerPayouts(
 
   const rows: OwnerPayoutSummaryRow[] = [];
   for (const p of payments) {
+    if (p.purpose === 'deposit') continue;
+    if (p.booking.paymentState !== 'fully_paid') continue;
     const block = await getBookingOperationsBlock(p.bookingId);
     const payoutAvailableAt =
       p.payoutAvailableAt ?? computePayoutAvailableAt(p.booking.slot.date);
     let payoutStatus = resolvePayoutStatus({
       paymentSucceeded: true,
+      bookingFullyPaid: true,
       bookingCancelled: false,
       refundStatus: p.refundStatus,
       payoutAvailableAt,
