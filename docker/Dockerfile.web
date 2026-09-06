@@ -1,0 +1,58 @@
+FROM node:20-bookworm-slim AS base
+WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate
+
+FROM base AS deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/db/prisma packages/db/prisma
+COPY packages/shared/package.json packages/shared/package.json
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS builder
+COPY apps/web apps/web
+COPY packages/shared packages/shared
+COPY packages/db packages/db
+
+ARG NEXT_PUBLIC_API_URL=https://mazare3-jo.com/api/v1
+ARG NEXT_PUBLIC_APP_URL=https://mazare3-jo.com
+ARG NEXT_PUBLIC_MAP_TILE_URL=https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+ARG NEXT_PUBLIC_MAP_TILE_ATTRIBUTION=OpenStreetMap
+ARG NEXT_PUBLIC_MAP_TILE_SUBDOMAINS=abc
+ARG CLOUDFLARE_R2_MEDIA_PUBLIC_URL
+
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_MAP_TILE_URL=$NEXT_PUBLIC_MAP_TILE_URL
+ENV NEXT_PUBLIC_MAP_TILE_ATTRIBUTION=$NEXT_PUBLIC_MAP_TILE_ATTRIBUTION
+ENV NEXT_PUBLIC_MAP_TILE_SUBDOMAINS=$NEXT_PUBLIC_MAP_TILE_SUBDOMAINS
+ENV CLOUDFLARE_R2_MEDIA_PUBLIC_URL=$CLOUDFLARE_R2_MEDIA_PUBLIC_URL
+ENV DOCKER_BUILD=1
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN pnpm --filter @mazare3/web build
+
+FROM node:20-bookworm-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+USER nextjs
+EXPOSE 3000
+CMD ["node", "apps/web/server.js"]

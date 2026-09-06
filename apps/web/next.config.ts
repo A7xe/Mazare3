@@ -48,7 +48,12 @@ function publicMediaRemotePatterns(): Array<{
 const nextConfig: NextConfig = {
   ...(process.env.PLAYWRIGHT_NEXT_DIST
     ? { distDir: process.env.PLAYWRIGHT_NEXT_DIST }
-    : {}),
+    : process.env.DOCKER_BUILD === '1'
+      ? {
+          output: 'standalone' as const,
+          outputFileTracingRoot: resolve(__dirname, '../..'),
+        }
+      : {}),
   images: {
     remotePatterns: [
       {
