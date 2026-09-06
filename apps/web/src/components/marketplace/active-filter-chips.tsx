@@ -41,6 +41,12 @@ export function ActiveFilterChips() {
     chips.push({ key: 'verified', label: t('filterVerifiedOnly'), clear: { verifiedOnly: undefined } });
   }
   if (filters.featured) chips.push({ key: 'featured', label: t('filterFeatured'), clear: { featured: undefined } });
+  if (filters.offersOnly) {
+    chips.push({ key: 'offersOnly', label: t('filterOffersOnly'), clear: { offersOnly: undefined } });
+  }
+  if (filters.newlyAdded) {
+    chips.push({ key: 'newlyAdded', label: t('filterNewlyAdded'), clear: { newlyAdded: undefined } });
+  }
   if (filters.allowsOvernight) {
     chips.push({ key: 'overnight', label: t('filterOvernight'), clear: { allowsOvernight: undefined } });
   }

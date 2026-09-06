@@ -66,7 +66,7 @@ export function HomeHero({ slides }: { slides: PublicPropertySummary[] }) {
       </div>
 
       <div className="absolute right-[38px] top-1/2 z-10 max-w-[500px] -translate-y-[58%] text-right text-white max-[720px]:inset-x-6 max-[720px]:right-auto max-[720px]:-translate-y-[52%]">
-        <h2 className="text-[34px] font-bold leading-[1.35] text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.22)] max-[720px]:text-[29px]">
+        <h2 className="text-[34px] font-heading leading-[1.35] text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.22)] max-[720px]:text-[29px]">
           {t('heroBannerTitle')}
         </h2>
         <p className="ms-auto mt-2 max-w-[470px] text-[15px] font-medium leading-[1.7] text-white/92 drop-shadow-[0_1px_6px_rgba(0,0,0,.25)] max-[720px]:text-[14px]">

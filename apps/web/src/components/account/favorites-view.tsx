@@ -31,7 +31,7 @@ export function FavoritesView() {
       const res = await fetchBookableFavorites();
       setItems(res.data);
     } catch {
-      router.push('/login?returnUrl=' + encodeURIComponent('/account/favorites'));
+      router.push('/auth?returnUrl=' + encodeURIComponent('/account/favorites'));
     } finally {
       setLoading(false);
     }
@@ -45,7 +45,7 @@ export function FavoritesView() {
     <div className="space-y-6">
       <AccountSubnav />
       <div>
-        <h1 className="text-3xl font-bold text-navy">{t('title')}</h1>
+        <h1 className="text-3xl font-heading text-navy">{t('title')}</h1>
         <p className="mt-2 text-muted">{t('subtitle')}</p>
       </div>
 

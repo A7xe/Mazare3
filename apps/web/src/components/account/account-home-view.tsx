@@ -5,7 +5,16 @@ import { useLocale, useTranslations } from 'next-intl';
 import { Bell, Heart, LifeBuoy, Loader2, CalendarCheck } from 'lucide-react';
 import { Link, useRouter } from '@/i18n/navigation';
 import { AccountSubnav } from '@/components/account/account-subnav';
+import { AccountIdentitiesCard } from '@/components/account/account-identities-card';
+import { AccountPartnerSection } from '@/components/account/account-partner-section';
 import { getMe, type AuthUser } from '@/lib/api-auth';
+import { fetchPartnerOnboarding } from '@/lib/api-partner';
+import {
+  rememberPartnerVerificationStatus,
+  resolveAccountPartnerSurface,
+  shouldFetchPartnerStatusForAccount,
+  type AccountPartnerSurfaceKind,
+} from '@/lib/add-farm-entry';
 
 const SECTIONS = [
   { href: '/account/bookings', key: 'myBookings' as const, testId: 'account-home-bookings', icon: CalendarCheck },
@@ -33,14 +42,47 @@ export function AccountHomeView() {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [partnerLoading, setPartnerLoading] = useState(false);
+  const [partnerSurface, setPartnerSurface] = useState<AccountPartnerSurfaceKind | null>('join');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await getMe();
-      setUser(res.data.user);
+      const me = res.data.user;
+      setUser(me);
+
+      const base = resolveAccountPartnerSurface({ user: me });
+      if (base === null) {
+        setPartnerSurface(null);
+        setPartnerLoading(false);
+        return;
+      }
+
+      if (base === 'approved' || !shouldFetchPartnerStatusForAccount(me)) {
+        setPartnerSurface(base);
+        setPartnerLoading(false);
+        return;
+      }
+
+      setPartnerLoading(true);
+      try {
+        const onboard = await fetchPartnerOnboarding();
+        rememberPartnerVerificationStatus(onboard.data.verificationStatus);
+        setPartnerSurface(
+          resolveAccountPartnerSurface({
+            user: me,
+            verificationStatus: onboard.data.verificationStatus,
+          }),
+        );
+      } catch {
+        // Keep coarse session-derived surface if onboarding fetch fails.
+        setPartnerSurface(base);
+      } finally {
+        setPartnerLoading(false);
+      }
     } catch {
-      router.push('/login?returnUrl=' + encodeURIComponent('/account'));
+      router.push('/auth?returnUrl=' + encodeURIComponent('/account'));
     } finally {
       setLoading(false);
     }
@@ -58,7 +100,7 @@ export function AccountHomeView() {
     );
   }
 
-  const greetingName = user.name?.trim() || user.email;
+  const greetingName = user.name?.trim() || user.email || t('empty');
   const roleKey = user.role === 'owner' || user.role === 'admin' ? user.role : 'customer';
   const statusKey =
     user.status === 'suspended' || user.status === 'deleted' ? user.status : 'active';
@@ -68,7 +110,7 @@ export function AccountHomeView() {
   return (
     <div data-testid="account-home">
       <AccountSubnav />
-      <h1 className="text-2xl font-bold text-navy">{t('title')}</h1>
+      <h1 className="text-2xl font-heading text-navy">{t('title')}</h1>
       <p className="mt-1 text-sm text-muted">{t('subtitle', { name: greetingName })}</p>
 
       <section
@@ -90,7 +132,7 @@ export function AccountHomeView() {
           <div>
             <dt className="text-xs font-medium text-muted">{t('email')}</dt>
             <dd data-testid="account-profile-email" className="mt-0.5 text-sm font-medium text-navy">
-              {user.email}
+              {user.email ?? t('empty')}
             </dd>
           </div>
           <div>
@@ -121,6 +163,12 @@ export function AccountHomeView() {
           ) : null}
         </dl>
       </section>
+
+      <div className="mt-6">
+        <AccountIdentitiesCard />
+      </div>
+
+      <AccountPartnerSection surface={partnerSurface} loading={partnerLoading} />
 
       <ul className="mt-6 grid gap-3 sm:grid-cols-2">
         {SECTIONS.map((item) => {

@@ -3,26 +3,18 @@
 import { useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/navigation';
-import { ArrowLeft, Loader2, MapPin, Save } from 'lucide-react';
+import { ArrowLeft, Loader2, MapPin } from 'lucide-react';
 import Image from 'next/image';
 import {
   assessPropertyMedia,
+  getAllowedAdminPropertyTransitions,
+  PROPERTY_REVIEW_CHANGE_REASON_MIN,
+  PROPERTY_REVIEW_REJECTION_REASON_MIN,
   type AdminPropertyDetail,
   type PatchAdminPropertyStatusInput,
 } from '@mazare3/shared';
 import { PropertyMediaQualityBox } from '@/components/property/property-media-quality-box';
 import { AdminPropertyPlacementsPanel } from '@/components/admin/admin-property-placements-panel';
-
-const PROPERTY_STATUSES: PatchAdminPropertyStatusInput['status'][] = [
-  'draft',
-  'pending_review',
-  'changes_requested',
-  'approved',
-  'published',
-  'unpublished',
-  'suspended',
-  'rejected',
-];
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,17 +31,21 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
   const t = useTranslations('admin');
   const locale = useLocale() as 'ar' | 'en';
   const [property, setProperty] = useState<AdminPropertyDetail | null>(null);
-  const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [changeReasonOpen, setChangeReasonOpen] = useState(false);
+  const [changeReason, setChangeReason] = useState('');
+  const [changeReasonError, setChangeReasonError] = useState<string | null>(null);
+  const [rejectReasonOpen, setRejectReasonOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectReasonError, setRejectReasonError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
         const res = await fetchAdminProperty(propertyId);
         setProperty(res.data);
-        setStatus(res.data.status);
       } catch (e) {
         setError(e instanceof Error ? e.message : t('loadError'));
       } finally {
@@ -58,13 +54,25 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
     })();
   }, [propertyId, t]);
 
-  async function applyStatus(next: PatchAdminPropertyStatusInput['status']) {
+  async function applyStatus(
+    next: PatchAdminPropertyStatusInput['status'],
+    reason?: string,
+  ) {
     setSaving(true);
     setError(null);
     try {
-      const res = await patchAdminPropertyStatus(propertyId, { status: next });
+      const payload: PatchAdminPropertyStatusInput =
+        next === 'changes_requested' || next === 'rejected'
+          ? { status: next, reason: reason?.trim() }
+          : { status: next };
+      const res = await patchAdminPropertyStatus(propertyId, payload);
       setProperty(res.data);
-      setStatus(res.data.status);
+      setChangeReasonOpen(false);
+      setChangeReason('');
+      setChangeReasonError(null);
+      setRejectReasonOpen(false);
+      setRejectReason('');
+      setRejectReasonError(null);
     } catch (e) {
       if (e instanceof AdminApiError && e.code === 'PROPERTY_MIN_MEDIA_REQUIRED') {
         setError(t('mediaMinRequired'));
@@ -72,6 +80,20 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
         setError(t('availabilityScheduleRequired'));
       } else if (e instanceof AdminApiError && e.code === 'AVAILABILITY_SLOTS_REQUIRED') {
         setError(t('availabilitySlotsRequired'));
+      } else if (
+        e instanceof AdminApiError &&
+        e.code === 'INVALID_PROPERTY_STATUS_TRANSITION'
+      ) {
+        setError(t('invalidPropertyStatusTransition'));
+      } else if (e instanceof AdminApiError && e.code === 'VALIDATION_ERROR') {
+        const msg = e.message || t('propertyRequestChangesReasonRequired');
+        if (changeReasonOpen) {
+          setChangeReasonError(msg);
+        } else if (rejectReasonOpen) {
+          setRejectReasonError(msg);
+        } else {
+          setError(msg);
+        }
       } else {
         setError(e instanceof Error ? e.message : t('saveError'));
       }
@@ -80,9 +102,34 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
     }
   }
 
-  async function saveStatus() {
-    if (!property || status === property.status) return;
-    await applyStatus(status as PatchAdminPropertyStatusInput['status']);
+  function openChangeReasonDialog() {
+    setChangeReasonError(null);
+    setChangeReason('');
+    setChangeReasonOpen(true);
+  }
+
+  function openRejectReasonDialog() {
+    setRejectReasonError(null);
+    setRejectReason('');
+    setRejectReasonOpen(true);
+  }
+
+  async function confirmRejectReason() {
+    const trimmed = rejectReason.trim();
+    if (trimmed.length < PROPERTY_REVIEW_REJECTION_REASON_MIN) {
+      setRejectReasonError(t('propertyRejectReasonRequired'));
+      return;
+    }
+    await applyStatus('rejected', trimmed);
+  }
+
+  async function confirmChangeReason() {
+    const trimmed = changeReason.trim();
+    if (trimmed.length < PROPERTY_REVIEW_CHANGE_REASON_MIN) {
+      setChangeReasonError(t('propertyRequestChangesReasonRequired'));
+      return;
+    }
+    await applyStatus('changes_requested', trimmed);
   }
 
   if (loading) {
@@ -107,6 +154,10 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
   const media = property.media ?? [];
   const coverUrl = media[0]?.url ?? property.imageUrl;
   const mediaAssessment = assessPropertyMedia(media.map((m) => ({ sortOrder: m.sortOrder })));
+  const allowedTransitions = getAllowedAdminPropertyTransitions(property.status);
+  const canPublish =
+    allowedTransitions.includes('published') && mediaAssessment.canPublish;
+  const canRequestChanges = allowedTransitions.includes('changes_requested');
 
   return (
     <div className="space-y-6">
@@ -131,21 +182,56 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
             <CardTitle className="text-2xl text-navy">{title}</CardTitle>
             <Badge variant="highlight">{t(`propertyStatus.${property.status}`)}</Badge>
           </div>
+          {property.status === 'approved' ? (
+            <p
+              className="text-sm text-muted"
+              data-testid="admin-property-approved-hint"
+            >
+              {t('propertyApprovedNotPublishedHint')}
+            </p>
+          ) : null}
           <p className="flex items-center gap-1 text-muted">
             <MapPin className="h-4 w-4" />
-            {property.area} — {property.city}
+            {property.area && property.city
+              ? `${property.area} — ${property.city}`
+              : property.city || property.area || '—'}
           </p>
           <p className="text-sm text-muted">
-            {t('colOwner')}: {property.ownerDisplayName} ({property.ownerEmail})
+            {t('colOwner')}: {property.ownerDisplayName} ({property.ownerEmail ?? '—'})
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex flex-wrap gap-6">
-            <PriceDisplay amount={property.basePrice} currency={property.currency} locale={locale} large />
+            {property.basePrice != null ? (
+              <PriceDisplay amount={property.basePrice} currency={property.currency} locale={locale} large />
+            ) : (
+              <p className="text-sm text-muted">—</p>
+            )}
             <p className="text-sm text-muted">
               {t('bookingsCount', { count: property.bookingsCount })}
             </p>
           </div>
+          {property.status === 'changes_requested' && property.reviewChangeReason ? (
+            <div
+              data-testid="admin-property-change-reason"
+              className="rounded-2xl border border-primary/20 bg-primary-soft/30 p-4 text-sm"
+            >
+              <p className="font-medium text-navy">{t('activeReviewChangeReason')}</p>
+              <p className="mt-2 whitespace-pre-wrap text-navy">{property.reviewChangeReason}</p>
+            </div>
+          ) : null}
+          {property.status === 'rejected' && property.reviewRejectionReason ? (
+            <div
+              data-testid="admin-property-rejection-reason"
+              className="rounded-2xl border border-danger/25 bg-danger/5 p-4 text-sm"
+            >
+              <p className="font-medium text-navy">{t('activeReviewRejectionReason')}</p>
+              <p className="mt-2 whitespace-pre-wrap text-navy">{property.reviewRejectionReason}</p>
+              {property.reviewRejectedAt ? (
+                <p className="mt-2 text-xs text-muted">{property.reviewRejectedAt}</p>
+              ) : null}
+            </div>
+          ) : null}
           <PropertyMediaQualityBox
             media={media.map((m) => ({ sortOrder: m.sortOrder }))}
             namespace="admin"
@@ -247,10 +333,19 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
 
           <AdminPropertyPlacementsPanel propertyId={property.id} />
 
-          <div className="flex flex-wrap gap-2">
-            {(property.status === 'pending_review' ||
-              property.status === 'approved' ||
-              property.status === 'draft') && (
+          <div className="flex flex-wrap gap-2" data-testid="admin-property-status-actions">
+            {property.status === 'pending_review' && allowedTransitions.includes('approved') ? (
+              <Button
+                size="sm"
+                className="shadow-soft"
+                disabled={saving}
+                data-testid="admin-property-approve"
+                onClick={() => void applyStatus('approved')}
+              >
+                {t('approveProperty')}
+              </Button>
+            ) : null}
+            {canPublish ? (
               <Button
                 size="sm"
                 className="shadow-soft"
@@ -260,37 +355,64 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
               >
                 {t('publishProperty')}
               </Button>
-            )}
-            {property.status === 'pending_review' && (
+            ) : null}
+            {canRequestChanges ? (
               <Button
                 size="sm"
                 variant="outline"
                 disabled={saving}
-                onClick={() => void applyStatus('changes_requested')}
+                data-testid="admin-property-request-changes"
+                onClick={() => openChangeReasonDialog()}
               >
-                {t('requestChanges')}
+                {property.status === 'changes_requested'
+                  ? t('updateChangeReason')
+                  : t('requestChanges')}
               </Button>
-            )}
-            {property.status === 'published' && (
+            ) : null}
+            {property.status === 'pending_review' && allowedTransitions.includes('rejected') ? (
               <Button
                 size="sm"
                 variant="outline"
                 disabled={saving}
+                data-testid="admin-property-reject"
+                onClick={() => openRejectReasonDialog()}
+              >
+                {t('rejectProperty')}
+              </Button>
+            ) : null}
+            {property.status === 'published' && allowedTransitions.includes('unpublished') ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                data-testid="admin-property-unpublish"
+                onClick={() => void applyStatus('unpublished')}
+              >
+                {t('unpublishProperty')}
+              </Button>
+            ) : null}
+            {property.status === 'published' && allowedTransitions.includes('suspended') ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                data-testid="admin-property-suspend"
                 onClick={() => void applyStatus('suspended')}
               >
                 {t('suspendProperty')}
               </Button>
-            )}
-            {(property.status === 'pending_review' || property.status === 'draft') && (
+            ) : null}
+            {property.status === 'suspended' && allowedTransitions.includes('unpublished') ? (
               <Button
                 size="sm"
                 variant="outline"
                 disabled={saving}
-                onClick={() => void applyStatus('rejected')}
+                data-testid="admin-property-restore-unpublished"
+                onClick={() => void applyStatus('unpublished')}
               >
-                {t('rejectProperty')}
+                {t('restoreAsUnpublished')}
               </Button>
-            )}
+            ) : null}
           </div>
 
           {media.length > 0 && (
@@ -310,39 +432,172 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
               </div>
             </div>
           )}
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-navy">{t('changeStatus')}</span>
-              <select
-                className="rounded-xl border border-border bg-surface px-3 py-2 text-sm"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                {PROPERTY_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {t(`propertyStatus.${s}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button
-              className="shadow-soft"
-              disabled={
-                saving ||
-                status === property.status ||
-                (status === 'published' && !mediaAssessment.canPublish)
-              }
-              onClick={() => void saveStatus()}
-            >
-              <Save className="h-4 w-4" />
-              {t('saveStatus')}
-            </Button>
-          </div>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/properties/${property.slug}`}>{t('viewPublic')}</Link>
           </Button>
         </CardContent>
       </Card>
+
+      {changeReasonOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-property-change-reason-title"
+          data-testid="admin-property-change-reason-dialog"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-navy/40 p-4 sm:items-center"
+          onClick={() => {
+            if (!saving) {
+              setChangeReasonOpen(false);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-soft"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="admin-property-change-reason-title"
+              className="text-lg font-bold text-navy"
+            >
+              {t('propertyRequestChangesDialogTitle')}
+            </h2>
+            <label
+              htmlFor="admin-property-change-reason-input"
+              className="mt-4 block text-sm font-medium text-navy"
+            >
+              {t('propertyRequestChangesReason')}
+            </label>
+            <textarea
+              id="admin-property-change-reason-input"
+              data-testid="admin-property-change-reason-input"
+              rows={4}
+              autoFocus
+              aria-invalid={Boolean(changeReasonError)}
+              aria-describedby={changeReasonError ? 'admin-property-change-reason-error' : undefined}
+              className="mt-2 flex w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm"
+              placeholder={t('propertyRequestChangesReasonPlaceholder')}
+              value={changeReason}
+              onChange={(e) => {
+                setChangeReason(e.target.value);
+                if (changeReasonError) setChangeReasonError(null);
+              }}
+            />
+            {changeReasonError ? (
+              <p
+                id="admin-property-change-reason-error"
+                role="alert"
+                className="mt-2 text-sm text-danger"
+              >
+                {changeReasonError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => setChangeReasonOpen(false)}
+              >
+                {t('propertyRequestChangesCancel')}
+              </Button>
+              <Button
+                type="button"
+                disabled={saving}
+                data-testid="admin-property-change-reason-confirm"
+                aria-busy={saving}
+                onClick={() => void confirmChangeReason()}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {t('propertyRequestChangesConfirm')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {rejectReasonOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-property-reject-reason-title"
+          data-testid="admin-property-reject-reason-dialog"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-navy/40 p-4 sm:items-center"
+          onClick={() => {
+            if (!saving) {
+              setRejectReasonOpen(false);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-soft"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="admin-property-reject-reason-title"
+              className="text-lg font-bold text-navy"
+            >
+              {t('propertyRejectDialogTitle')}
+            </h2>
+            <label
+              htmlFor="admin-property-reject-reason-input"
+              className="mt-4 block text-sm font-medium text-navy"
+            >
+              {t('propertyRejectReason')}
+            </label>
+            <p id="admin-property-reject-reason-helper" className="mt-1 text-xs text-muted">
+              {t('propertyRejectReasonHelper')}
+            </p>
+            <textarea
+              id="admin-property-reject-reason-input"
+              data-testid="admin-property-reject-reason-input"
+              rows={4}
+              autoFocus
+              aria-invalid={Boolean(rejectReasonError)}
+              aria-describedby={
+                rejectReasonError
+                  ? 'admin-property-reject-reason-error'
+                  : 'admin-property-reject-reason-helper'
+              }
+              className="mt-2 flex w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm"
+              placeholder={t('propertyRejectReasonPlaceholder')}
+              value={rejectReason}
+              onChange={(e) => {
+                setRejectReason(e.target.value);
+                if (rejectReasonError) setRejectReasonError(null);
+              }}
+            />
+            {rejectReasonError ? (
+              <p
+                id="admin-property-reject-reason-error"
+                role="alert"
+                className="mt-2 text-sm text-danger"
+              >
+                {rejectReasonError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => setRejectReasonOpen(false)}
+              >
+                {t('propertyRejectCancel')}
+              </Button>
+              <Button
+                type="button"
+                disabled={saving}
+                data-testid="admin-property-reject-reason-confirm"
+                aria-busy={saving}
+                onClick={() => void confirmRejectReason()}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {t('propertyRejectConfirm')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

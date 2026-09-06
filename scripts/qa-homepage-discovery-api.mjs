@@ -150,8 +150,36 @@ function sectionMap(disc) {
   return map;
 }
 
+async function unpublishByIds(ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return;
+  await login(ADMIN);
+  for (const id of unique) {
+    try {
+      const placements = await api('GET', `/admin/properties/${id}/placements`);
+      for (const row of placements.json?.data ?? []) {
+        if (row?.status === 'active' && row?.id) {
+          await api('POST', `/admin/properties/${id}/placements/${row.id}/pause`, {});
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+    try {
+      const detail = await api('GET', `/admin/properties/${id}`);
+      if (detail.json?.data?.status === 'published') {
+        await api('PATCH', `/admin/properties/${id}/status`, { status: 'unpublished' });
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
 async function main() {
   console.log('\n🏠 Phase 10F.4A homepage discovery QA\n');
+  /** @type {string[]} */
+  const createdPropertyIds = [];
   try {
     const sponsored = await setupListing(`QA Home S ${RUN}`, { basePrice: 1600 });
     const featured = await setupListing(`QA Home F ${RUN}`, { basePrice: 900 });
@@ -160,6 +188,15 @@ async function main() {
     const recent = await setupListing(`QA Home N ${RUN}`, { basePrice: 400 });
     const unpublished = await setupListing(`QA Home U ${RUN}`, { publish: false, basePrice: 300 });
     const emptyOnly = await setupListing(`QA Home E ${RUN}`, { area: EMPTY_AREA, basePrice: 450 });
+    createdPropertyIds.push(
+      sponsored.id,
+      featured.id,
+      offer.id,
+      rated.id,
+      recent.id,
+      unpublished.id,
+      emptyOnly.id,
+    );
 
     await activatePlacement(sponsored.id, 'sponsored');
     await activatePlacement(featured.id, 'featured');
@@ -333,6 +370,13 @@ async function main() {
   } finally {
     if (ownerProfileId && ownerPrevStatus) {
       await prisma.ownerProfile.update({ where: { id: ownerProfileId }, data: { status: ownerPrevStatus } });
+    }
+    try {
+      await unpublishByIds(createdPropertyIds);
+    } catch (cleanupErr) {
+      console.log(
+        `  ⚠️ fixture cleanup: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+      );
     }
     await prisma.$disconnect();
   }

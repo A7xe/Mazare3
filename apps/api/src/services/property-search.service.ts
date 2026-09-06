@@ -1,11 +1,16 @@
-import { prisma, Prisma, PropertyStatus, VerificationStatus, AvailabilitySlotStatus } from '@mazare3/db';
+import { prisma, Prisma, PropertyStatus, VerificationStatus, AvailabilitySlotStatus, PlacementType } from '@mazare3/db';
 import {
   calculateBookingFinancialSnapshot,
   expandCityAreaQuery,
   getPlatformTimeZone,
+  mergeSponsoredIntoOrganicPage,
+  pickSponsoredSearchCandidate,
   propertySearchHasMore,
+  recentlyAddedCreatedAtCutoff,
+  shouldInjectSponsoredSearchSlot,
   todayDateIsoInZone,
   type AvailabilityPeriod,
+  type PropertyPromotionRow,
   type PropertySearchMatch,
   type PropertySearchMeta,
   type PropertySearchQuery,
@@ -33,7 +38,7 @@ import {
   loadPaymentPolicyConfig,
   resolveDepositPercent,
 } from '../config/payment-policy.config.js';
-import { loadLivePromotionsByProperty, toPriceInput } from './promotion.service.js';
+import { loadLivePromotionsByProperty, liveActivePromotionFilter, toPriceInput, buildActivePromotionSummary } from './promotion.service.js';
 import {
   compareDistanceRank,
   comparePublishedRatingRank,
@@ -43,6 +48,7 @@ import {
 } from '@mazare3/shared';
 import {
   applyPlacementFlags,
+  listLivePlacementPropertyIds,
   liveFeaturedFilter,
   loadLivePlacementsByPropertyIds,
   type LivePlacementFlags,
@@ -73,6 +79,11 @@ export function buildPropertySearchWhere(query: PropertySearchQuery): Prisma.Pro
   const where: Prisma.PropertyWhereInput = {
     status: PropertyStatus.published,
     owner: { status: 'approved' },
+    // AF-1.1b: incomplete drafts must never enter public search even if status is wrong.
+    city: { not: null },
+    area: { not: null },
+    approximateAddress: { not: null },
+    basePrice: { not: null },
   };
   const and: Prisma.PropertyWhereInput[] = [];
 
@@ -111,6 +122,10 @@ export function buildPropertySearchWhere(query: PropertySearchQuery): Prisma.Pro
   if (query.allowsOvernight) where.allowsOvernight = true;
   if (query.allowsEvents) where.allowsEvents = true;
   if (query.featured) Object.assign(where, liveFeaturedFilter());
+  if (query.offersOnly) Object.assign(where, liveActivePromotionFilter());
+  if (query.newlyAdded) {
+    where.createdAt = { gte: recentlyAddedCreatedAtCutoff() };
+  }
 
   if (query.verifiedOnly || query.verified) {
     where.verificationStatus = {
@@ -162,11 +177,78 @@ function titleRelevanceScore(q: string, titleAr: string | null | undefined, titl
 function browsePriceWhere(query: PropertySearchQuery): Prisma.PropertyWhereInput {
   const where = buildPropertySearchWhere(query);
   if (query.minPrice !== undefined || query.maxPrice !== undefined) {
-    where.basePrice = {};
-    if (query.minPrice !== undefined) where.basePrice.gte = query.minPrice;
-    if (query.maxPrice !== undefined) where.basePrice.lte = query.maxPrice;
+    where.basePrice = {
+      not: null,
+      ...(query.minPrice !== undefined ? { gte: query.minPrice } : {}),
+      ...(query.maxPrice !== undefined ? { lte: query.maxPrice } : {}),
+    };
   }
   return where;
+}
+
+/**
+ * Nested `propertyWhere` for live sponsored placement lookup.
+ * Strips status/owner (already enforced by listLivePlacementPropertyIds).
+ * When textual `q` is active, require title relevance (not description-only).
+ */
+export function sponsoredSearchPropertyWhere(
+  query: PropertySearchQuery,
+  mode: 'browse' | 'availability',
+): Prisma.PropertyWhereInput {
+  const full = mode === 'browse' ? browsePriceWhere(query) : buildPropertySearchWhere(query);
+  const { status: _status, owner: _owner, ...rest } = full;
+  const q = query.q?.trim();
+  if (!q) return rest;
+  return {
+    AND: [
+      rest,
+      {
+        OR: [
+          { titleAr: { contains: q, mode: 'insensitive' } },
+          { titleEn: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Resolve one sponsored insert id for the current organic page.
+ * Candidates already respect live placement + public filters; caller may
+ * further restrict by availability eligibility set.
+ */
+async function resolveSponsoredSearchInsertId(params: {
+  query: PropertySearchQuery;
+  mode: 'browse' | 'availability';
+  organicPageIds: readonly string[];
+  eligibleIdSet?: ReadonlySet<string>;
+}): Promise<string | null> {
+  const { query, mode, organicPageIds, eligibleIdSet } = params;
+  if (
+    !shouldInjectSponsoredSearchSlot({
+      page: query.page,
+      organicPageCount: organicPageIds.length,
+      pageSize: query.pageSize,
+    })
+  ) {
+    return null;
+  }
+
+  const candidates = await listLivePlacementPropertyIds({
+    placementType: PlacementType.sponsored,
+    propertyWhere: sponsoredSearchPropertyWhere(query, mode),
+    take: 24,
+  });
+  if (!candidates.length) return null;
+
+  const filtered = eligibleIdSet
+    ? candidates.filter((id) => eligibleIdSet.has(id))
+    : candidates;
+
+  return pickSponsoredSearchCandidate({
+    sponsoredCandidateIds: filtered,
+    organicVisibleIds: organicPageIds,
+  });
 }
 
 function browseOrderBy(sort: PropertySearchQuery['sort']): Prisma.PropertyOrderByWithRelationInput[] {
@@ -316,15 +398,47 @@ async function applyLiveRatingsToCards(cards: PublicPropertySummary[]): Promise<
 
 function withPromotionFlags(
   cards: PublicPropertySummary[],
-  promoMap: Map<string, { id: string }[]>,
+  promoMap: Map<string, PropertyPromotionRow[]>,
   exact: boolean,
 ): PublicPropertySummary[] {
-  return cards.map((c) => ({
-    ...c,
-    hasActivePromotion: exact
-      ? Boolean(c.searchMatch?.discountAmount && c.searchMatch.discountAmount > 0)
-      : (promoMap.get(c.id) ?? []).length > 0,
-  }));
+  return cards.map((c) => {
+    const promos = promoMap.get(c.id) ?? [];
+
+    if (exact) {
+      const discounted = Boolean(c.searchMatch?.discountAmount && c.searchMatch.discountAmount > 0);
+      if (!discounted) {
+        return {
+          ...c,
+          hasActivePromotion: false,
+          activePromotionSummary: null,
+        };
+      }
+
+      const fromRows = buildActivePromotionSummary(c.basePrice, promos);
+      return {
+        ...c,
+        hasActivePromotion: true,
+        activePromotionSummary: {
+          discountType: fromRows?.discountType ?? null,
+          discountValue: fromRows?.discountValue ?? null,
+          endsAt: fromRows?.endsAt ?? null,
+          titleAr: c.searchMatch?.promotionTitleAr ?? fromRows?.titleAr ?? null,
+          titleEn: c.searchMatch?.promotionTitleEn ?? fromRows?.titleEn ?? null,
+          // Exact slot prices are already post-discount when discounted — never re-apply.
+          originalFromPrice: c.searchMatch?.originalSlotPrice ?? null,
+          promotionalFromPrice: c.searchMatch?.slotPrice ?? null,
+          savingsAmount: c.searchMatch?.discountAmount ?? null,
+        },
+      };
+    }
+
+    const summary = buildActivePromotionSummary(c.basePrice, promos);
+    return {
+      ...c,
+      hasActivePromotion: promos.length > 0,
+      activePromotionSummary: summary,
+    };
+  });
 }
 
 function assertSearchDate(date: string) {
@@ -487,7 +601,7 @@ type AvailabilityLightProperty = {
   latitudeApprox: number | null;
   longitudeApprox: number | null;
   capacity: number;
-  basePrice: Prisma.Decimal;
+  basePrice: Prisma.Decimal | null;
   depositPercent: Prisma.Decimal | null;
   mediaCount: number;
 };
@@ -806,7 +920,15 @@ async function searchAvailability(query: PropertySearchQuery): Promise<PropertyS
 
   const total = orderedIds.length;
   const start = (query.page - 1) * query.pageSize;
-  const pageIds = orderedIds.slice(start, start + query.pageSize);
+  const organicPageIds = orderedIds.slice(start, start + query.pageSize);
+
+  const sponsoredId = await resolveSponsoredSearchInsertId({
+    query,
+    mode: 'availability',
+    organicPageIds,
+    eligibleIdSet: new Set(survivingIds),
+  });
+  const pageIds = mergeSponsoredIntoOrganicPage(organicPageIds, sponsoredId);
 
   const pageProperties = pageIds.length
     ? await prisma.property.findMany({
@@ -944,9 +1066,47 @@ async function searchBrowse(query: PropertySearchQuery): Promise<PropertySearchR
     pageRows = sorted.slice((query.page - 1) * query.pageSize, query.page * query.pageSize);
   }
 
+  const organicPageIds = pageRows.map((r) => r.property.id);
+  const sponsoredId = await resolveSponsoredSearchInsertId({
+    query,
+    mode: 'browse',
+    organicPageIds,
+  });
+
+  let mergedRows = pageRows;
+  if (sponsoredId) {
+    let sponsoredRow = pageRows.find((r) => r.property.id === sponsoredId) ?? null;
+    if (!sponsoredRow) {
+      const extra = await prisma.property.findMany({
+        where: { id: sponsoredId },
+        include: searchInclude,
+      });
+      const property = extra[0];
+      if (property) {
+        sponsoredRow = {
+          property,
+          match: null,
+          sortPrice: decimalToNumber(property.basePrice),
+        };
+        const extraPromo = await loadLivePromotionsByProperty([sponsoredId]);
+        for (const [id, promos] of extraPromo) promoMap.set(id, promos);
+        const extraRanks = await loadLivePlacementsByPropertyIds([sponsoredId]);
+        for (const [id, flags] of extraRanks) ranks.set(id, flags);
+      }
+    }
+    if (sponsoredRow) {
+      const mergedIds = mergeSponsoredIntoOrganicPage(organicPageIds, sponsoredId);
+      const byId = new Map(pageRows.map((r) => [r.property.id, r]));
+      byId.set(sponsoredRow.property.id, sponsoredRow);
+      mergedRows = mergedIds
+        .map((id) => byId.get(id))
+        .filter((r): r is NonNullable<typeof r> => Boolean(r));
+    }
+  }
+
   const cards = applyPlacementFlags(
     withPromotionFlags(
-      await applyLiveRatingsToCards(pageRows.map((p) => toCard(p.property, null))),
+      await applyLiveRatingsToCards(mergedRows.map((p) => toCard(p.property, null))),
       promoMap,
       false,
     ),
@@ -1066,6 +1226,7 @@ export async function countPublishedPropertiesByCity(
   });
   const counts: Record<string, number> = {};
   for (const row of rows) {
+    if (!row.city) continue;
     counts[row.city] = row._count._all;
   }
   return counts;

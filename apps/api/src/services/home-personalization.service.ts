@@ -1,19 +1,28 @@
-import { prisma, PropertyStatus, OwnerStatus } from '@mazare3/db';
-import type { HomeBookAgainItem, HomePersonalizationResponse } from '@mazare3/shared';
-import { canRebookBooking } from '../mappers/public-booking.mapper.js';
+import { prisma, PropertyStatus, OwnerStatus, BookingStatus } from '@mazare3/db';
+import {
+  BOOK_AGAIN_RAIL_LIMIT,
+  bookAgainVisitSortMs,
+  dedupeBookAgainByPropertyId,
+  isBookAgainHistoryEligible,
+  type HomeBookAgainItem,
+  type HomePersonalizationResponse,
+} from '@mazare3/shared';
 import { loadPublicPropertyCardsByIds } from './property-search.service.js';
 
-const RAIL_SIZE = 6;
-const BOOKING_SCAN = 40;
+const BOOKING_SCAN = 80;
 const FAVORITE_SCAN = 40;
 
 export async function getCustomerHomePersonalization(
   userId: string,
 ): Promise<HomePersonalizationResponse> {
+  const now = new Date();
   const [bookings, favoriteRows] = await Promise.all([
     prisma.booking.findMany({
-      where: { userId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      where: {
+        userId,
+        status: BookingStatus.confirmed,
+      },
+      orderBy: [{ bookingEndAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
       take: BOOKING_SCAN,
       include: {
         property: {
@@ -23,7 +32,7 @@ export async function getCustomerHomePersonalization(
             owner: { select: { status: true } },
           },
         },
-        slot: { select: { period: true } },
+        slot: { select: { period: true, date: true, endAt: true } },
       },
     }),
     prisma.favorite.findMany({
@@ -43,35 +52,44 @@ export async function getCustomerHomePersonalization(
     }),
   ]);
 
-  const bookAgainCandidates: Array<{
-    bookingId: string;
-    propertyId: string;
-    guestsCount: number;
-    preferredPeriod: HomeBookAgainItem['preferredPeriod'];
-  }> = [];
-  const seenBookAgain = new Set<string>();
-  for (const row of bookings) {
-    if (
-      !canRebookBooking({
+  const qualifying = bookings
+    .filter((row) =>
+      isBookAgainHistoryEligible({
         status: row.status,
-        property: {
-          status: row.property.status,
-          owner: row.property.owner,
-        },
-      })
-    ) {
-      continue;
-    }
-    if (seenBookAgain.has(row.propertyId)) continue;
-    seenBookAgain.add(row.propertyId);
-    bookAgainCandidates.push({
+        paymentState: row.paymentState,
+        bookingEndAt: row.bookingEndAt,
+        slotDate: row.slot.date,
+        slotEndAt: row.slot.endAt,
+        propertyStatus: row.property.status,
+        ownerStatus: row.property.owner.status,
+        now,
+      }),
+    )
+    .sort((a, b) => {
+      const byVisit =
+        bookAgainVisitSortMs({
+          bookingEndAt: b.bookingEndAt,
+          slotEndAt: b.slot.endAt,
+          slotDate: b.slot.date,
+        }) -
+        bookAgainVisitSortMs({
+          bookingEndAt: a.bookingEndAt,
+          slotEndAt: a.slot.endAt,
+          slotDate: a.slot.date,
+        });
+      if (byVisit) return byVisit;
+      return b.id.localeCompare(a.id);
+    });
+
+  const bookAgainCandidates = dedupeBookAgainByPropertyId(
+    qualifying.map((row) => ({
       bookingId: row.id,
       propertyId: row.propertyId,
       guestsCount: row.guestsCount,
-      preferredPeriod: row.slot.period,
-    });
-    if (bookAgainCandidates.length >= RAIL_SIZE) break;
-  }
+      preferredPeriod: row.slot.period as HomeBookAgainItem['preferredPeriod'],
+    })),
+    BOOK_AGAIN_RAIL_LIMIT,
+  );
 
   const bookAgainPropertyIds = new Set(bookAgainCandidates.map((c) => c.propertyId));
   const favoriteIds: string[] = [];
@@ -80,7 +98,7 @@ export async function getCustomerHomePersonalization(
     if (row.property.owner.status !== OwnerStatus.approved) continue;
     if (bookAgainPropertyIds.has(row.propertyId)) continue;
     favoriteIds.push(row.propertyId);
-    if (favoriteIds.length >= RAIL_SIZE) break;
+    if (favoriteIds.length >= BOOK_AGAIN_RAIL_LIMIT) break;
   }
 
   const hydrateIds = [
@@ -109,3 +127,6 @@ export async function getCustomerHomePersonalization(
 
   return { bookAgain, favorites };
 }
+
+// Re-export for API/unit callers that previously imported from this module.
+export { isBookAgainHistoryEligible } from '@mazare3/shared';

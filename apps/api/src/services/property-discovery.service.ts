@@ -6,6 +6,7 @@ import {
   type PublicPropertySummary,
   getPlatformTimeZone,
   parseMarketplaceUserCoords,
+  isNewlyAddedCreatedAt,
 } from '@mazare3/shared';
 import { listLivePlacementPropertyIds } from './placement.service.js';
 import { listLivePromotionPropertyIds } from './promotion.service.js';
@@ -26,8 +27,6 @@ const SECTION_SIZE = 8;
 const EXPLORE_NEAR_SIZE = 3;
 const EXPLORE_MOST_BOOKED_SIZE = 3;
 const SOURCE_TAKE = SECTION_SIZE * 2;
-const RECENTLY_ADDED_WINDOW_DAYS = 7;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function pick(
   list: PublicPropertySummary[],
@@ -167,14 +166,12 @@ export async function getMarketplaceDiscovery(
   const mostBooked = orderByIds(commercialCards, mostBookedIds).slice(0, EXPLORE_MOST_BOOKED_SIZE);
   const nearby = orderByIds(commercialCards, nearbyIds).slice(0, EXPLORE_NEAR_SIZE);
 
-  const recentCutoffMs = Date.now() - RECENTLY_ADDED_WINDOW_DAYS * MS_PER_DAY;
   const recentlyAdded = [...catalog]
-    .filter((p) => {
-      if (!p.createdAt) return false;
-      return new Date(p.createdAt).getTime() >= recentCutoffMs;
-    })
+    .filter((p) => isNewlyAddedCreatedAt(p.createdAt))
     .sort(byCreatedThenId)
     .slice(0, SECTION_SIZE);
+
+  const overnightSample = catalog.find((p) => p.allowsOvernight);
 
   const sections: MarketplaceDiscoverySection[] = [];
   for (const s of [
@@ -189,10 +186,25 @@ export async function getMarketplaceDiscovery(
     if (s) sections.push(s);
   }
 
+  const campaignTiles: NonNullable<MarketplaceDiscoveryResponse['campaignTiles']> = {};
+  if (offers.length) {
+    campaignTiles.offers = { imageUrl: offers[0]?.imageUrl ?? null };
+  }
+  if (recentlyAdded.length) {
+    campaignTiles.newlyAdded = { imageUrl: recentlyAdded[0]?.imageUrl ?? null };
+  }
+  if (overnightSample) {
+    campaignTiles.overnight = { imageUrl: overnightSample.imageUrl ?? null };
+  }
+  if (featured.length) {
+    campaignTiles.featured = { imageUrl: featured[0]?.imageUrl ?? null };
+  }
+
   return {
     timeZone: zone,
     mode: query.date ? 'availability' : 'browse',
     sections,
     cityPropertyCounts,
+    ...(Object.keys(campaignTiles).length ? { campaignTiles } : {}),
   };
 }

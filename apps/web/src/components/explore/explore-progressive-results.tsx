@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { Loader2 } from 'lucide-react';
 import {
   EXPLORE_MAIN_PAGE_SIZE,
   appendUniqueById,
@@ -12,7 +13,9 @@ import {
 } from '@mazare3/shared';
 import { ExplorePropertyCard } from '@/components/explore/explore-property-card';
 import { fetchPropertySearch, type PropertySearchParams } from '@/lib/api-properties';
-import { cn } from '@/lib/utils';
+
+/** Preload ~1–2 card rows before the viewport end so page N+1 arrives before a blank bottom. */
+const INFINITE_SCROLL_ROOT_MARGIN = '600px 0px';
 
 type Props = {
   filters: PropertySearchParams;
@@ -33,9 +36,19 @@ export function ExploreProgressiveResults({
   const [meta, setMeta] = useState(initialMeta);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const loadingRef = useRef(false);
   const signatureRef = useRef(signature);
   const abortRef = useRef<AbortController | null>(null);
+  const metaRef = useRef(meta);
+  const hasMoreRef = useRef(false);
+  const errorRef = useRef<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const filtersRef = useRef(filters);
+
+  metaRef.current = meta;
+  filtersRef.current = filters;
+  errorRef.current = error;
 
   useEffect(() => {
     signatureRef.current = signature;
@@ -49,15 +62,19 @@ export function ExploreProgressiveResults({
   }, [signature, initialProperties, initialMeta]);
 
   const hasMore = meta.hasMore ?? propertySearchHasMore(meta);
+  hasMoreRef.current = hasMore;
 
   const loadMore = useCallback(async () => {
-    if (loadingRef.current || !hasMore) return;
+    if (loadingRef.current || !hasMoreRef.current || errorRef.current) return;
+
     loadingRef.current = true;
     setLoading(true);
     setError(null);
 
     const requestSignature = signatureRef.current;
-    const nextPage = meta.page + 1;
+    const nextPage = metaRef.current.page + 1;
+    const activeFilters = filtersRef.current;
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -65,9 +82,9 @@ export function ExploreProgressiveResults({
     try {
       const result = await fetchPropertySearch(
         {
-          ...filters,
+          ...activeFilters,
           page: nextPage,
-          pageSize: filters.pageSize ?? EXPLORE_MAIN_PAGE_SIZE,
+          pageSize: activeFilters.pageSize ?? EXPLORE_MAIN_PAGE_SIZE,
         },
         { signal: controller.signal },
       );
@@ -86,7 +103,31 @@ export function ExploreProgressiveResults({
         setLoading(false);
       }
     }
-  }, [filters, hasMore, meta.page, t]);
+  }, [t]);
+
+  // Automatic near-end fetch — one active request; disconnected when exhausted or errored.
+  useEffect(() => {
+    if (!hasMore || error) return;
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        void loadMore();
+      },
+      { root: null, rootMargin: INFINITE_SCROLL_ROOT_MARGIN, threshold: 0 },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, error, signature, loadMore]);
+
+  function onRetry() {
+    setError(null);
+    errorRef.current = null;
+    void loadMore();
+  }
 
   return (
     <>
@@ -108,14 +149,14 @@ export function ExploreProgressiveResults({
 
       {error ? (
         <div
-          className="mt-4 flex flex-col items-center gap-2 text-center"
+          className="mt-4 flex flex-col items-center gap-2 pb-2 text-center"
           role="alert"
           data-testid="load-more-error"
         >
           <p className="text-sm text-[#8A4B4B]">{error}</p>
           <button
             type="button"
-            onClick={() => void loadMore()}
+            onClick={onRetry}
             disabled={loading}
             className="inline-flex h-10 items-center justify-center rounded-full border border-[#D5E2F4] bg-white px-5 text-[13px] font-semibold text-[#4E5D73] transition hover:bg-[#F7FAFF]"
             data-testid="load-more-retry"
@@ -125,21 +166,27 @@ export function ExploreProgressiveResults({
         </div>
       ) : null}
 
-      {hasMore ? (
-        <div className="mt-6 flex justify-center pb-2">
-          <button
-            type="button"
-            onClick={() => void loadMore()}
-            disabled={loading}
-            aria-busy={loading || undefined}
-            data-testid="explore-load-more"
-            className={cn(
-              'inline-flex h-11 min-w-[148px] items-center justify-center rounded-full bg-[linear-gradient(180deg,#4B8CFF_0%,#2F6EF6_100%)] px-6 text-[13px] font-semibold text-white shadow-[0_8px_18px_rgba(47,110,246,.28)] transition hover:brightness-[1.03]',
-              loading && 'opacity-80',
-            )}
-          >
-            {loading ? t('loadMoreLoading') : t('loadMore')}
-          </button>
+      {hasMore && !error ? (
+        <div
+          ref={sentinelRef}
+          className="mt-6 flex justify-center pb-2"
+          data-testid="explore-infinite-sentinel"
+          aria-hidden={!loading}
+        >
+          {loading ? (
+            <div
+              className="inline-flex items-center gap-2 text-[13px] font-medium text-[#8A96A8]"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+              data-testid="explore-infinite-loading"
+            >
+              <Loader2 className="h-4 w-4 animate-spin text-[#2F6EF6]" aria-hidden />
+              {t('loadMoreLoading')}
+            </div>
+          ) : (
+            <div className="h-1 w-1" aria-hidden />
+          )}
         </div>
       ) : null}
     </>

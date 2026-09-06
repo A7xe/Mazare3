@@ -22,8 +22,11 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.1.0",
+    "jose": "^6.2.12",
     "jsonwebtoken": "^9.0.2",
+    "libphonenumber-js": "^1.12.10",
     "multer": "^2.1.1",
+    "openid-client": "^6.8.7",
     "zod": "^3.25.28"
   },
   "devDependencies": {

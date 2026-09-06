@@ -1,4 +1,4 @@
-import { prisma, MediaType } from '@mazare3/db';
+import { prisma, MediaType, type PropertyStatus } from '@mazare3/db';
 import type { Express } from 'express';
 import type { UserRole } from '@mazare3/shared';
 import { AppError } from '../../lib/errors.js';
@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from '../../middleware/auth.js';
 import type { PropertyMediaItem } from '@mazare3/shared';
 import { createAuditLog } from '../audit.service.js';
 import { resolveOwnerScope } from '../owner-access.js';
+import { assertOwnerNotPendingReview } from '../../lib/owner-property-mutation-guards.js';
 import {
   assertMediaProviderReady,
   deleteStoredPropertyMedia,
@@ -131,19 +132,20 @@ async function assertCanManageProperty(params: {
   userId: string;
   role: UserRole;
   propertyId: string;
-}): Promise<{ isAdmin: boolean; ownerProfileId: string | null }> {
+}): Promise<{ isAdmin: boolean; ownerProfileId: string | null; status: PropertyStatus }> {
   const scope = await resolveOwnerScope(params.userId, params.role);
   if (scope.isAdmin) {
     throw new AppError(403, 'FORBIDDEN', 'Owners only');
   }
   const property = await prisma.property.findFirst({
     where: { id: params.propertyId, ownerId: scope.ownerProfileId! },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!property) {
     throw new AppError(403, 'PROPERTY_MEDIA_NOT_OWNED', 'You cannot manage this property media');
   }
-  return scope;
+  assertOwnerNotPendingReview(property.status);
+  return { ...scope, status: property.status };
 }
 
 async function getNextSortOrder(propertyId: string): Promise<number> {

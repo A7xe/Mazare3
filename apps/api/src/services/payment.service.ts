@@ -53,6 +53,10 @@ import {
   providerIdempotencyKey,
   type NormalizedGatewayEvent,
 } from './payment/payment-provider.interface.js';
+import {
+  resolvePaymentCustomerContact,
+  type PaymentCustomerContact,
+} from './payment-contact.service.js';
 
 function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
   if (value == null) return 0;
@@ -249,6 +253,33 @@ export async function createPaymentIntent(
 ): Promise<PaymentSummary> {
   await refreshBookingPaymentLifecycle(input.bookingId);
 
+  const providerNameEarly = resolveProviderForMethod(input.method as PaymentMethod);
+  try {
+    assertProviderCanCreateIntent(providerNameEarly);
+  } catch (err) {
+    throwPaymentProviderError(err);
+  }
+
+  // UA-5: for PayTabs, resolve truthful contact before creating Payment rows.
+  // Test/mock providers do not require complete customer_details.
+  let paytabsCustomer: PaymentCustomerContact | null = null;
+  if (providerNameEarly === 'paytabs') {
+    const resolved = await resolvePaymentCustomerContact(userId, {
+      contactEmail: input.contactEmail,
+      contactPhone: input.contactPhone,
+      requireComplete: true,
+    });
+    if ('incomplete' in resolved) {
+      throw new AppError(
+        422,
+        'PAYMENT_CONTACT_REQUIRED',
+        'Additional contact details are required to continue to payment',
+        { requiredFields: resolved.requiredFields },
+      );
+    }
+    paytabsCustomer = resolved;
+  }
+
   const prepared = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM "Booking" WHERE id = ${input.bookingId} FOR UPDATE`);
 
@@ -364,12 +395,7 @@ export async function createPaymentIntent(
       }
     }
 
-    const providerName = resolveProviderForMethod(input.method as PaymentMethod);
-    try {
-      assertProviderCanCreateIntent(providerName);
-    } catch (err) {
-      throwPaymentProviderError(err);
-    }
+    const providerName = providerNameEarly;
 
     const serviceFee =
       purpose === PaymentPurpose.deposit || purpose === PaymentPurpose.full
@@ -460,16 +486,10 @@ export async function createPaymentIntent(
     bookingId: string;
   };
 
-  const [user, bookingMeta] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, email: true },
-    }),
-    prisma.booking.findUnique({
-      where: { id: created.bookingId },
-      select: { publicCode: true },
-    }),
-  ]);
+  const bookingMeta = await prisma.booking.findUnique({
+    where: { id: created.bookingId },
+    select: { publicCode: true },
+  });
 
   let gateway;
   try {
@@ -481,6 +501,18 @@ export async function createPaymentIntent(
   let intent;
   try {
     // Amount/currency/purpose are always server-authored — never taken from the client body.
+    // UA-5: customer contact is truthful (PayTabs) or best-effort optional (test/mock).
+    let customer: { name?: string | null; email?: string | null; phone?: string | null };
+    if (paytabsCustomer) {
+      customer = paytabsCustomer;
+    } else {
+      const u = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true },
+      });
+      customer = { name: u?.name, email: u?.email };
+    }
+
     intent = await gateway.createPayment({
       paymentId: created.paymentId,
       bookingId: created.bookingId,
@@ -490,16 +522,14 @@ export async function createPaymentIntent(
       purpose: created.purpose,
       idempotencyKey: providerIdempotencyKey(created.paymentId, created.purpose),
       description: `Mazare3 ${created.purpose} ${bookingMeta?.publicCode ?? created.bookingId}`,
-      customer: {
-        name: user?.name,
-        email: user?.email,
-      },
+      customer,
     });
   } catch (err) {
     await prisma.payment.update({
       where: { id: created.paymentId },
       data: { status: PaymentStatus.failed, failedAt: new Date() },
     });
+    if (err instanceof AppError) throw err;
     throwPaymentProviderError(err);
   }
 
@@ -519,7 +549,17 @@ export async function createPaymentIntent(
     amount: created.installment,
     redirectUrl: intent.redirectUrl ?? null,
     ...(intent.provider === 'paytabs'
-      ? { paytabsProfileMode: loadPaytabsConfig().profileMode }
+      ? {
+          paytabsProfileMode: loadPaytabsConfig().profileMode,
+          // UA-5: contact snapshot for audit (not auth identity).
+          customerContact: paytabsCustomer
+            ? {
+                email: paytabsCustomer.email,
+                phone: paytabsCustomer.phone,
+                name: paytabsCustomer.name,
+              }
+            : null,
+        }
       : {}),
     // Never store server keys here.
   });

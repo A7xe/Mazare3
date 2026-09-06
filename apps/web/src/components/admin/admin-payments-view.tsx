@@ -103,7 +103,7 @@ export function AdminPaymentsView() {
               <td className="px-4 py-3 font-mono text-xs">{p.publicCode}</td>
               <td className="px-4 py-3">
                 <span className="block">{p.customerName ?? '—'}</span>
-                <span className="text-xs text-muted">{p.customerEmail}</span>
+                <span className="text-xs text-muted">{p.customerEmail ?? '—'}</span>
               </td>
               <td className="px-4 py-3">
                 <PriceDisplay amount={p.bookingTotalAmount} currency={p.currency} locale={locale} />

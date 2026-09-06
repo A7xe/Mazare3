@@ -40,7 +40,7 @@ export function PropertyBookingAside({
         if (!cancelled) setIntent(res.data);
       } catch (err) {
         if (err instanceof BookingApiError && err.status === 401) {
-          router.push(`/login?returnUrl=${encodeURIComponent(pathname)}`);
+          router.push(`/auth?returnUrl=${encodeURIComponent(pathname)}`);
           return;
         }
         if (!cancelled) setIntentError(true);

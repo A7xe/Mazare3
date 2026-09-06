@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createOwnerPropertySchema,
+  createOwnerPropertyDraftSchema,
   ownerApplySchema,
   ownerAvailabilityQuerySchema,
   patchOwnerAvailabilitySchema,
@@ -76,6 +77,7 @@ import {
 } from '@mazare3/shared';
 import {
   createOwnerProperty,
+  createOwnerPropertyDraft,
   getOwnerPropertyForEdit,
   submitOwnerPropertyForReview,
   updateOwnerProperty,
@@ -320,6 +322,24 @@ ownerRouter.post(
       throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
     }
     const data = await createOwnerProperty(
+      req.session!.userId,
+      req.session!.role,
+      parsed.data,
+      req,
+    );
+    res.status(201).json({ data });
+  }),
+);
+
+/** AF-1.1c — Add Farm Step-1 incomplete draft (location/price may be null). */
+ownerRouter.post(
+  '/properties/draft',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = createOwnerPropertyDraftSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await createOwnerPropertyDraft(
       req.session!.userId,
       req.session!.role,
       parsed.data,

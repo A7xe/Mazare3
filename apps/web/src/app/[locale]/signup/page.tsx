@@ -1,19 +1,23 @@
-import { Suspense } from 'react';
+import { redirect } from '@/i18n/navigation';
 import { setRequestLocale } from 'next-intl/server';
-import { AuthForm } from '@/components/auth/auth-form';
-import { AuthShell } from '@/components/auth/auth-shell';
 
-type Props = { params: Promise<{ locale: string }> };
+type Props = {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
-export default async function SignupPage({ params }: Props) {
+function first(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function SignupRedirectPage({ params, searchParams }: Props) {
   const { locale } = await params;
   setRequestLocale(locale);
-
-  return (
-    <AuthShell>
-      <Suspense>
-        <AuthForm mode="signup" />
-      </Suspense>
-    </AuthShell>
-  );
+  const sp = await searchParams;
+  const q = new URLSearchParams();
+  q.set('mode', 'email');
+  q.set('emailMode', 'signup');
+  const returnUrl = first(sp.returnUrl);
+  if (returnUrl) q.set('returnUrl', returnUrl);
+  redirect({ href: `/auth?${q.toString()}`, locale });
 }

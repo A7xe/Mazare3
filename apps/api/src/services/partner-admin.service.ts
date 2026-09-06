@@ -56,7 +56,7 @@ export type AdminPartnerListRow = {
   userId: string;
   displayName: string;
   businessName: string | null;
-  email: string;
+  email: string | null;
   status: OwnerStatus;
   verificationStatus: PartnerVerificationStatus;
   entityType: PartnerEntityType | null;
@@ -73,7 +73,7 @@ export type AdminPartnerListRow = {
 };
 
 export type AdminPartnerDetail = PartnerOnboardingView & {
-  email: string;
+  email: string | null;
   userRole: UserRole;
   userStatus: UserStatus;
   payoutReviewStatus: OwnerPayoutReviewStatus | null;
@@ -195,7 +195,7 @@ export async function listAdminPartners(query: AdminPartnerListQuery): Promise<A
     if (query.entityType && p.verificationProfile?.entityType !== query.entityType) continue;
     if (query.q) {
       const q = query.q.toLowerCase();
-      const hay = `${p.displayName} ${p.businessName ?? ''} ${p.user.email}`.toLowerCase();
+      const hay = `${p.displayName} ${p.businessName ?? ''} ${p.user.email ?? ''}`.toLowerCase();
       if (!hay.includes(q)) continue;
     }
     const readiness = p.verificationProfile

@@ -5,6 +5,7 @@ import { Link } from '@/i18n/navigation';
 import { LEGAL_PAGE_SLUGS, type LegalDocument, type LegalPageSlug } from '@/lib/legal/types';
 import { ContactIdentity } from '@/components/legal/contact-identity';
 import type { SiteIdentity } from '@/lib/legal/site-identity';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 
 const PATHS: Record<LegalPageSlug, string> = {
   about: '/about',
@@ -37,9 +38,10 @@ export async function LegalDocumentView({
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14" data-testid={`legal-page-${doc.slug}`}>
+    <MarketplacePageShell className="py-10 sm:py-14" data-testid={`legal-page-${doc.slug}`}>
+      <div className="mx-auto w-full max-w-3xl">
       <p className="text-xs font-medium uppercase tracking-wide text-primary">{t('productPolicies')}</p>
-      <h1 className="mt-2 text-3xl font-bold text-navy sm:text-4xl">{doc.title}</h1>
+      <h1 className="mt-2 text-3xl font-heading text-navy sm:text-4xl">{doc.title}</h1>
       <p className="mt-2 text-sm text-muted">
         {t('lastUpdated')}: {dateLabel}
       </p>
@@ -109,6 +111,7 @@ export async function LegalDocumentView({
           ))}
         </ul>
       </nav>
-    </div>
+      </div>
+    </MarketplacePageShell>
   );
 }

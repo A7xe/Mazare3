@@ -77,7 +77,7 @@ export function AdminDisputesView() {
                   <div>
                     <p className="font-mono font-semibold text-navy">{d.publicCode}</p>
                     <p className="text-sm text-muted">
-                      {d.customerEmail} · {d.ownerDisplayName}
+                      {d.customerEmail ?? '—'} · {d.ownerDisplayName}
                     </p>
                   </div>
                   <Badge variant="highlight">{t(`disputeStatus.${d.status}`)}</Badge>

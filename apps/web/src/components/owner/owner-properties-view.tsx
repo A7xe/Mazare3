@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/navigation';
 import { Building2, CalendarRange, Loader2, MapPin, Plus } from 'lucide-react';
-import type { OwnerPropertyCard } from '@mazare3/shared';
+import { isOwnerPropertyEditableStatus, isOwnerReviewContentMutableStatus, type OwnerPropertyCard } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -82,31 +82,69 @@ export function OwnerPropertiesView() {
                 </CardTitle>
                 <Badge variant="muted">{t(`propertyStatus.${p.status}`)}</Badge>
               </div>
+              {p.status === 'changes_requested' ? (
+                <div
+                  data-testid="owner-property-needs-changes"
+                  className="mt-2 flex flex-wrap items-center gap-2 text-sm"
+                >
+                  <span className="font-medium text-navy">{t('changesRequestedListLabel')}</span>
+                  <Link
+                    href={`/owner/properties/${p.id}`}
+                    className="text-primary underline-offset-2 hover:underline"
+                    data-testid="owner-property-review-notes-link"
+                  >
+                    {t('changesRequestedListAction')}
+                  </Link>
+                </div>
+              ) : null}
+              {p.status === 'rejected' ? (
+                <div
+                  data-testid="owner-property-rejected-list"
+                  className="mt-2 flex flex-wrap items-center gap-2 text-sm"
+                >
+                  <span className="font-medium text-danger">{t(`propertyStatus.${p.status}`)}</span>
+                  <Link
+                    href={`/owner/properties/${p.id}`}
+                    className="text-primary underline-offset-2 hover:underline"
+                    data-testid="owner-property-rejection-reason-link"
+                  >
+                    {t('rejectedListAction')}
+                  </Link>
+                </div>
+              ) : null}
               <p className="flex items-center gap-1 text-sm text-muted">
                 <MapPin className="h-3.5 w-3.5" />
-                {p.area} — {p.city}
+                {p.area && p.city ? `${p.area} — ${p.city}` : p.city || p.area || '—'}
               </p>
             </CardHeader>
             <CardContent className="flex flex-wrap items-end justify-between gap-3">
               <div>
-                <PriceDisplay amount={p.basePrice} currency={p.currency} locale={locale} />
+                {p.basePrice != null ? (
+                  <PriceDisplay amount={p.basePrice} currency={p.currency} locale={locale} />
+                ) : (
+                  <p className="text-sm text-muted">—</p>
+                )}
                 <p className="mt-1 text-xs text-muted">
                   {t('bookingsCount', { count: p.bookingsCount })}
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/owner/properties/${p.id}/edit`} data-testid="owner-edit-property">
-                    <Building2 className="h-4 w-4" />
-                    {t('editProperty')}
-                  </Link>
-                </Button>
-                <Button size="sm" asChild className="shadow-soft">
-                  <Link href={`/owner/availability?propertyId=${p.id}`}>
-                    <CalendarRange className="h-4 w-4" />
-                    {t('manageAvailability')}
-                  </Link>
-                </Button>
+                {isOwnerPropertyEditableStatus(p.status) ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/owner/properties/${p.id}/edit`} data-testid="owner-edit-property">
+                      <Building2 className="h-4 w-4" />
+                      {t('editProperty')}
+                    </Link>
+                  </Button>
+                ) : null}
+                {isOwnerReviewContentMutableStatus(p.status) ? (
+                  <Button size="sm" asChild className="shadow-soft">
+                    <Link href={`/owner/availability?propertyId=${p.id}`}>
+                      <CalendarRange className="h-4 w-4" />
+                      {t('manageAvailability')}
+                    </Link>
+                  </Button>
+                ) : null}
               </div>
             </CardContent>
           </Card>

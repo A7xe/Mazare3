@@ -293,13 +293,18 @@ export async function computePartnerReadiness(ownerProfileId: string): Promise<P
   const commercialTermsReady = resolved.source !== 'platform_default' || v.usePlatformDefaultCommission === true;
   if (!commercialTermsReady) missing.push('commercial_terms');
   const unresolvedChanges = profile.changeRequests.length > 0;
-  if (unresolvedChanges) missing.push('unresolved_changes');
+  // Open change-request rows are expected in changes_requested; submit resolves them.
+  // Blocking canSubmit here made generic request-changes permanently un-resubmittable.
+  const unresolvedBlocksSubmit =
+    unresolvedChanges &&
+    v.verificationStatus !== PartnerVerificationStatus.changes_requested;
+  if (unresolvedBlocksSubmit) missing.push('unresolved_changes');
   const canSubmit =
     profileComplete &&
     requiredDocumentsComplete &&
     payoutProfileComplete &&
     agreementAccepted &&
-    !unresolvedChanges &&
+    !unresolvedBlocksSubmit &&
     canOwnerSubmitOnboarding(v.verificationStatus);
   const canApprove =
     profileComplete &&
@@ -387,13 +392,16 @@ export async function computePartnerReadinessFromLoaded(params: {
   const commercialTermsReady = resolved.source !== 'platform_default' || v.usePlatformDefaultCommission === true;
   if (!commercialTermsReady) missing.push('commercial_terms');
   const unresolvedChanges = profile.changeRequests.length > 0;
-  if (unresolvedChanges) missing.push('unresolved_changes');
+  const unresolvedBlocksSubmit =
+    unresolvedChanges &&
+    v.verificationStatus !== PartnerVerificationStatus.changes_requested;
+  if (unresolvedBlocksSubmit) missing.push('unresolved_changes');
   const canSubmit =
     profileComplete &&
     requiredDocumentsComplete &&
     payoutProfileComplete &&
     agreementAccepted &&
-    !unresolvedChanges &&
+    !unresolvedBlocksSubmit &&
     canOwnerSubmitOnboarding(v.verificationStatus);
   const canApprove =
     profileComplete &&

@@ -27,6 +27,18 @@ export function errorHandler(
   }
 
   if (err instanceof AppError) {
+    if (err.code === 'AUTH_RATE_LIMITED') {
+      const retryAfterSec = (err.details as { retryAfterSec?: number } | undefined)?.retryAfterSec;
+      if (typeof retryAfterSec === 'number' && retryAfterSec > 0) {
+        res.setHeader('Retry-After', String(retryAfterSec));
+      }
+      // Do not echo attempt counts or internal limiter details.
+      res.status(err.statusCode).json({
+        error: err.message,
+        code: err.code,
+      });
+      return;
+    }
     res.status(err.statusCode).json({
       error: err.message,
       code: err.code,

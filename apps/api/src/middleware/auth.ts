@@ -10,18 +10,42 @@ export interface AuthenticatedRequest extends Request {
   user?: Awaited<ReturnType<typeof getUserById>>;
 }
 
+async function resolveValidSession(token: string): Promise<SessionPayload> {
+  let session: SessionPayload;
+  try {
+    session = verifySession(token);
+  } catch {
+    throw new AppError(401, 'UNAUTHORIZED', 'Invalid or expired session');
+  }
+
+  const row = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { passwordChangedAt: true, status: true },
+  });
+  if (!row || row.status !== 'active') {
+    throw new AppError(401, 'UNAUTHORIZED', 'Invalid or expired session');
+  }
+
+  const pwdAt = row.passwordChangedAt?.getTime() ?? 0;
+  if (pwdAt > (session.pwdAt ?? 0)) {
+    throw new AppError(401, 'UNAUTHORIZED', 'Session expired. Please sign in again');
+  }
+
+  return session;
+}
+
 export function requireAuth(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
   const token = req.cookies?.[COOKIE_NAME] as string | undefined;
   if (!token) {
     return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
   }
 
-  try {
-    req.session = verifySession(token);
-    next();
-  } catch {
-    return next(new AppError(401, 'UNAUTHORIZED', 'Invalid or expired session'));
-  }
+  void resolveValidSession(token)
+    .then((session) => {
+      req.session = session;
+      next();
+    })
+    .catch((err: unknown) => next(err));
 }
 
 /** Attach a session when a valid cookie is present; continue as anonymous otherwise. */
@@ -30,12 +54,14 @@ export function optionalAuth(req: AuthenticatedRequest, _res: Response, next: Ne
   if (!token) {
     return next();
   }
-  try {
-    req.session = verifySession(token);
-  } catch {
-    /* public contact may proceed without a session */
-  }
-  next();
+  void resolveValidSession(token)
+    .then((session) => {
+      req.session = session;
+      next();
+    })
+    .catch(() => {
+      next();
+    });
 }
 
 export async function optionalAttachUser(

@@ -46,6 +46,9 @@ function publicMediaRemotePatterns(): Array<{
 }
 
 const nextConfig: NextConfig = {
+  ...(process.env.PLAYWRIGHT_NEXT_DIST
+    ? { distDir: process.env.PLAYWRIGHT_NEXT_DIST }
+    : {}),
   images: {
     remotePatterns: [
       {

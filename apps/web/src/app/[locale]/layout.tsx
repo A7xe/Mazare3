@@ -1,26 +1,26 @@
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
-import { Tajawal, Inter } from 'next/font/google';
+import { Cairo } from 'next/font/google';
 import { LOCALES, type Locale } from '@mazare3/shared';
 import { routing } from '@/i18n/routing';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { SiteChrome } from '@/components/layout/site-chrome';
+import { MainContent } from '@/components/layout/main-content';
+import { AuthBreadcrumbExtrasProvider } from '@/components/layout/auth-breadcrumb-extras';
 import { FavoritesProvider } from '@/components/favorites/favorites-context';
 import { AuthSessionProvider } from '@/components/auth/auth-session';
 import { getSessionUser } from '@/lib/get-session-user';
 import '../globals.css';
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
-
-const tajawal = Tajawal({
+/**
+ * Official Mazare3 typeface: Cairo (AR + EN).
+ * Loaded as a true variable font (wght 200–1000) so major headings can use ~850.
+ */
+const cairo = Cairo({
   subsets: ['arabic', 'latin'],
-  weight: ['400', '500', '700'],
-  variable: '--font-tajawal',
+  weight: 'variable',
+  variable: '--font-cairo',
   display: 'swap',
 });
 
@@ -48,12 +48,14 @@ export default async function LocaleLayout({
 
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>
-      <body className={`${inter.variable} ${tajawal.variable} min-h-screen flex flex-col`}>
+      <body className={`${cairo.variable} ${cairo.className} min-h-screen flex flex-col`}>
         <NextIntlClientProvider messages={messages}>
           <AuthSessionProvider initialUser={initialUser}>
             <FavoritesProvider>
-              <SiteChrome />
-              <main className="flex-1 pb-[4.75rem] sm:pb-20 md:pb-8">{children}</main>
+              <AuthBreadcrumbExtrasProvider>
+                <SiteChrome />
+                <MainContent>{children}</MainContent>
+              </AuthBreadcrumbExtrasProvider>
               <SiteFooter />
             </FavoritesProvider>
           </AuthSessionProvider>

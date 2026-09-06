@@ -102,7 +102,9 @@ export function HomeCityDestinations({
     canNavigate,
     goNext,
     goPrev,
-  } = useCircularCarousel(cities.length, visibleCardsForWidth);
+  } = useCircularCarousel(cities.length, visibleCardsForWidth, {
+    align: contentDir === 'rtl' ? 'end' : 'start',
+  });
 
   const prevLabel = contentDir === 'rtl' ? 'المدن السابقة' : 'Previous cities';
   const nextLabel = contentDir === 'rtl' ? 'المدن التالية' : 'Next cities';

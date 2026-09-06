@@ -123,7 +123,9 @@ export function HomeTestimonials({
     canNavigate,
     goNext,
     goPrev,
-  } = useCircularCarousel(testimonials.length, visibleCardsForWidth);
+  } = useCircularCarousel(testimonials.length, visibleCardsForWidth, {
+    align: contentDir === 'rtl' ? 'end' : 'start',
+  });
 
   const prevLabel = contentDir === 'rtl' ? 'التقييمات السابقة' : 'Previous testimonials';
   const nextLabel = contentDir === 'rtl' ? 'التقييمات التالية' : 'Next testimonials';

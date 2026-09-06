@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import {
+  buildExploreCampaignTiles,
   isExploreTextSearchMode,
   type MarketplaceDiscoveryResponse,
   type PublicPropertySummary,
@@ -11,11 +12,15 @@ import { ExploreSortPills } from '@/components/explore/explore-sort-pills';
 import { ExploreNearRail } from '@/components/explore/explore-near-rail';
 import { ExploreMostBooked } from '@/components/explore/explore-most-booked';
 import { ExploreMapTeaser } from '@/components/explore/explore-map-teaser';
+import { ExploreCampaignTiles } from '@/components/explore/explore-campaign-tiles';
+import { ExploreBookAgainRail } from '@/components/explore/explore-book-again-rail';
+import { ActiveFilterChips } from '@/components/marketplace/active-filter-chips';
 import { DiscoveryRail } from '@/components/marketplace/discovery-rail';
 import { PropertySearchResults } from '@/components/marketplace/property-search-results';
 import { PropertyGridSkeleton } from '@/components/marketplace/property-grid-skeleton';
 import { fetchDiscovery } from '@/lib/api-properties';
 import { parseSearchParams } from '@/lib/search-params';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +64,7 @@ export default async function SearchPage({ params, searchParams }: Props) {
   const offers = sectionOf(discovery, 'offers');
   const nearProperties = sectionOf(discovery, 'nearby').slice(0, 3);
   const mostBooked = sectionOf(discovery, 'mostBooked').slice(0, 3);
+  const campaignTiles = buildExploreCampaignTiles(discovery, filters);
 
   const resultsSection = (
     <section data-testid="explore-search-results">
@@ -69,7 +75,7 @@ export default async function SearchPage({ params, searchParams }: Props) {
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1360px] px-2 pb-8 pt-4 sm:px-3 lg:px-4 lg:pt-5">
+    <MarketplacePageShell className="pb-8 pt-4 lg:pt-5">
       <ExploreSearchBar initial={filters} />
 
       <div className="mt-5 space-y-3.5">
@@ -80,6 +86,11 @@ export default async function SearchPage({ params, searchParams }: Props) {
         <Suspense fallback={<div className="h-10 animate-pulse rounded-full bg-[#EEF4FF]" />}>
           <ExploreSortPills filters={filters} />
         </Suspense>
+
+        {/* Campaign / filter context — remove via chip (offersOnly, newlyAdded, featured, overnight, …) */}
+        <Suspense fallback={null}>
+          <ActiveFilterChips />
+        </Suspense>
       </div>
 
       <div className="mt-7 space-y-7">
@@ -87,6 +98,16 @@ export default async function SearchPage({ params, searchParams }: Props) {
           resultsSection
         ) : (
           <>
+            {campaignTiles.length ? <ExploreCampaignTiles tiles={campaignTiles} /> : null}
+
+            <ExploreBookAgainRail
+              searchIntent={{
+                date: filters.date,
+                period: filters.period,
+                guests: filters.guests,
+              }}
+            />
+
             <ExploreNearRail title={t('nearTitle')} properties={nearProperties} />
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -108,12 +129,13 @@ export default async function SearchPage({ params, searchParams }: Props) {
               sectionId="explore-offers"
               layout="carousel"
               contentDir={contentDir}
+              tone="promotional"
             />
 
             {resultsSection}
           </>
         )}
       </div>
-    </div>
+    </MarketplacePageShell>
   );
 }

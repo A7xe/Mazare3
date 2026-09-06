@@ -57,7 +57,7 @@ type TicketRow = {
   adminRespondedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  user?: { name: string | null; email: string } | null;
+  user?: { name: string | null; email: string | null } | null;
   booking?: {
     publicCode: string;
     status: string;
@@ -177,7 +177,7 @@ export async function createBookingSupportTicket(
 
 export async function createGeneralSupportTicket(
   input: CreateGeneralSupportTicketInput,
-  actor?: { userId: string; name: string | null; email: string } | null,
+  actor?: { userId: string; name: string | null; email: string | null } | null,
   req?: AuthenticatedRequest,
 ): Promise<SupportTicketSummary> {
   const subject = input.subject.trim();

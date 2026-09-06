@@ -1,0 +1,203 @@
+{
+  "mode": "APPLY",
+  "appEnv": "local",
+  "nodeEnv": "development",
+  "safety": "PASSED",
+  "before": {
+    "publishedApprovedTotal": 120,
+    "strongPatternFixturesPublished": 84,
+    "ambiguousOtherQaE2ePublished": 27,
+    "nonQaDemoPublished": 9,
+    "liveSponsoredPlacements": 0,
+    "liveFeaturedPlacements": 0,
+    "livePromotions": 0,
+    "recentlyAddedEligible": 0,
+    "topRatedSampleTitles": [
+      "QA Home N hm-1786909221566",
+      "QA Home N hm-1786907089640",
+      "QA Home N hm-1786906168460",
+      "E2E Home O 1787224233515",
+      "QA Search sr-1786906545417",
+      "E2E Home O 1787224417737",
+      "QA Timed av-1786830761114",
+      "QA Search sr-1786729311948"
+    ]
+  },
+  "mutation": {
+    "unpublished": 84,
+    "placementsPaused": 0,
+    "promotionsPaused": 0
+  },
+  "after": {
+    "publishedApprovedTotal": 36,
+    "strongPatternFixturesPublished": 0,
+    "ambiguousOtherQaE2ePublished": 27,
+    "nonQaDemoPublished": 9,
+    "liveSponsoredPlacements": 0,
+    "liveFeaturedPlacements": 0,
+    "livePromotions": 0,
+    "recentlyAddedEligible": 0,
+    "topRatedSampleTitles": [
+      "QA Search sr-1786906545417",
+      "QA Timed av-1786830761114",
+      "QA Search sr-1786729311948",
+      "QA Timed av-1786724498548",
+      "Madaba Hills Private Resort",
+      "Ajloun Forest Villa",
+      "Emerald Chalet ΓÇö Dead Sea View",
+      "QA Search sr-1786834066657"
+    ],
+    "topRatedQaDominated": false,
+    "ambiguousSamples": [
+      {
+        "titleEn": "QA Search sr-1786907494585",
+        "createdAt": "2026-08-16T19:11:38.002Z",
+        "slug": "qa-search-sr-1786907494585"
+      },
+      {
+        "titleEn": "QA Org pl-1786907293871",
+        "createdAt": "2026-08-16T19:09:04.537Z",
+        "slug": "qa-org-pl-1786907293871"
+      },
+      {
+        "titleEn": "QA Search sr-1786906545417",
+        "createdAt": "2026-08-16T18:55:48.300Z",
+        "slug": "qa-search-sr-1786906545417"
+      },
+      {
+        "titleEn": "QA Org pl-1786906363120",
+        "createdAt": "2026-08-16T18:53:23.324Z",
+        "slug": "qa-org-pl-1786906363120"
+      },
+      {
+        "titleEn": "QA Org pl-1786905124339",
+        "createdAt": "2026-08-16T18:32:47.847Z",
+        "slug": "qa-org-pl-1786905124339"
+      },
+      {
+        "titleEn": "QA Org sp-1786905023261",
+        "createdAt": "2026-08-16T18:31:00.637Z",
+        "slug": "qa-org-sp-1786905023261"
+      },
+      {
+        "titleEn": "QA Search sr-1786903277585",
+        "createdAt": "2026-08-16T18:01:20.424Z",
+        "slug": "qa-search-sr-1786903277585"
+      },
+      {
+        "titleEn": "QA Org pl-1786903091159",
+        "createdAt": "2026-08-16T17:59:07.229Z",
+        "slug": "qa-org-pl-1786903091159"
+      },
+      {
+        "titleEn": "QA Search sr-1786836570401",
+        "createdAt": "2026-08-15T23:29:32.720Z",
+        "slug": "qa-search-sr-1786836570401"
+      },
+      {
+        "titleEn": "QA Timed av-1786836473983",
+        "createdAt": "2026-08-15T23:27:57.598Z",
+        "slug": "qa-timed-av-1786836473983"
+      },
+      {
+        "titleEn": "QA Search sr-1786835157381",
+        "createdAt": "2026-08-15T23:06:00.123Z",
+        "slug": "qa-search-sr-1786835157381"
+      },
+      {
+        "titleEn": "QA Timed av-1786835060214",
+        "createdAt": "2026-08-15T23:04:23.491Z",
+        "slug": "qa-timed-av-1786835060214"
+      },
+      {
+        "titleEn": "QA Search sr-1786834066657",
+        "createdAt": "2026-08-15T22:47:48.945Z",
+        "slug": "qa-search-sr-1786834066657"
+      },
+      {
+        "titleEn": "QA Timed av-1786833972086",
+        "createdAt": "2026-08-15T22:46:15.365Z",
+        "slug": "qa-timed-av-1786833972086"
+      },
+      {
+        "titleEn": "QA Search sr-1786830855434",
+        "createdAt": "2026-08-15T21:54:17.741Z",
+        "slug": "qa-search-sr-1786830855434"
+      },
+      {
+        "titleEn": "QA Timed av-1786830761114",
+        "createdAt": "2026-08-15T21:52:44.472Z",
+        "slug": "qa-timed-av-1786830761114"
+      },
+      {
+        "titleEn": "QA Search sr-1786743387234",
+        "createdAt": "2026-08-14T21:36:30.223Z",
+        "slug": "qa-search-sr-1786743387234"
+      },
+      {
+        "titleEn": "QA Timed av-1786743274776",
+        "createdAt": "2026-08-14T21:34:39.070Z",
+        "slug": "qa-timed-av-1786743274776"
+      },
+      {
+        "titleEn": "QA Search sr-1786729311948",
+        "createdAt": "2026-08-14T17:41:55.475Z",
+        "slug": "qa-search-sr-1786729311948"
+      },
+      {
+        "titleEn": "QA Timed av-1786729202965",
+        "createdAt": "2026-08-14T17:40:06.596Z",
+        "slug": "qa-timed-av-1786729202965"
+      }
+    ],
+    "nonQaSamples": [
+      "Salt Panorama Chalet",
+      "Madaba Hills Private Resort",
+      "Ajloun Forest Villa",
+      "Irbid Premium Pool House",
+      "Madaba Mosaic Chalet",
+      "Salt Farm ΓÇö Events & Families",
+      "Jerash Istiraha ΓÇö Olive Garden",
+      "Naour Villa ΓÇö Pool & Football",
+      "Emerald Chalet ΓÇö Dead Sea View"
+    ],
+    "families": {
+      "e2e_homepage": {
+        "label": "E2E homepage merchandising",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "e2e_placements": {
+        "label": "E2E placements",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "e2e_sponsorship": {
+        "label": "E2E paid sponsorship",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "e2e_discovery": {
+        "label": "E2E discovery / desk",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "e2e_merch1": {
+        "label": "E2E MERCH-1 / MERCH-2",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "qa_homepage_api": {
+        "label": "QA homepage discovery API",
+        "publishedCount": 0,
+        "sampleTitles": []
+      },
+      "qa_placement_scripts": {
+        "label": "QA placement / future / exp scripts",
+        "publishedCount": 0,
+        "sampleTitles": []
+      }
+    }
+  },
+  "note": "Only strong-pattern fixtures were unpublished. Ambiguous titles untouched."
+}

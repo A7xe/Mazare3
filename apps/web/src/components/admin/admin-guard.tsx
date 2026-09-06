@@ -30,7 +30,9 @@ export function AdminGuard({ children }: { children: ReactNode }) {
       } catch {
         if (cancelled) return;
         setState('login');
-        router.replace(`/login?returnUrl=${encodeURIComponent(pathname)}`);
+        router.replace(
+          `/auth?mode=email&emailMode=login&returnUrl=${encodeURIComponent(pathname)}`,
+        );
       }
     })();
     return () => {

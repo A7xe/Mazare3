@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { logout } from '@/lib/api-auth';
 import { useAuthSession } from '@/components/auth/auth-session';
+import { useAddFarmEntry } from '@/lib/use-add-farm-entry';
 import { LocaleSwitcher } from './locale-switcher';
 import { Button } from '@/components/ui/button';
 
@@ -47,14 +48,17 @@ function DockItem({
       href={href}
       data-testid={testId}
       className={cn(
-        'group relative z-[1] flex min-w-0 flex-1 flex-col items-center justify-end gap-0.5 px-0.5 pb-1.5 transition sm:min-w-16 sm:gap-1 sm:pb-0 md:min-w-20',
+        'group relative z-[1] flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0 py-1 transition sm:min-w-16 sm:justify-end sm:gap-1 sm:px-0.5 sm:py-0 sm:pb-0 md:min-w-20',
         active ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600',
       )}
     >
       <Icon className="h-5 w-5 shrink-0 sm:h-[23px] sm:w-[23px]" strokeWidth={1.8} aria-hidden />
       <span
         className={cn(
-          'w-full max-w-[4.25rem] truncate text-center text-[10px] leading-tight sm:max-w-none sm:text-xs',
+          // Mobile: full label, up to 2 tight lines — no ellipsis truncation.
+          'w-full text-center text-[9px] font-semibold leading-[1.15] line-clamp-2 break-words [overflow-wrap:anywhere]',
+          // Desktop/tablet: restore approved single-line look.
+          'sm:line-clamp-none sm:whitespace-nowrap sm:text-xs sm:leading-tight sm:overflow-visible',
           active ? 'font-bold' : 'font-semibold',
         )}
       >
@@ -72,6 +76,7 @@ export function MarketplaceBottomNav() {
   const router = useRouter();
   const { user, refresh } = useAuthSession();
   const [moreOpen, setMoreOpen] = useState(false);
+  const { href: addFarmHref, label: addFarmLabel } = useAddFarmEntry();
 
   useEffect(() => {
     setMoreOpen(false);
@@ -117,8 +122,8 @@ export function MarketplaceBottomNav() {
         testId: 'nav-bookings',
       }
     : {
-        href: '/become-owner',
-        label: t('becomeOwner'),
+        href: addFarmHref,
+        label: addFarmLabel,
         icon: BriefcaseBusiness,
         testId: 'nav-list-property',
       };
@@ -146,20 +151,20 @@ export function MarketplaceBottomNav() {
           }
         : user
           ? {
-              href: '/become-owner',
-              label: t('becomeOwner'),
+              href: addFarmHref,
+              label: addFarmLabel,
               icon: UserRound,
               testId: 'nav-login',
             }
-          : { href: '/login', label: tCommon('login'), icon: UserRound, testId: 'nav-login' };
+          : { href: '/auth', label: tCommon('login'), icon: UserRound, testId: 'nav-login' };
 
   const customerAccount = isCustomer;
 
   return (
     <>
-      <div className="pointer-events-none fixed inset-x-0 bottom-2 z-50 flex justify-center px-3 pb-[env(safe-area-inset-bottom)] sm:bottom-5 sm:px-4">
+      <div className="pointer-events-none fixed inset-x-0 bottom-2 z-50 flex justify-center px-2 pb-[env(safe-area-inset-bottom)] sm:bottom-5 sm:px-4">
         <nav
-          className="pointer-events-auto relative grid h-[60px] w-full max-w-[700px] grid-cols-[1fr_1fr_minmax(9rem,1.65fr)_1fr_1fr] items-end gap-x-1 rounded-[22px] border border-blue-200/70 bg-white/92 px-1.5 shadow-[0_12px_36px_rgba(30,64,175,.16)] backdrop-blur-xl sm:flex sm:h-[82px] sm:items-center sm:justify-between sm:gap-2 sm:rounded-[32px] sm:px-4 sm:shadow-[0_25px_80px_rgba(30,64,175,.22)] sm:backdrop-blur-2xl"
+          className="pointer-events-auto relative grid h-[74px] w-full max-w-[700px] grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5.75rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-0.5 rounded-[24px] border border-blue-200/70 bg-white/92 px-1 shadow-[0_12px_36px_rgba(30,64,175,.16)] backdrop-blur-xl sm:flex sm:h-[82px] sm:items-center sm:justify-between sm:gap-2 sm:rounded-[32px] sm:px-4 sm:shadow-[0_25px_80px_rgba(30,64,175,.22)] sm:backdrop-blur-2xl"
           data-testid="marketplace-bottom-nav"
           aria-label={t('primary')}
         >
@@ -178,12 +183,12 @@ export function MarketplaceBottomNav() {
             active={pathActive(pos2.href)}
           />
 
-          <div className="relative z-0 flex h-full min-w-[9rem] shrink-0 items-center justify-center sm:min-w-[11rem] md:min-w-[12rem]">
+          <div className="relative z-0 flex h-full w-[5.75rem] shrink-0 items-center justify-center justify-self-center sm:w-auto sm:min-w-[11rem] md:min-w-[12rem]">
             <Link
               href="/"
               data-testid="nav-home"
               aria-label={t('home')}
-              className="absolute -top-4 left-1/2 z-10 flex h-[66px] w-[9rem] -translate-x-1/2 items-center justify-center sm:-top-5 sm:h-[86px] sm:w-[11rem] md:h-[96px] md:w-[12rem]"
+              className="absolute -top-2.5 left-1/2 z-10 flex h-[48px] w-[6.5rem] -translate-x-1/2 items-center justify-center sm:-top-5 sm:h-[86px] sm:w-[11rem] md:h-[96px] md:w-[12rem]"
             >
               <Image
                 src="/logo/logo-main.png"
@@ -224,14 +229,14 @@ export function MarketplaceBottomNav() {
               aria-expanded={moreOpen}
               onClick={() => setMoreOpen((open) => !open)}
               className={cn(
-                'group relative z-[1] flex min-w-0 flex-1 flex-col items-center justify-end gap-0.5 px-0.5 pb-1.5 transition sm:min-w-16 sm:gap-1 sm:pb-0 md:min-w-20',
+                'group relative z-[1] flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0 py-1 transition sm:min-w-16 sm:justify-end sm:gap-1 sm:px-0.5 sm:py-0 sm:pb-0 md:min-w-20',
                 moreActive ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600',
               )}
             >
               <MoreHorizontal className="h-5 w-5 shrink-0 sm:h-[23px] sm:w-[23px]" strokeWidth={1.8} aria-hidden />
               <span
                 className={cn(
-                  'w-full max-w-[4.25rem] truncate text-center text-[10px] leading-tight sm:max-w-none sm:text-xs',
+                  'w-full text-center text-[9px] font-semibold leading-[1.15] line-clamp-2 break-words [overflow-wrap:anywhere] sm:line-clamp-none sm:whitespace-nowrap sm:text-xs sm:leading-tight sm:overflow-visible',
                   moreActive ? 'font-bold' : 'font-semibold',
                 )}
               >
@@ -264,7 +269,7 @@ export function MarketplaceBottomNav() {
             <div className="space-y-1">
               {!user ? (
                 <Link
-                  href="/signup"
+                  href="/auth?mode=email&emailMode=signup"
                   className="flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium text-navy hover:bg-blue-50"
                   onClick={() => setMoreOpen(false)}
                 >

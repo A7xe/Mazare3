@@ -24,7 +24,7 @@ export function MySupportView() {
       const res = await fetchMySupportTickets();
       setTickets(res.data);
     } catch {
-      router.push('/login?returnUrl=' + encodeURIComponent('/account/support'));
+      router.push('/auth?returnUrl=' + encodeURIComponent('/account/support'));
     } finally {
       setLoading(false);
     }
@@ -45,7 +45,7 @@ export function MySupportView() {
   return (
     <div data-testid="my-support">
       <AccountSubnav />
-      <h1 className="text-2xl font-bold text-navy">{t('myTitle')}</h1>
+      <h1 className="text-2xl font-heading text-navy">{t('myTitle')}</h1>
       <p className="mt-1 text-sm text-muted">{t('mySubtitle')}</p>
       {tickets.length === 0 ? (
         <Card className="mt-6 glass-panel rounded-2xl border-primary/12">

@@ -103,6 +103,9 @@ export async function qaEnsureAvailableSlot(slug: string) {
   if (!property) {
     throw new AppError(404, 'NOT_FOUND', 'Property not found');
   }
+  if (property.basePrice == null) {
+    throw new AppError(400, 'PROPERTY_LISTING_INCOMPLETE', 'Property has no base price');
+  }
 
   const now = new Date();
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 4));

@@ -10,6 +10,15 @@ import { Link } from '@/i18n/navigation';
 
 type GuardState = 'loading' | 'allowed' | 'login' | 'forbidden' | 'pending' | 'suspended' | 'rejected';
 
+/** Add Farm deep-link — send non-approved users to partner status (API remains the security boundary). */
+function isAddFarmDeepLink(pathname: string): boolean {
+  return (
+    pathname === '/owner/properties/new' ||
+    pathname.endsWith('/owner/properties/new') ||
+    /\/owner\/properties\/new(\/|\?|$)/.test(pathname)
+  );
+}
+
 export function OwnerGuard({ children }: { children: ReactNode }) {
   const t = useTranslations('owner');
   const router = useRouter();
@@ -28,6 +37,11 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
           return;
         }
         if (user.role !== 'owner') {
+          // Prefer partner application/status over a dead-end forbidden page for Add Farm deep links.
+          if (isAddFarmDeepLink(pathname)) {
+            router.replace('/become-owner');
+            return;
+          }
           setState('forbidden');
           return;
         }
@@ -37,16 +51,28 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
         } else if (ps === 'suspended') {
           setState('suspended');
         } else if (ps === 'pending') {
+          if (isAddFarmDeepLink(pathname)) {
+            router.replace('/become-owner');
+            return;
+          }
           setState('pending');
         } else if (ps === 'rejected') {
+          if (isAddFarmDeepLink(pathname)) {
+            router.replace('/become-owner');
+            return;
+          }
           setState('rejected');
         } else {
+          if (isAddFarmDeepLink(pathname)) {
+            router.replace('/become-owner');
+            return;
+          }
           setState('forbidden');
         }
       } catch {
         if (cancelled) return;
         setState('login');
-        router.replace(`/login?returnUrl=${encodeURIComponent(pathname)}`);
+        router.replace(`/auth?returnUrl=${encodeURIComponent(pathname)}`);
       }
     })();
     return () => {
@@ -107,7 +133,9 @@ export function OwnerGuard({ children }: { children: ReactNode }) {
         )}
         {state === 'forbidden' && (
           <Button asChild className="mt-6 shadow-soft">
-            <Link href="/">{t('backHome')}</Link>
+            <Link href="/become-owner" data-testid="owner-forbidden-become-owner">
+              {t('viewApplication')}
+            </Link>
           </Button>
         )}
       </div>

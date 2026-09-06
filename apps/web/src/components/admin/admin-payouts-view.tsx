@@ -81,7 +81,7 @@ export function AdminPayoutsView() {
                   <div>
                     <p className="font-mono font-semibold text-navy">{p.publicCode}</p>
                     <p className="text-sm text-muted">
-                      {p.ownerDisplayName} · {p.ownerEmail}
+                      {p.ownerDisplayName} · {p.ownerEmail ?? '—'}
                     </p>
                   </div>
                   <Badge variant={p.payoutStatus === 'paid' ? 'highlight' : 'muted'}>

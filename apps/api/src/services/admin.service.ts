@@ -24,13 +24,16 @@ import type {
   PatchAdminUserStatusInput,
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
+import { assertAdminPropertyStatusTransitionOrThrow, isAdminPropertyChangeReasonRefresh } from '../lib/property-status-fsm.js';
 import { createAuditLog } from './audit.service.js';
 import {
   notifyOwnerApproved,
   notifyPropertyChangesRequested,
   notifyPropertyPublished,
+  notifyPropertyRejected,
 } from './notification.service.js';
 import { assertMediaForPublish } from '../lib/property-media-guards.js';
+import { assertPropertyListingComplete } from '../lib/property-listing-guards.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
 import { toPaymentDisplayStatus } from '../mappers/payment.mapper.js';
@@ -54,7 +57,15 @@ function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function decimalToNumber(value: { toNumber(): number } | number): number {
+function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
+  return typeof value === 'number' ? value : value.toNumber();
+}
+
+function nullableDecimalToNumber(
+  value: { toNumber(): number } | number | null | undefined,
+): number | null {
+  if (value == null) return null;
   return typeof value === 'number' ? value : value.toNumber();
 }
 
@@ -103,7 +114,7 @@ function mapAuditLog(row: {
   entityId: string | null;
   metadata: unknown;
   createdAt: Date;
-  actor: { email: string; name: string | null } | null;
+  actor: { email: string | null; name: string | null } | null;
 }): AdminAuditLogRow {
   return {
     id: row.id,
@@ -381,7 +392,7 @@ export async function listAdminProperties(): Promise<AdminPropertyRow[]> {
     city: p.city,
     status: p.status,
     verificationStatus: p.verificationStatus,
-    basePrice: decimalToNumber(p.basePrice),
+    basePrice: nullableDecimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
     imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
@@ -411,7 +422,7 @@ export async function getAdminPropertyById(id: string): Promise<AdminPropertyDet
     city: p.city,
     status: p.status,
     verificationStatus: p.verificationStatus,
-    basePrice: decimalToNumber(p.basePrice),
+    basePrice: nullableDecimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
     imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
@@ -445,6 +456,10 @@ export async function getAdminPropertyById(id: string): Promise<AdminPropertyDet
     promotions: await listAdminPropertyPromotions(id),
     coupons: await listAdminPropertyCoupons(id),
     placements: await listAdminPropertyPlacements(id),
+    reviewChangeReason: p.reviewChangeReason ?? null,
+    reviewChangeRequestedAt: p.reviewChangeRequestedAt?.toISOString() ?? null,
+    reviewRejectionReason: p.reviewRejectionReason ?? null,
+    reviewRejectedAt: p.reviewRejectedAt?.toISOString() ?? null,
   };
 }
 
@@ -462,38 +477,114 @@ export async function patchAdminPropertyStatus(
     throw new AppError(404, 'NOT_FOUND', 'Property not found');
   }
 
-  if (input.status === 'published') {
+  const currentStatus = property.status;
+  const targetStatus = input.status as PropertyStatus;
+  const isReasonRefresh = isAdminPropertyChangeReasonRefresh(currentStatus, targetStatus);
+
+  assertAdminPropertyStatusTransitionOrThrow(currentStatus, targetStatus);
+
+  if (targetStatus === PropertyStatus.changes_requested) {
+    const trimmedReason = input.reason?.trim() ?? '';
+    if (!trimmedReason) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Reason is required when requesting changes', {
+        field: 'reason',
+      });
+    }
+  }
+
+  if (targetStatus === PropertyStatus.rejected) {
+    const trimmedRejectionReason = input.reason?.trim() ?? '';
+    if (!trimmedRejectionReason) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Reason is required when rejecting a property', {
+        field: 'reason',
+      });
+    }
+  }
+
+  if (targetStatus === PropertyStatus.published && !isReasonRefresh) {
     await assertMediaForPublish(propertyId);
+    assertPropertyListingComplete(property);
     await assertAndGenerateForPublish(propertyId, property.status);
   }
 
-  await prisma.property.update({
-    where: { id: propertyId },
-    data: { status: input.status as PropertyStatus },
+  const isChangesRequested = targetStatus === PropertyStatus.changes_requested;
+  const isRejected = targetStatus === PropertyStatus.rejected;
+  const trimmedReason = input.reason?.trim() ?? '';
+
+  const updateData: {
+    status?: PropertyStatus;
+    reviewChangeReason?: string | null;
+    reviewChangeRequestedAt?: Date | null;
+    reviewRejectionReason?: string | null;
+    reviewRejectedAt?: Date | null;
+  } = {};
+
+  if (isChangesRequested) {
+    updateData.reviewChangeReason = trimmedReason;
+    updateData.reviewChangeRequestedAt = new Date();
+    if (!isReasonRefresh) {
+      updateData.status = PropertyStatus.changes_requested;
+    }
+  } else if (isRejected) {
+    updateData.status = PropertyStatus.rejected;
+    updateData.reviewRejectionReason = trimmedReason;
+    updateData.reviewRejectedAt = new Date();
+    updateData.reviewChangeReason = null;
+    updateData.reviewChangeRequestedAt = null;
+  } else {
+    updateData.status = targetStatus;
+    updateData.reviewChangeReason = null;
+    updateData.reviewChangeRequestedAt = null;
+  }
+
+  const updated = await prisma.property.updateMany({
+    where: { id: propertyId, status: currentStatus },
+    data: updateData,
   });
+
+  if (updated.count !== 1) {
+    throw new AppError(
+      409,
+      'INVALID_PROPERTY_STATUS_TRANSITION',
+      `Cannot transition property from ${currentStatus} to ${targetStatus}`,
+      { from: currentStatus, to: targetStatus },
+    );
+  }
 
   await createAuditLog({
     actorUserId,
-    action: 'admin.property_status_updated',
+    action: isReasonRefresh ? 'admin.property_change_reason_refresh' : 'admin.property_status_updated',
     entityType: 'property',
     entityId: propertyId,
-    metadata: { previousStatus: property.status, newStatus: input.status },
+    metadata: {
+      previousStatus: currentStatus,
+      newStatus: targetStatus,
+      ...(isChangesRequested ? { hasReviewChangeReason: true } : {}),
+      ...(isRejected ? { hasReviewRejectionReason: true } : {}),
+    },
     req,
   });
 
-  if (input.status === 'published') {
+  if (targetStatus === PropertyStatus.published) {
     void notifyPropertyPublished({
       ownerUserId: property.owner.userId,
       propertyId,
       titleAr: property.titleAr,
       titleEn: property.titleEn ?? property.titleAr,
     }).catch((err) => console.error('[notifications] admin.property_published', err));
-  } else if (input.status === 'changes_requested') {
+  } else if (isChangesRequested) {
     void notifyPropertyChangesRequested({
       ownerUserId: property.owner.userId,
       propertyId,
       titleAr: property.titleAr,
     }).catch((err) => console.error('[notifications] admin.property_changes_requested', err));
+  } else if (isRejected) {
+    void notifyPropertyRejected({
+      ownerUserId: property.owner.userId,
+      propertyId,
+      titleAr: property.titleAr,
+      titleEn: property.titleEn ?? property.titleAr,
+    }).catch((err) => console.error('[notifications] admin.property_rejected', err));
   }
 
   const detail = await getAdminPropertyById(propertyId);

@@ -5,6 +5,9 @@ import type { PublicPropertySummary } from '@mazare3/shared';
 import { Link } from '@/i18n/navigation';
 import { HomePropertyCard } from '@/components/home/home-property-card';
 import { useCircularCarousel } from '@/components/home/use-circular-carousel';
+import { OffersSectionIcon, OffersSectionMotifs } from '@/components/home/offers-section-chrome';
+import { offerSectionShellClass } from '@/components/home/offer-presentation';
+import { cn } from '@/lib/utils';
 
 type HomePropertyCarouselProps = {
   title: string;
@@ -14,6 +17,7 @@ type HomePropertyCarouselProps = {
   properties: PublicPropertySummary[];
   sectionId?: string;
   contentDir?: 'rtl' | 'ltr';
+  tone?: 'default' | 'promotional';
 };
 
 function visibleCardsForWidth(width: number): number {
@@ -24,6 +28,9 @@ function visibleCardsForWidth(width: number): number {
   return 1;
 }
 
+/** Below this count, use a static rail so cards keep normal width (no stretch / no clone ghosts). */
+const CIRCULAR_MIN_ITEMS = 3;
+
 export function HomePropertyCarousel({
   title,
   subtitle,
@@ -32,7 +39,9 @@ export function HomePropertyCarousel({
   properties,
   sectionId,
   contentDir = 'rtl',
+  tone = 'default',
 }: HomePropertyCarouselProps) {
+  const useCircular = properties.length >= CIRCULAR_MIN_ITEMS;
   const {
     viewportRef,
     trackStyle,
@@ -41,10 +50,13 @@ export function HomePropertyCarousel({
     canNavigate,
     goNext,
     goPrev,
-  } = useCircularCarousel(properties.length, visibleCardsForWidth);
+  } = useCircularCarousel(properties.length, visibleCardsForWidth, {
+    align: contentDir === 'rtl' ? 'end' : 'start',
+  });
 
   const prevLabel = contentDir === 'rtl' ? 'السابق' : 'Previous';
   const nextLabel = contentDir === 'rtl' ? 'التالي' : 'Next';
+  const promotional = tone === 'promotional';
 
   if (!properties.length) return null;
 
@@ -57,14 +69,39 @@ export function HomePropertyCarousel({
 
   return (
     <section
-      className="rounded-[20px] border border-[#E0E8F3] bg-white px-4 pb-5 pt-4 sm:px-5 sm:pb-6 sm:pt-5"
+      className={
+        promotional
+          ? cn(offerSectionShellClass, 'rounded-[20px] px-4 pb-5 pt-4 sm:px-5 sm:pb-6 sm:pt-5')
+          : 'rounded-[20px] border border-[#E0E8F3] bg-white px-4 pb-5 pt-4 sm:px-5 sm:pb-6 sm:pt-5'
+      }
       data-testid={sectionId ? `discovery-rail-${sectionId}` : 'discovery-rail'}
     >
-      <div className="mb-4 flex items-end justify-between gap-3">
+      {promotional ? <OffersSectionMotifs /> : null}
+
+      <div className="relative mb-4 flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[20px] font-bold leading-tight text-[#0D2046]">{title}</h2>
+          <div className="flex items-center gap-1.5">
+            {promotional ? <OffersSectionIcon /> : null}
+            <h2
+              className={
+                promotional
+                  ? 'text-[20px] font-extrabold leading-tight tracking-tight text-[#0D2046]'
+                  : 'text-[20px] font-bold leading-tight text-[#0D2046]'
+              }
+            >
+              {title}
+            </h2>
+          </div>
           {subtitle ? (
-            <p className="mt-1 text-[12px] font-medium leading-relaxed text-[#53637A]">{subtitle}</p>
+            <p
+              className={
+                promotional
+                  ? 'mt-1 text-[12px] font-medium leading-relaxed text-[#53637A]'
+                  : 'mt-1 text-[12px] font-medium leading-relaxed text-[#53637A]'
+              }
+            >
+              {subtitle}
+            </p>
           ) : null}
         </div>
 
@@ -80,7 +117,7 @@ export function HomePropertyCarousel({
       </div>
 
       <div className="relative w-full">
-        {canNavigate ? (
+        {useCircular && canNavigate ? (
           <>
             <button
               type="button"
@@ -102,15 +139,51 @@ export function HomePropertyCarousel({
           </>
         ) : null}
 
-        <div ref={viewportRef} className="w-full overflow-hidden py-1" dir="ltr">
-          <div style={trackStyle} onTransitionEnd={handleTransitionEnd}>
-            {track.map(({ property, key }) => (
-              <div key={key} dir={contentDir} style={cardStyle}>
-                <HomePropertyCard property={property} variant="feature" />
+        {useCircular ? (
+          <div
+            ref={viewportRef}
+            className="w-full overflow-hidden py-1"
+            dir="ltr"
+            data-testid="home-property-carousel-viewport"
+          >
+            <div style={trackStyle} onTransitionEnd={handleTransitionEnd}>
+              {track.map(({ property, key }) => (
+                <div key={key} dir={contentDir} style={cardStyle}>
+                  <HomePropertyCard
+                    property={property}
+                    variant={promotional ? 'offer' : 'feature'}
+                    offerDensity={promotional ? 'standard' : undefined}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            className="flex w-full justify-start gap-4 py-1"
+            dir={contentDir}
+            data-testid="home-property-carousel-viewport"
+          >
+            {properties.map((property) => (
+              <div
+                key={property.id}
+                className={cn(
+                  // Mobile: one column may fill content width. md: half. lg+: fifth of rail.
+                  'min-w-0 shrink-0',
+                  'w-full',
+                  'sm:w-[calc((100%-1rem)/2)]',
+                  'lg:w-[calc((100%-4rem)/5)]',
+                )}
+              >
+                <HomePropertyCard
+                  property={property}
+                  variant={promotional ? 'offer' : 'feature'}
+                  offerDensity={promotional ? 'standard' : undefined}
+                />
               </div>
             ))}
           </div>
-        </div>
+        )}
       </div>
     </section>
   );

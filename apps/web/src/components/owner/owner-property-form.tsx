@@ -7,6 +7,8 @@ import { ArrowLeft, ImagePlus, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   AMENITY_KEYS,
   PROPERTY_TYPES,
+  isOwnerPropertyEditableStatus,
+  isOwnerReviewContentMutableStatus,
   type CreateOwnerPropertyInput,
   type OwnerPropertyEdit,
   type UpdateOwnerPropertyInput,
@@ -61,7 +63,7 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     longitudeExact: initial?.longitudeExact != null ? String(initial.longitudeExact) : '',
     arrivalInstructionsAr: initial?.arrivalInstructionsAr ?? '',
     arrivalInstructionsEn: initial?.arrivalInstructionsEn ?? '',
-    basePrice: initial ? String(initial.basePrice) : '',
+    basePrice: initial ? String(initial.basePrice ?? '') : '',
     capacity: initial ? String(initial.capacity) : '10',
     allowsOvernight: initial?.allowsOvernight ?? true,
     allowsFamilies: initial?.allowsFamilies ?? true,
@@ -239,6 +241,8 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
 
   const canSubmitReview =
     !initial || initial.status === 'draft' || initial.status === 'changes_requested';
+  const listingEditable = !initial || isOwnerPropertyEditableStatus(initial.status);
+  const mediaMutable = !initial || isOwnerReviewContentMutableStatus(initial.status);
 
   return (
     <div data-testid="owner-property-form" className="space-y-6">
@@ -259,8 +263,31 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
           <span className="font-medium text-navy">{tOwner(`propertyStatus.${initial.status}`)}</span>
         </p>
       )}
+      {initial?.status === 'pending_review' ? (
+        <div
+          role="status"
+          data-testid="owner-edit-pending-frozen"
+          className="rounded-2xl border border-primary/25 bg-primary-soft/50 px-4 py-3 text-start"
+        >
+          <p className="text-sm font-bold text-navy">{tOwner('submittedForReviewTitle')}</p>
+          <p className="mt-1 text-sm text-muted">{tOwner('pendingReviewFrozenHint')}</p>
+        </div>
+      ) : null}
+      {initial?.status === 'changes_requested' && initial.reviewChangeReason ? (
+        <div
+          role="status"
+          data-testid="owner-edit-correction-notice"
+          className="rounded-2xl border border-amber-500/30 bg-amber-50/80 px-4 py-3 text-start"
+        >
+          <p className="text-sm font-bold text-navy">{tOwner('editCorrectionNoticeTitle')}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-navy">{initial.reviewChangeReason}</p>
+        </div>
+      ) : null}
 
-      <div className="glass-panel space-y-4 rounded-2xl border-primary/12 p-4 sm:p-6">
+      <fieldset
+        disabled={!listingEditable}
+        className="glass-panel space-y-4 rounded-2xl border-primary/12 p-4 sm:p-6 disabled:opacity-80"
+      >
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm font-medium text-navy">{t('type')}</label>
@@ -562,7 +589,7 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
             propertyId={initial.id}
             media={media ?? []}
             onMediaChange={syncMediaToForm}
-            disabled={saving}
+            disabled={saving || !mediaMutable}
           />
         ) : (
           <div>
@@ -688,12 +715,12 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
             {t('addRule')}
           </Button>
         </div>
-      </div>
+      </fieldset>
 
       <div className="flex flex-wrap gap-3">
         <Button
           className="shadow-soft"
-          disabled={saving}
+          disabled={saving || !listingEditable}
           onClick={() => void handleSave(false)}
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('saveDraft')}
@@ -702,7 +729,7 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
           <Button
             variant="default"
             className="shadow-soft"
-            disabled={saving || !mediaAssessment.canSubmitReview}
+            disabled={saving || !mediaAssessment.canSubmitReview || !listingEditable}
             data-testid="owner-property-submit-review"
             onClick={() => void handleSave(true)}
           >

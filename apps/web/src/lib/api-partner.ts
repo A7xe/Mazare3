@@ -34,7 +34,7 @@ export type PartnerDocumentView = {
   originalFileName: string;
   mimeType: string;
   sizeBytes: number;
-  reviewStatus: 'uploaded' | 'approved' | 'rejected' | 'superseded';
+  reviewStatus: 'uploaded' | 'under_review' | 'approved' | 'rejected' | 'superseded';
   rejectionReason: string | null;
   uploadedAt: string;
   reviewedAt: string | null;

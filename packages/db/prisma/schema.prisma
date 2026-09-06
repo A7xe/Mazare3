@@ -23,6 +23,19 @@ enum UserStatus {
   deleted
 }
 
+/** UA-1 — authentication identity providers (password | phone | google). */
+enum AuthIdentityProvider {
+  password
+  phone
+  google
+}
+
+/** UA-1 — OTP challenge purpose (behavior in UA-2+). */
+enum OtpChallengePurpose {
+  auth_continue
+  link_phone
+}
+
 enum OwnerStatus {
   pending
   approved
@@ -322,10 +335,15 @@ enum SponsoredOrderStatus {
 model User {
   id               String     @id @default(cuid())
   name             String?
-  email            String     @unique
+  /** Nullable for future phone-first accounts. Unique when non-null (Postgres). */
+  email            String?    @unique
   phone            String?
   passwordHash     String?
+  /** Set when password is created/changed; used to invalidate older JWT sessions. */
+  passwordChangedAt DateTime?
+  /** Legacy unused stub — do not use for Unified Auth. Prefer AuthIdentity. */
   externalAuthId   String?
+  /** Legacy unused stub — do not use for Unified Auth. Prefer AuthIdentity. */
   externalProvider String?
   role             UserRole   @default(customer)
   status           UserStatus @default(active)
@@ -347,9 +365,104 @@ model User {
   auditLogs      AuditLog[]      @relation("AuditActor")
   notifications          Notification[]
   notificationDeliveries NotificationDelivery[]
+  passwordResetTokens    PasswordResetToken[]
+  authIdentities         AuthIdentity[]
+  // LoginAbuseState is keyed by HMAC(email), not userId — no User relation.
 
   @@index([role])
   @@index([status])
+}
+
+/**
+ * UA-1 — one User may have many authentication identities.
+ * providerSubject is the canonical provider key (normalized email / E.164 / Google sub).
+ * verifiedAt: null for legacy password identities (no email-verification product yet);
+ * set when phone OTP or Google OIDC successfully proves the identity (UA-2+).
+ */
+model AuthIdentity {
+  id              String               @id @default(cuid())
+  userId          String
+  provider        AuthIdentityProvider
+  providerSubject String
+  verifiedAt      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+}
+
+/**
+ * UA-1 foundation only — no OTP send/verify yet (UA-2).
+ * identifierHash = privacy-preserving digest of canonical phone (HMAC in UA-2).
+ * codeHash stores hashed OTP only — never plaintext code.
+ */
+model OtpChallenge {
+  id             String              @id @default(cuid())
+  identifierHash String
+  codeHash       String
+  purpose        OtpChallengePurpose
+  attempts       Int                 @default(0)
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  lastSentAt     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([identifierHash, purpose])
+  @@index([expiresAt])
+}
+
+/** Single-use password recovery tokens. Raw token is never stored — only tokenHash. */
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/**
+ * AUTH-4 — identifier-aware login abuse state.
+ * identifierKey = HMAC-SHA256(serverSecret, normalizedEmail). Raw email is never stored.
+ * Temporary cooldowns only — never permanent lockout.
+ */
+model LoginAbuseState {
+  identifierKey   String    @id
+  failCount       Int       @default(0)
+  windowStartedAt DateTime  @default(now())
+  cooldownUntil   DateTime?
+  expiresAt       DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([expiresAt])
+  @@index([cooldownUntil])
+}
+
+/**
+ * AUTH-5 — shared IP (and similar) rate-limit buckets for multi-instance APIs.
+ * keyHash = HMAC of canonical client identity. Raw IP is never stored.
+ */
+model RateLimitBucket {
+  id        String   @id @default(cuid())
+  namespace String
+  keyHash   String
+  hits      Int      @default(0)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([namespace, keyHash])
+  @@index([resetAt])
 }
 
 model OwnerProfile {
@@ -390,9 +503,12 @@ model Property {
   titleEn               String?
   descriptionAr         String             @db.Text
   descriptionEn         String?            @db.Text
-  city                  String
-  area                  String
-  approximateAddress    String
+  /// Nullable so truthful incomplete drafts can omit location until Step 2.
+  city                  String?
+  /// Nullable so truthful incomplete drafts can omit location until Step 2.
+  area                  String?
+  /// Nullable so truthful incomplete drafts can omit location until Step 2.
+  approximateAddress    String?
   exactAddress          String? // hidden from public API/UI until booking confirmed
   latitudeApprox        Float?
   longitudeApprox       Float?
@@ -420,11 +536,20 @@ model Property {
   hasPlatformDeal       Boolean            @default(false)
   ratingAvg             Decimal?           @db.Decimal(3, 2)
   reviewCount           Int                @default(0)
-  basePrice             Decimal            @db.Decimal(10, 2)
+  /// Nullable so truthful incomplete drafts can omit pricing until Step 4.
+  basePrice             Decimal?           @db.Decimal(10, 2)
   currency              String             @default("JOD")
   cleaningFee           Decimal?           @db.Decimal(10, 2)
   /// Optional per-property deposit % override; null = platform DEFAULT_DEPOSIT_PERCENT
   depositPercent        Decimal?           @db.Decimal(5, 2)
+  /// Owner-visible active change-request reason (cleared on successful resubmit).
+  reviewChangeReason       String?   @db.Text
+  /// When the active change request was set (cleared with reason on resubmit).
+  reviewChangeRequestedAt  DateTime?
+  /// Owner-visible rejection reason when status is rejected (terminal).
+  reviewRejectionReason    String?   @db.Text
+  /// When the property was rejected (server-set on rejection).
+  reviewRejectedAt         DateTime?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 

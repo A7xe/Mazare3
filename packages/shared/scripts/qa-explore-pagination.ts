@@ -138,17 +138,21 @@ console.log('\n— Ordering stability across pages —');
   );
 }
 
-console.log('\n— Load More client behavior (source) —');
+console.log('\n— Progressive client behavior (source) —');
 {
   expect('11) SSR starts at page 1 only', /page:\s*1/.test(resultsSrc) && resultsSrc.includes('EXPLORE_MAIN_PAGE_SIZE'));
   const fetchCallCount = (progressiveSrc.match(/fetchPropertySearch\(/g) ?? []).length;
   expect(
-    '11b) progressive does not auto-fetch page 2',
+    '11b) page 2 only via loadMore (not mount effect fetch)',
     fetchCallCount === 1 &&
       progressiveSrc.includes('const loadMore = useCallback(async () => {') &&
-      progressiveSrc.indexOf('const loadMore') < progressiveSrc.indexOf('fetchPropertySearch('),
+      progressiveSrc.indexOf('const loadMore') < progressiveSrc.indexOf('fetchPropertySearch(') &&
+      !/useEffect\(\(\)\s*=>\s*\{[\s\S]{0,120}fetchPropertySearch/.test(progressiveSrc),
   );
-  expect('12) loading guard present', progressiveSrc.includes('loadingRef') && progressiveSrc.includes('disabled={loading}'));
+  expect(
+    '12) loading guard present',
+    progressiveSrc.includes('loadingRef') && progressiveSrc.includes('if (loadingRef.current'),
+  );
   expect('13) failed next-page keeps results', progressiveSrc.includes('setError') && !progressiveSrc.includes('setProperties([])'));
   expect('14) retry control present', progressiveSrc.includes('load-more-retry') && progressiveSrc.includes('loadMoreRetry'));
   expect(

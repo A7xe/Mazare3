@@ -12,7 +12,7 @@ export function HeroSection() {
       <div className="mx-auto max-w-6xl">
         <div className="max-w-3xl text-start">
           <p className="text-sm font-semibold text-primary">{t('eyebrow')}</p>
-          <h1 className="mt-2 text-balance text-3xl font-bold tracking-tight text-navy sm:text-4xl lg:text-[2.5rem] lg:leading-tight">
+          <h1 className="mt-2 text-balance text-3xl font-heading tracking-tight text-navy sm:text-4xl lg:text-[2.5rem] lg:leading-tight">
             {t('headline')}
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">

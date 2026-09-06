@@ -86,7 +86,7 @@ export function AdminUsersView() {
               {users.map((u) => (
                 <tr key={u.id} className="border-b border-border/60">
                   <td className="px-4 py-3 font-medium text-navy">{u.name ?? '—'}</td>
-                  <td className="px-4 py-3">{u.email}</td>
+                  <td className="px-4 py-3">{u.email ?? '—'}</td>
                   <td className="px-4 py-3">{t(`role.${u.role}`)}</td>
                   <td className="px-4 py-3">
                     <Badge variant={u.status === 'active' ? 'highlight' : 'muted'}>

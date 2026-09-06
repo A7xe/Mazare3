@@ -3,6 +3,7 @@ import {
   AvailabilitySlotStatus,
   BookingStatus,
   PaymentStatus,
+  type PropertyStatus,
   type UserRole,
 } from '@mazare3/db';
 import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
@@ -10,6 +11,7 @@ import { expireOwnerApprovalIfNeeded } from './owner-approval-expiry.service.js'
 import { toPaymentDisplayStatus } from '../mappers/payment.mapper.js';
 import { resolveOwnerScope, type OwnerScope } from './owner-access.js';
 import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
+import { assertOwnerNotPendingReview } from '../lib/owner-property-mutation-guards.js';
 import type {
   OwnerAvailabilityQuery,
   OwnerAvailabilitySlotRow,
@@ -58,7 +60,15 @@ function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function decimalToNumber(value: { toNumber(): number } | number): number {
+function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
+  return typeof value === 'number' ? value : value.toNumber();
+}
+
+function nullableDecimalToNumber(
+  value: { toNumber(): number } | number | null | undefined,
+): number | null {
+  if (value == null) return null;
   return typeof value === 'number' ? value : value.toNumber();
 }
 
@@ -81,11 +91,17 @@ function propertyWhere(scope: OwnerScope) {
 async function assertPropertyAccess(scope: OwnerScope, propertyId: string) {
   const property = await prisma.property.findFirst({
     where: { id: propertyId, ...propertyWhere(scope) },
-    select: { id: true, ownerId: true, slug: true },
+    select: { id: true, ownerId: true, slug: true, status: true },
   });
   if (!property) {
     throw new AppError(404, 'NOT_FOUND', 'Property not found');
   }
+  return property;
+}
+
+async function assertOwnerCanMutateAvailability(scope: OwnerScope, propertyId: string) {
+  const property = await assertPropertyAccess(scope, propertyId);
+  assertOwnerNotPendingReview(property.status as PropertyStatus);
   return property;
 }
 
@@ -226,7 +242,7 @@ export async function listOwnerProperties(
     status: p.status,
     area: p.area,
     city: p.city,
-    basePrice: decimalToNumber(p.basePrice),
+    basePrice: nullableDecimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
     imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
@@ -267,13 +283,16 @@ export async function getOwnerPropertyById(
     status: p.status,
     area: p.area,
     city: p.city,
-    basePrice: decimalToNumber(p.basePrice),
+    basePrice: nullableDecimalToNumber(p.basePrice),
     currency: p.currency,
     bookingsCount: p._count.bookings,
     imageUrl: p.media[0] ? resolvePropertyMediaPublicUrl(p.media[0]) : undefined,
     capacity: p.capacity,
     allowsOvernight: p.allowsOvernight,
     upcomingBookingsCount: p._count.bookings,
+    reviewChangeReason: p.reviewChangeReason ?? null,
+    reviewRejectionReason: p.reviewRejectionReason ?? null,
+    reviewRejectedAt: p.reviewRejectedAt?.toISOString() ?? null,
   };
 }
 
@@ -430,7 +449,7 @@ export async function patchOwnerAvailabilitySlot(
   const slot = await prisma.availabilitySlot.findUnique({
     where: { id: slotId },
     include: {
-      property: { select: { id: true, ownerId: true } },
+      property: { select: { id: true, ownerId: true, status: true } },
       bookings: {
         where: { status: { in: SLOT_HOLDING_STATUSES } },
         select: { id: true },
@@ -446,6 +465,8 @@ export async function patchOwnerAvailabilitySlot(
   if (!scope.isAdmin && slot.property.ownerId !== scope.ownerProfileId) {
     throw new AppError(403, 'FORBIDDEN', 'You do not own this property');
   }
+
+  assertOwnerNotPendingReview(slot.property.status);
 
   const hasActive =
     slot.bookings.length > 0 || slot.status === AvailabilitySlotStatus.booked;
@@ -573,7 +594,7 @@ export async function putOwnerAvailabilityRules(
   req?: AuthenticatedRequest,
 ) {
   const scope = await resolveOwnerScope(userId, role);
-  await assertPropertyAccess(scope, propertyId);
+  await assertOwnerCanMutateAvailability(scope, propertyId);
   return putPropertyAvailabilityRules(propertyId, rules, userId, req);
 }
 
@@ -584,7 +605,7 @@ export async function deleteOwnerAvailabilityRule(
   ruleId: string,
 ) {
   const scope = await resolveOwnerScope(userId, role);
-  await assertPropertyAccess(scope, propertyId);
+  await assertOwnerCanMutateAvailability(scope, propertyId);
   await deletePropertyAvailabilityRule(propertyId, ruleId);
 }
 
@@ -607,7 +628,7 @@ export async function generateOwnerAvailability(
   req?: AuthenticatedRequest,
 ) {
   const scope = await resolveOwnerScope(userId, role);
-  await assertPropertyAccess(scope, propertyId);
+  await assertOwnerCanMutateAvailability(scope, propertyId);
   const result = await generateAvailabilityForProperty(propertyId, input);
   await createAuditLog({
     actorUserId: userId,
@@ -640,7 +661,7 @@ export async function applyOwnerRuleToFuture(
   req?: AuthenticatedRequest,
 ) {
   const scope = await resolveOwnerScope(userId, role);
-  await assertPropertyAccess(scope, propertyId);
+  await assertOwnerCanMutateAvailability(scope, propertyId);
   return applyRuleToFutureSlots(propertyId, ruleId, input, userId, req);
 }
 

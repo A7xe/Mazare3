@@ -36,9 +36,11 @@ function keyOf(weekday: number, period: AvailabilityPeriod) {
 export function OwnerAvailabilitySchedule({
   propertyId,
   onGenerated,
+  readOnly = false,
 }: {
   propertyId: string;
   onGenerated: () => void;
+  readOnly?: boolean;
 }) {
   const t = useTranslations('owner');
   const [draft, setDraft] = useState<Record<string, DraftRule>>({});
@@ -97,6 +99,7 @@ export function OwnerAvailabilitySchedule({
   }
 
   async function saveRules() {
+    if (readOnly) return;
     setSaving(true);
     setError(null);
     try {
@@ -131,6 +134,7 @@ export function OwnerAvailabilitySchedule({
   }
 
   async function generate() {
+    if (readOnly) return;
     setGenerating(true);
     setError(null);
     setGenSummary(null);
@@ -169,6 +173,14 @@ export function OwnerAvailabilitySchedule({
         <p className="text-sm text-muted">{t('weeklyScheduleHint')}</p>
       </CardHeader>
       <CardContent className="space-y-4">
+        {readOnly ? (
+          <p
+            data-testid="owner-availability-schedule-frozen"
+            className="rounded-xl border border-primary/20 bg-primary-soft/40 px-4 py-3 text-sm text-navy"
+          >
+            {t('pendingReviewAvailabilityFrozen')}
+          </p>
+        ) : null}
         {warning && (
           <p
             data-testid="owner-availability-warning"
@@ -246,14 +258,14 @@ export function OwnerAvailabilitySchedule({
           </table>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button data-testid="owner-schedule-save" disabled={saving} onClick={() => void saveRules()}>
+          <Button data-testid="owner-schedule-save" disabled={saving || readOnly} onClick={() => void saveRules()}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {t('saveSchedule')}
           </Button>
           <Button
             data-testid="owner-availability-generate"
             variant="outline"
-            disabled={generating}
+            disabled={generating || readOnly}
             onClick={() => void generate()}
           >
             {generating ? (

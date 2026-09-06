@@ -2,25 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { usePathname } from '@/i18n/navigation';
-import {
-  Shield,
-  CalendarCheck,
-  Ban,
-  CalendarRange,
-  Sparkles,
-  HeadphonesIcon,
-  Loader2,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Building2,
-  User,
-} from 'lucide-react';
+import { Link, usePathname, useRouter } from '@/i18n/navigation';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { getMe, refreshSession } from '@/lib/api-auth';
 import {
   acceptPartnerAgreement,
-  fetchPartnerAgreement,
   fetchPartnerOnboarding,
   fetchPartnerRequirements,
   patchPartnerOnboarding,
@@ -28,58 +14,64 @@ import {
   submitPartnerOnboarding,
   uploadPartnerDocument,
   PartnerApiError,
-  type PartnerEntityType,
   type PartnerOnboardingView,
   type PartnerRequirementRow,
-  type PartnerVerificationStatus,
 } from '@/lib/api-partner';
+import { isApprovedOwnerForAddFarm, rememberPartnerVerificationStatus } from '@/lib/add-farm-entry';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Link } from '@/i18n/navigation';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
+import { PartnerEntryLanding } from './partner-onboarding/partner-entry-landing';
+import { PartnerOnboardingShell } from './partner-onboarding/partner-onboarding-shell';
+import { PartnerStatusPanel } from './partner-onboarding/partner-status-panel';
+import {
+  PartnerWizardSteps,
+  type PartnerWizardFormState,
+} from './partner-onboarding/partner-wizard-steps';
+import {
+  APPROVED_PARTNER_STATUSES,
+  EDITABLE_PARTNER_STATUSES,
+  PARTNER_ONBOARDING_STEPS,
+  PENDING_PARTNER_STATUSES,
+  PLACEHOLDER_PARTNER_NAME,
+  PLACEHOLDER_PARTNER_PHONE,
+  derivePartnerSectionCompletion,
+  emptyIfPartnerPlaceholder,
+  hasMeaningfulPartnerProgress,
+  looksLikeMaskedPayoutValue,
+  missingRequiredPartnerDocuments,
+  hasAcceptedCurrentPartnerAgreement,
+  hasDistinctOperatingLocation,
+  resolvePartnerOnboardingStepId,
+  validatePartnerDocumentFile,
+  validatePartnerPayoutForm,
+  type PartnerOnboardingStepId,
+} from './partner-onboarding/partner-onboarding-model';
 
-const benefits = [
-  { icon: Shield, key: 'secureBooking' },
-  { icon: Ban, key: 'reduceFake' },
-  { icon: CalendarRange, key: 'availability' },
-  { icon: Sparkles, key: 'visibility' },
-  { icon: HeadphonesIcon, key: 'support' },
-  { icon: CalendarCheck, key: 'noPublicPhone' },
-] as const;
-
-const STEPS = [
-  'entity',
-  'contact',
-  'requirements',
-  'documents',
-  'payout',
-  'agreement',
-  'review',
-] as const;
-
-const PLACEHOLDER_NAME = 'شريك جديد';
-const PLACEHOLDER_PHONE = '00000000';
-
-const EDITABLE_STATUSES: PartnerVerificationStatus[] = ['draft', 'changes_requested'];
-const APPROVED_STATUSES: PartnerVerificationStatus[] = ['approved', 'legacy_approved'];
-const PENDING_STATUSES: PartnerVerificationStatus[] = ['submitted', 'under_review'];
-
-function emptyIfPlaceholder(value: string | null | undefined, placeholder: string) {
-  if (!value || value === placeholder) return '';
-  return value;
-}
-
-function verificationBadgeVariant(status: PartnerVerificationStatus) {
-  if (status === 'approved' || status === 'legacy_approved') return 'highlight' as const;
-  if (status === 'rejected' || status === 'suspended') return 'muted' as const;
-  return 'default' as const;
-}
+const INITIAL_FORM: PartnerWizardFormState = {
+  entityType: '',
+  displayName: '',
+  businessName: '',
+  phone: '',
+  city: '',
+  area: '',
+  bio: '',
+  approximateFarmCount: '',
+  legalName: '',
+  operatingPhone: '',
+  operatingCity: '',
+  operatingArea: '',
+  contactEmail: '',
+  beneficiaryName: '',
+  bankName: '',
+  iban: '',
+  optionalNotes: '',
+};
 
 export function BecomeOwnerView() {
   const t = useTranslations('becomeOwner');
   const locale = useLocale() as 'ar' | 'en';
   const pathname = usePathname();
+  const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
   const [loggedIn, setLoggedIn] = useState(false);
   const [role, setRole] = useState<string | null>(null);
@@ -87,43 +79,32 @@ export function BecomeOwnerView() {
   const [requirements, setRequirements] = useState<PartnerRequirementRow[]>([]);
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveOk, setSaveOk] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
-
-  const [form, setForm] = useState({
-    entityType: '' as '' | PartnerEntityType,
-    displayName: '',
-    businessName: '',
-    phone: '',
-    city: '',
-    area: '',
-    bio: '',
-    approximateFarmCount: '',
-    legalName: '',
-    operatingPhone: '',
-    operatingCity: '',
-    operatingArea: '',
-    contactEmail: '',
-    beneficiaryName: '',
-    bankName: '',
-    iban: '',
-    optionalNotes: '',
-  });
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [form, setForm] = useState<PartnerWizardFormState>(INITIAL_FORM);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [payoutEditing, setPayoutEditing] = useState(false);
+  const [differentOperatingLocation, setDifferentOperatingLocation] = useState(false);
 
   const editable = onboarding
-    ? EDITABLE_STATUSES.includes(onboarding.verificationStatus)
+    ? EDITABLE_PARTNER_STATUSES.includes(onboarding.verificationStatus)
     : true;
-  const currentStep = STEPS[step] ?? 'entity';
+  const currentStep = PARTNER_ONBOARDING_STEPS[step] ?? 'entity';
 
   const hydrate = useCallback((view: PartnerOnboardingView) => {
     setOnboarding(view);
+    rememberPartnerVerificationStatus(view.verificationStatus);
     setForm((prev) => ({
       ...prev,
       entityType: view.entityType ?? prev.entityType,
-      displayName: emptyIfPlaceholder(view.displayName, PLACEHOLDER_NAME) || prev.displayName,
+      displayName:
+        emptyIfPartnerPlaceholder(view.displayName, PLACEHOLDER_PARTNER_NAME) || prev.displayName,
       businessName: view.businessName ?? prev.businessName,
-      phone: emptyIfPlaceholder(view.phone, PLACEHOLDER_PHONE) || prev.phone,
+      phone: emptyIfPartnerPlaceholder(view.phone, PLACEHOLDER_PARTNER_PHONE) || prev.phone,
       city: view.city ?? prev.city,
       area: view.area ?? prev.area,
       bio: view.bio ?? prev.bio,
@@ -135,7 +116,21 @@ export function BecomeOwnerView() {
       operatingArea: view.operatingArea ?? prev.operatingArea,
       contactEmail: view.contactEmail ?? prev.contactEmail,
     }));
-    if (view.acceptedAgreement) setAcceptedTerms(true);
+    setDifferentOperatingLocation(
+      hasDistinctOperatingLocation({
+        city: view.city,
+        area: view.area,
+        operatingCity: view.operatingCity,
+        operatingArea: view.operatingArea,
+      }),
+    );
+    if (view.acceptedAgreement && view.currentAgreement && view.acceptedAgreement.agreementId === view.currentAgreement.id) {
+      setAcceptedTerms(true);
+    } else if (view.readiness?.agreementAccepted) {
+      setAcceptedTerms(true);
+    } else {
+      setAcceptedTerms(false);
+    }
   }, []);
 
   const loadRequirements = useCallback(async () => {
@@ -149,7 +144,15 @@ export function BecomeOwnerView() {
         const res = await getMe();
         setLoggedIn(true);
         setRole(res.data.user.role);
-        if (res.data.user.role === 'admin') return;
+        setAccountEmail(res.data.user.email ?? null);
+        if (isApprovedOwnerForAddFarm(res.data.user)) {
+          router.replace('/owner/properties/new');
+          return;
+        }
+        if (res.data.user.role === 'admin') {
+          setAuthLoading(false);
+          return;
+        }
         const onboardRes = await fetchPartnerOnboarding();
         hydrate(onboardRes.data);
         if (
@@ -158,9 +161,20 @@ export function BecomeOwnerView() {
         ) {
           const refreshed = await refreshSession();
           setRole(refreshed.data.user.role);
+          if (isApprovedOwnerForAddFarm(refreshed.data.user)) {
+            router.replace('/owner/properties/new');
+            return;
+          }
         }
-        if (PENDING_STATUSES.includes(onboardRes.data.verificationStatus)) {
-          setStep(STEPS.length - 1);
+        if (hasMeaningfulPartnerProgress(onboardRes.data)) {
+          setWizardOpen(true);
+        }
+        if (PENDING_PARTNER_STATUSES.includes(onboardRes.data.verificationStatus)) {
+          setStep(PARTNER_ONBOARDING_STEPS.length - 1);
+          setWizardOpen(false);
+        }
+        if (onboardRes.data.verificationStatus === 'changes_requested') {
+          setWizardOpen(true);
         }
         try {
           const reqs = await fetchPartnerRequirements();
@@ -174,47 +188,169 @@ export function BecomeOwnerView() {
         setAuthLoading(false);
       }
     })();
-  }, [hydrate]);
+  }, [hydrate, router]);
+
+  const completion = useMemo(
+    () => derivePartnerSectionCompletion(onboarding, requirements),
+    [onboarding, requirements],
+  );
 
   const stepValid = useMemo(() => {
     if (currentStep === 'entity') {
       return (
         Boolean(form.entityType) &&
         form.displayName.trim().length >= 2 &&
-        form.phone.trim().length >= 8 &&
         form.city.trim().length >= 2 &&
         form.area.trim().length >= 2 &&
         form.bio.trim().length >= 20
       );
     }
     if (currentStep === 'contact') {
-      return (
-        (form.legalName || form.displayName).trim().length >= 2 &&
-        (form.operatingPhone || form.phone).trim().length >= 8 &&
-        (form.operatingCity || form.city).trim().length >= 2 &&
-        (form.operatingArea || form.area).trim().length >= 2
-      );
+      const email = form.contactEmail.trim();
+      const emailOk = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      return form.phone.trim().length >= 8 && emailOk;
     }
-    if (currentStep === 'requirements') return true;
     if (currentStep === 'documents') {
       return requirements.filter((r) => r.required).every((r) => Boolean(r.currentDocument));
     }
-    if (currentStep === 'payout') return Boolean(onboarding?.payout.complete);
-    if (currentStep === 'agreement') return Boolean(onboarding?.acceptedAgreement);
+    if (currentStep === 'payout') {
+      if (onboarding?.payout.complete && !payoutEditing) return true;
+      return (
+        form.beneficiaryName.trim().length >= 2 &&
+        form.bankName.trim().length >= 2 &&
+        form.iban.trim().length >= 8 &&
+        form.iban.trim().length <= 40 &&
+        !looksLikeMaskedPayoutValue(form.iban) &&
+        !looksLikeMaskedPayoutValue(form.beneficiaryName) &&
+        !looksLikeMaskedPayoutValue(form.bankName)
+      );
+    }
+    if (currentStep === 'agreement') {
+      return hasAcceptedCurrentPartnerAgreement(onboarding) || acceptedTerms;
+    }
     return true;
-  }, [currentStep, form, onboarding, requirements]);
+  }, [currentStep, form, onboarding, requirements, payoutEditing, acceptedTerms]);
+
+  function validateCurrentStep(): boolean {
+    const errors: Record<string, string> = {};
+    if (currentStep === 'entity') {
+      if (!form.entityType) errors.entityType = t('info.errors.entityType');
+      if (form.displayName.trim().length < 2) errors.displayName = t('info.errors.displayName');
+      if (form.city.trim().length < 2) errors.city = t('info.errors.city');
+      if (form.area.trim().length < 2) errors.area = t('info.errors.area');
+      if (form.bio.trim().length < 20) errors.bio = t('info.errors.bio');
+    } else if (currentStep === 'contact') {
+      if (form.phone.trim().length < 8) errors.phone = t('contact.errors.phone');
+      const email = form.contactEmail.trim();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errors.contactEmail = t('contact.errors.contactEmail');
+      }
+    }
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
 
   async function saveProfile(fields: Parameters<typeof patchPartnerOnboarding>[0]) {
+    setSaveOk(false);
     const res = await patchPartnerOnboarding(fields);
     hydrate(res.data);
     await loadRequirements();
+    setSaveOk(true);
     return res.data;
   }
 
   async function handleNext() {
     setError(null);
     if (!editable) {
-      setStep((s) => Math.min(s + 1, STEPS.length - 1));
+      setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+      return;
+    }
+    if ((currentStep === 'entity' || currentStep === 'contact') && !validateCurrentStep()) {
+      return;
+    }
+    if (currentStep === 'documents') {
+      const missing = missingRequiredPartnerDocuments(requirements);
+      if (missing.length > 0) {
+        setError(t('docs.missingRequired', { count: missing.length }));
+        return;
+      }
+      setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+      return;
+    }
+    if (currentStep === 'payout') {
+      if (onboarding?.payout.complete && !payoutEditing) {
+        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+        return;
+      }
+      const invalid = validatePartnerPayoutForm(form);
+      if (invalid) {
+        const mapped: Record<string, string> = {};
+        if (invalid.beneficiaryName) mapped.beneficiaryName = t('transfer.errors.beneficiaryName');
+        if (invalid.bankName) mapped.bankName = t('transfer.errors.bankName');
+        if (invalid.iban === 'ibanMasked' || invalid.beneficiaryName === 'masked') {
+          mapped.iban = t('transfer.errors.ibanMasked');
+        } else if (invalid.iban) {
+          mapped.iban = t('transfer.errors.iban');
+        }
+        setFieldErrors(mapped);
+        setError(t('transfer.errors.incomplete'));
+        return;
+      }
+      setSaving(true);
+      try {
+        await putPartnerPayoutProfile({
+          beneficiaryName: form.beneficiaryName.trim(),
+          bankName: form.bankName.trim(),
+          iban: form.iban.trim(),
+          optionalNotes: form.optionalNotes.trim() || undefined,
+        });
+        const res = await fetchPartnerOnboarding();
+        hydrate(res.data);
+        setForm((f) => ({
+          ...f,
+          beneficiaryName: '',
+          bankName: '',
+          iban: '',
+          optionalNotes: '',
+        }));
+        setPayoutEditing(false);
+        setFieldErrors({});
+        setSaveOk(true);
+        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('submitError'));
+        setSaveOk(false);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (currentStep === 'agreement') {
+      if (hasAcceptedCurrentPartnerAgreement(onboarding)) {
+        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+        return;
+      }
+      if (!acceptedTerms || !onboarding?.currentAgreement) {
+        setError(t('agreementUx.mustAccept'));
+        return;
+      }
+      setSaving(true);
+      try {
+        await acceptPartnerAgreement({
+          agreementId: onboarding.currentAgreement.id,
+          acceptedLocale: locale,
+        });
+        const res = await fetchPartnerOnboarding();
+        hydrate(res.data);
+        setAcceptedTerms(true);
+        setSaveOk(true);
+        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('submitError'));
+        setSaveOk(false);
+      } finally {
+        setSaving(false);
+      }
       return;
     }
     setSaving(true);
@@ -224,7 +360,6 @@ export function BecomeOwnerView() {
           entityType: form.entityType || undefined,
           displayName: form.displayName.trim(),
           businessName: form.businessName.trim() || null,
-          phone: form.phone.trim(),
           city: form.city.trim(),
           area: form.area.trim(),
           bio: form.bio.trim(),
@@ -233,17 +368,29 @@ export function BecomeOwnerView() {
             : null,
         });
       } else if (currentStep === 'contact') {
-        await saveProfile({
+        const contactPayload: Parameters<typeof saveProfile>[0] = {
+          phone: form.phone.trim(),
           legalName: (form.legalName || form.displayName).trim(),
           operatingPhone: (form.operatingPhone || form.phone).trim(),
-          operatingCity: (form.operatingCity || form.city).trim(),
-          operatingArea: (form.operatingArea || form.area).trim(),
           contactEmail: form.contactEmail.trim() || undefined,
-        });
+        };
+        // Only persist operating location when the applicant opted into a distinct management location.
+        // Omitting these fields preserves backend fallback to Step 1 city/area.
+        if (differentOperatingLocation) {
+          const opCity = form.operatingCity.trim();
+          const opArea = form.operatingArea.trim();
+          if (opCity.length >= 2) contactPayload.operatingCity = opCity;
+          if (opArea.length >= 2) contactPayload.operatingArea = opArea;
+        }
+        await saveProfile(contactPayload);
+      } else {
+        setSaveOk(false);
       }
-      setStep((s) => Math.min(s + 1, STEPS.length - 1));
+      setFieldErrors({});
+      setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
     } catch (err) {
       setError(err instanceof Error ? err.message : t('submitError'));
+      setSaveOk(false);
     } finally {
       setSaving(false);
     }
@@ -251,14 +398,35 @@ export function BecomeOwnerView() {
 
   async function handleUpload(requirementId: string, file: File) {
     setError(null);
+    const clientCheck = validatePartnerDocumentFile(file);
+    if (clientCheck === 'type') {
+      setError(t('docs.errors.type'));
+      return;
+    }
+    if (clientCheck === 'size') {
+      setError(t('docs.errors.size'));
+      return;
+    }
+    setSaveOk(false);
     setUploadingId(requirementId);
     try {
       await uploadPartnerDocument(file, requirementId);
       await loadRequirements();
       const res = await fetchPartnerOnboarding();
       hydrate(res.data);
+      setSaveOk(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('submitError'));
+      const msg =
+        err instanceof PartnerApiError
+          ? err.code === 'FILE_TOO_LARGE'
+            ? t('docs.errors.size')
+            : err.code === 'FILE_TYPE_REJECTED' || err.code === 'MIME_MISMATCH'
+              ? t('docs.errors.type')
+              : err.message
+          : err instanceof Error
+            ? err.message
+            : t('submitError');
+      setError(msg);
     } finally {
       setUploadingId(null);
     }
@@ -266,6 +434,20 @@ export function BecomeOwnerView() {
 
   async function handleSavePayout() {
     setError(null);
+    const invalid = validatePartnerPayoutForm(form);
+    if (invalid) {
+      const mapped: Record<string, string> = {};
+      if (invalid.beneficiaryName) mapped.beneficiaryName = t('transfer.errors.beneficiaryName');
+      if (invalid.bankName) mapped.bankName = t('transfer.errors.bankName');
+      if (invalid.iban === 'ibanMasked' || invalid.beneficiaryName === 'masked') {
+        mapped.iban = t('transfer.errors.ibanMasked');
+      } else if (invalid.iban) {
+        mapped.iban = t('transfer.errors.iban');
+      }
+      setFieldErrors(mapped);
+      return;
+    }
+    setSaveOk(false);
     setSaving(true);
     try {
       const res = await putPartnerPayoutProfile({
@@ -275,6 +457,16 @@ export function BecomeOwnerView() {
         optionalNotes: form.optionalNotes.trim() || undefined,
       });
       hydrate(res.data);
+      setForm((f) => ({
+        ...f,
+        beneficiaryName: '',
+        bankName: '',
+        iban: '',
+        optionalNotes: '',
+      }));
+      setPayoutEditing(false);
+      setFieldErrors({});
+      setSaveOk(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('submitError'));
     } finally {
@@ -283,19 +475,25 @@ export function BecomeOwnerView() {
   }
 
   async function handleAcceptAgreement() {
-    if (!onboarding?.currentAgreement) return;
+    if (!onboarding?.currentAgreement || !acceptedTerms) {
+      setError(t('agreementUx.mustAccept'));
+      return;
+    }
     setError(null);
+    setSaveOk(false);
     setSaving(true);
     try {
       await acceptPartnerAgreement({
         agreementId: onboarding.currentAgreement.id,
         acceptedLocale: locale,
       });
-      const [view, agreement] = await Promise.all([fetchPartnerOnboarding(), fetchPartnerAgreement()]);
+      const view = await fetchPartnerOnboarding();
       hydrate(view.data);
-      if (agreement.data.accepted) setAcceptedTerms(true);
+      setAcceptedTerms(hasAcceptedCurrentPartnerAgreement(view.data));
+      setSaveOk(hasAcceptedCurrentPartnerAgreement(view.data));
     } catch (err) {
       setError(err instanceof Error ? err.message : t('submitError'));
+      setSaveOk(false);
     } finally {
       setSaving(false);
     }
@@ -303,10 +501,12 @@ export function BecomeOwnerView() {
 
   async function handleSubmit() {
     setError(null);
+    setSaveOk(false);
     setSaving(true);
     try {
       const res = await submitPartnerOnboarding();
       hydrate(res.data);
+      setWizardOpen(false);
     } catch (err) {
       if (err instanceof PartnerApiError && err.code === 'ONBOARDING_INCOMPLETE') {
         setError(t('missingHint'));
@@ -318,698 +518,210 @@ export function BecomeOwnerView() {
     }
   }
 
+  function selectStep(id: PartnerOnboardingStepId | string) {
+    const resolved = resolvePartnerOnboardingStepId(id);
+    if (!resolved) return;
+    const idx = PARTNER_ONBOARDING_STEPS.indexOf(resolved);
+    if (idx >= 0) setStep(idx);
+  }
+
+  // Legacy/bookmark `?step=requirements|documents|…` — apply once when wizard opens (no URL write).
+  useEffect(() => {
+    if (!wizardOpen) return;
+    if (typeof window === 'undefined') return;
+    const raw = new URLSearchParams(window.location.search).get('step');
+    const resolved = resolvePartnerOnboardingStepId(raw);
+    if (!resolved) return;
+    const idx = PARTNER_ONBOARDING_STEPS.indexOf(resolved);
+    if (idx >= 0) setStep(idx);
+  }, [wizardOpen]);
+
   if (authLoading) {
     return (
-      <div className="flex justify-center py-20">
+      <div className="flex justify-center py-20" data-testid="become-owner-loading">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   const status = onboarding?.verificationStatus;
-  const isApproved = status ? APPROVED_STATUSES.includes(status) : false;
-  const isPending = status ? PENDING_STATUSES.includes(status) : false;
-  const agreement = onboarding?.currentAgreement;
-  const agreementTitle = agreement
-    ? locale === 'ar'
-      ? agreement.titleAr
-      : agreement.titleEn
-    : '';
-  const agreementSummary = agreement
-    ? locale === 'ar'
-      ? agreement.summaryAr
-      : agreement.summaryEn
-    : '';
-  const agreementContent = agreement
-    ? locale === 'ar'
-      ? agreement.contentAr
-      : agreement.contentEn
-    : '';
+  const isApproved = status ? APPROVED_PARTNER_STATUSES.includes(status) : false;
+  const isPending = status ? PENDING_PARTNER_STATUSES.includes(status) : false;
+  const isTerminalLocked = status === 'rejected' || status === 'suspended';
+  const meaningful = hasMeaningfulPartnerProgress(onboarding);
+  const showStatusOnly = isPending || isTerminalLocked || isApproved;
+  const showWizard =
+    loggedIn &&
+    role !== 'admin' &&
+    wizardOpen &&
+    !isPending &&
+    !isTerminalLocked &&
+    !isApproved;
 
   return (
-    <div data-testid="become-owner-page" className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
-      <div className="mb-8 text-center sm:mb-10">
-        <h1 className="text-3xl font-bold text-navy sm:text-4xl">{t('title')}</h1>
-        <p className="mt-3 text-lg text-muted">{t('subtitle')}</p>
-      </div>
+    <MarketplacePageShell data-testid="become-owner-page" className="py-6 sm:py-10">
+      {!loggedIn ? (
+        <PartnerEntryLanding returnUrl={pathname} mode="guest" />
+      ) : null}
 
-      <div className="mb-8 grid gap-3 sm:mb-10 sm:grid-cols-2 sm:gap-4">
-        {benefits.map(({ icon: Icon, key }) => (
-          <Card key={key} className="glass-panel rounded-2xl border-primary/12">
-            <CardContent className="flex gap-3 p-4 sm:p-5">
-              <Icon className="h-6 w-6 shrink-0 text-primary" />
-              <p className="text-sm text-navy">{t(`benefits.${key}`)}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {loggedIn && role === 'admin' ? (
+        <p className="rounded-2xl border border-[#E5EAF1] bg-white p-6 text-center text-muted">
+          {t('adminNoApply')}
+        </p>
+      ) : null}
 
-      {onboarding && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <Badge
-            data-testid="partner-status-chip"
-            variant={verificationBadgeVariant(onboarding.verificationStatus)}
+      {loggedIn && role !== 'admin' && showStatusOnly && onboarding ? (
+        <PartnerStatusPanel
+          onboarding={onboarding}
+          onContinueCorrection={
+            status === 'changes_requested'
+              ? () => {
+                  setWizardOpen(true);
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
+      {loggedIn &&
+      role !== 'admin' &&
+      !showStatusOnly &&
+      !wizardOpen ? (
+        meaningful ? (
+          <div
+            className="mx-auto max-w-lg rounded-[24px] border border-[#E5EAF1] bg-white p-6 text-center shadow-[0_8px_24px_rgba(13,32,70,.05)] sm:p-8"
+            data-testid="partner-applicant-intro"
           >
-            {t(`verification.${onboarding.verificationStatus}`)}
-          </Badge>
-          {onboarding.legacyApproved ? (
-            <p className="text-sm text-muted">{t('legacyNotice')}</p>
-          ) : null}
-        </div>
-      )}
-
-      {onboarding?.changeRequestReason ? (
-        <p
-          data-testid="partner-change-reason"
-          className="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-navy"
-        >
-          <span className="font-medium">{t('changesRequestedTitle')}: </span>
-          {onboarding.changeRequestReason}
-        </p>
-      ) : null}
-
-      {onboarding?.rejectionReason && status === 'rejected' ? (
-        <p className="mb-4 rounded-xl border border-danger/20 bg-danger/10 px-4 py-3 text-danger">
-          {t('rejectedNotice')}
-          {`: ${onboarding.rejectionReason}`}
-        </p>
-      ) : null}
-
-      {isApproved ? (
-        <Card
-          data-testid="owner-application-status"
-          className="glass-panel mb-8 rounded-2xl border-primary/12"
-        >
-          <CardContent className="flex flex-col items-center py-10 text-center">
-            <CheckCircle2 className="h-12 w-12 text-primary" />
-            <h2 className="mt-4 text-xl font-bold text-navy">{t('approvedTitle')}</h2>
-            <p className="mt-2 max-w-md text-muted">{t('approvedDesc')}</p>
-            <Button asChild className="mt-6 shadow-soft">
-              <Link href="/owner">{t('goToDashboard')}</Link>
+            <p className="text-sm font-semibold text-primary">{t('shell.eyebrow')}</p>
+            <h1 className="mt-2 font-heading text-2xl text-[#0D2046]">{t('entry.continueCta')}</h1>
+            <p className="mt-2 text-sm text-[#53637A]">{t('entry.continueHint')}</p>
+            <Button
+              type="button"
+              className="mt-6 shadow-soft"
+              data-testid="partner-continue-application"
+              onClick={() => setWizardOpen(true)}
+            >
+              {t('entry.continueCta')}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        ) : (
+          <div data-testid="partner-applicant-intro">
+            <PartnerEntryLanding
+              returnUrl={pathname}
+              mode="start"
+              onStart={() => setWizardOpen(true)}
+            />
+          </div>
+        )
       ) : null}
 
-      {isPending ? (
-        <Card
-          data-testid="owner-application-status"
-          className="glass-panel mb-8 rounded-2xl border-primary/12"
+      {status === 'changes_requested' && onboarding && showWizard ? (
+        <div className="mb-5">
+          <PartnerStatusPanel
+            onboarding={onboarding}
+            onContinueCorrection={() => setWizardOpen(true)}
+          />
+        </div>
+      ) : null}
+
+      {showWizard ? (
+        <PartnerOnboardingShell
+          title={meaningful ? t('entry.continueCta') : t('entry.startCta')}
+          subtitle={t('wizardHint')}
+          current={currentStep}
+          completion={completion}
+          requirements={requirements}
+          onSelectStep={selectStep}
+          allowJump={editable}
+          savedVisible={saveOk}
+          banner={
+            error ? (
+              <p
+                role="alert"
+                className="rounded-xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger"
+                data-testid="partner-onboarding-error"
+              >
+                {error}
+              </p>
+            ) : null
+          }
+          actions={
+            <div
+              className="sticky bottom-0 z-10 flex gap-2 border-t border-[#E5EAF1] bg-white/95 py-3 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0"
+              data-testid="partner-onboarding-actions"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 sm:flex-none"
+                disabled={step === 0}
+                data-testid="partner-wizard-back"
+                onClick={() => setStep((s) => Math.max(0, s - 1))}
+              >
+                {locale === 'ar' ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronLeft className="h-4 w-4" />
+                )}
+                {t('back')}
+              </Button>
+              {currentStep !== 'review' ? (
+                <Button
+                  type="button"
+                  className="flex-1 shadow-soft sm:flex-none"
+                  disabled={saving || (editable && !stepValid)}
+                  data-testid="partner-wizard-next"
+                  onClick={() => void handleNext()}
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('next')}
+                  {locale === 'ar' ? (
+                    <ChevronLeft className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </Button>
+              ) : null}
+            </div>
+          }
         >
-          <CardContent className="flex flex-col items-center py-10 text-center">
-            <CheckCircle2 className="h-12 w-12 text-primary" />
-            <h2 className="mt-4 text-xl font-bold text-navy">{t('submittedTitle')}</h2>
-            <p className="mt-2 max-w-md text-muted">{t('submittedDesc')}</p>
-            <p className="mt-4 text-sm text-muted">
-              {t('statusLabel')}: {status ? t(`verification.${status}`) : ''}
-            </p>
-          </CardContent>
-        </Card>
+          {!editable ? (
+            <p className="mb-4 text-sm text-muted">{t('readOnlyHint')}</p>
+          ) : null}
+          <PartnerWizardSteps
+              currentStep={currentStep}
+              form={form}
+              setForm={setForm}
+              editable={editable}
+              locale={locale}
+              onboarding={onboarding}
+              requirements={requirements}
+              uploadingId={uploadingId}
+              saving={saving}
+              acceptedTerms={acceptedTerms}
+              setAcceptedTerms={setAcceptedTerms}
+              handleUpload={(id, file) => void handleUpload(id, file)}
+              handleSavePayout={() => void handleSavePayout()}
+              handleAcceptAgreement={() => void handleAcceptAgreement()}
+              handleSubmit={() => void handleSubmit()}
+              fieldErrors={fieldErrors}
+              accountEmail={accountEmail}
+              payoutEditing={payoutEditing}
+              setPayoutEditing={setPayoutEditing}
+              differentOperatingLocation={differentOperatingLocation}
+              setDifferentOperatingLocation={setDifferentOperatingLocation}
+              onGoToDocuments={() => selectStep('documents')}
+              completion={completion}
+              onEditStep={selectStep}
+            />
+        </PartnerOnboardingShell>
       ) : null}
 
-      {isApproved ? null : (
-        <Card className="glass-panel overflow-hidden rounded-3xl border-primary/12">
-          <div className="gradient-primary h-1" />
-          <CardHeader className="pb-3">
-            <CardTitle className="text-xl text-navy">{t('formTitle')}</CardTitle>
-            {loggedIn && role !== 'admin' ? (
-              <p className="text-sm text-muted">{t('wizardHint')}</p>
-            ) : null}
-          </CardHeader>
-          <CardContent>
-            {!loggedIn ? (
-              <div className="space-y-4 text-center">
-                <p className="text-muted">{t('loginRequired')}</p>
-                <div className="flex flex-wrap justify-center gap-3">
-                  <Button asChild className="shadow-soft">
-                    <Link href={`/login?returnUrl=${encodeURIComponent(pathname)}`}>
-                      {t('login')}
-                    </Link>
-                  </Button>
-                  <Button variant="outline" asChild>
-                    <Link href={`/signup?returnUrl=${encodeURIComponent(pathname)}`}>
-                      {t('signup')}
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            ) : role === 'admin' ? (
-              <p className="text-muted">{t('adminNoApply')}</p>
-            ) : (
-              <div className="space-y-6">
-                <div data-testid="partner-onboarding-progress" className="space-y-3">
-                  <div className="flex items-center justify-between text-sm text-muted">
-                    <span>{t('stepOf', { current: step + 1, total: STEPS.length })}</span>
-                    <span className="font-medium text-navy">{t(`steps.${currentStep}`)}</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-primary-soft">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
-                    />
-                  </div>
-                  <div className="hidden gap-1 sm:flex">
-                    {STEPS.map((key, i) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setStep(i)}
-                        className={`min-w-0 flex-1 rounded-lg px-1 py-1 text-[11px] ${
-                          i === step
-                            ? 'bg-primary text-primary-foreground'
-                            : i < step
-                              ? 'bg-primary-soft text-primary'
-                              : 'bg-background text-muted'
-                        }`}
-                      >
-                        {t(`steps.${key}`)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {error && (
-                  <p className="rounded-xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
-                    {error}
-                  </p>
-                )}
-
-                {!editable && !isPending && !isApproved ? (
-                  <p className="text-sm text-muted">{t('readOnlyHint')}</p>
-                ) : null}
-
-                <div data-testid={`partner-wizard-step-${currentStep}`}>
-                {currentStep === 'entity' && (
-                  <div className="space-y-4">
-                    <p className="text-sm font-medium text-navy">{t('entityType')}</p>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        data-testid="partner-entity-individual"
-                        disabled={!editable}
-                        onClick={() => {
-                          setForm((f) => ({ ...f, entityType: 'individual' }));
-                          if (editable) {
-                            void saveProfile({ entityType: 'individual' }).catch((err: unknown) => {
-                              setError(err instanceof Error ? err.message : t('submitError'));
-                            });
-                          }
-                        }}
-                        className={`rounded-2xl border p-4 text-start transition-colors ${
-                          form.entityType === 'individual'
-                            ? 'border-primary bg-primary-soft'
-                            : 'border-border bg-surface hover:border-primary/30'
-                        }`}
-                      >
-                        <User className="mb-2 h-5 w-5 text-primary" />
-                        <p className="font-medium text-navy">{t('entityIndividual')}</p>
-                        <p className="mt-1 text-xs text-muted">{t('entityIndividualHint')}</p>
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="partner-entity-business"
-                        disabled={!editable}
-                        onClick={() => {
-                          setForm((f) => ({ ...f, entityType: 'business' }));
-                          if (editable) {
-                            void saveProfile({ entityType: 'business' }).catch((err: unknown) => {
-                              setError(err instanceof Error ? err.message : t('submitError'));
-                            });
-                          }
-                        }}
-                        className={`rounded-2xl border p-4 text-start transition-colors ${
-                          form.entityType === 'business'
-                            ? 'border-primary bg-primary-soft'
-                            : 'border-border bg-surface hover:border-primary/30'
-                        }`}
-                      >
-                        <Building2 className="mb-2 h-5 w-5 text-primary" />
-                        <p className="font-medium text-navy">{t('entityBusiness')}</p>
-                        <p className="mt-1 text-xs text-muted">{t('entityBusinessHint')}</p>
-                      </button>
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('displayName')}</label>
-                        <Input
-                          required
-                          disabled={!editable}
-                          data-testid="owner-apply-displayName"
-                          value={form.displayName}
-                          onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('businessName')}</label>
-                        <Input
-                          disabled={!editable}
-                          value={form.businessName}
-                          onChange={(e) => setForm((f) => ({ ...f, businessName: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('phone')}</label>
-                        <Input
-                          required
-                          type="tel"
-                          dir="ltr"
-                          disabled={!editable}
-                          data-testid="owner-apply-phone"
-                          value={form.phone}
-                          onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                        />
-                        <p className="text-xs text-muted">{t('phoneHint')}</p>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('farmCount')}</label>
-                        <Input
-                          type="number"
-                          min={0}
-                          disabled={!editable}
-                          value={form.approximateFarmCount}
-                          onChange={(e) =>
-                            setForm((f) => ({ ...f, approximateFarmCount: e.target.value }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('city')}</label>
-                        <Input
-                          required
-                          disabled={!editable}
-                          data-testid="owner-apply-city"
-                          value={form.city}
-                          onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('area')}</label>
-                        <Input
-                          required
-                          disabled={!editable}
-                          data-testid="owner-apply-area"
-                          value={form.area}
-                          onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-navy">{t('bio')}</label>
-                      <textarea
-                        required
-                        rows={4}
-                        disabled={!editable}
-                        data-testid="owner-apply-bio"
-                        className="flex w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm disabled:opacity-50"
-                        value={form.bio}
-                        onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {currentStep === 'contact' && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-navy">{t('legalName')}</label>
-                      <Input
-                        disabled={!editable}
-                        value={form.legalName}
-                        onChange={(e) => setForm((f) => ({ ...f, legalName: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-navy">{t('contactEmail')}</label>
-                      <Input
-                        type="email"
-                        dir="ltr"
-                        disabled={!editable}
-                        value={form.contactEmail}
-                        onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-navy">{t('operatingPhone')}</label>
-                      <Input
-                        type="tel"
-                        dir="ltr"
-                        disabled={!editable}
-                        value={form.operatingPhone}
-                        onChange={(e) => setForm((f) => ({ ...f, operatingPhone: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-navy">{t('operatingCity')}</label>
-                      <Input
-                        disabled={!editable}
-                        value={form.operatingCity}
-                        onChange={(e) => setForm((f) => ({ ...f, operatingCity: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <label className="text-sm font-medium text-navy">{t('operatingArea')}</label>
-                      <Input
-                        disabled={!editable}
-                        value={form.operatingArea}
-                        onChange={(e) => setForm((f) => ({ ...f, operatingArea: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {currentStep === 'requirements' && (
-                  <div className="space-y-3">
-                    <div>
-                      <h3 className="font-medium text-navy">{t('requirementsTitle')}</h3>
-                      <p className="mt-1 text-sm text-muted">{t('requirementsHint')}</p>
-                    </div>
-                    {requirements.map((req) => (
-                      <div
-                        key={req.id}
-                        className="rounded-2xl border border-primary/12 bg-background px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="font-medium text-navy">
-                            {locale === 'ar' ? req.labelAr : req.labelEn}
-                          </p>
-                          <Badge variant={req.required ? 'default' : 'muted'}>
-                            {req.required ? t('required') : t('optional')}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-sm text-muted">
-                          {locale === 'ar' ? req.descriptionAr : req.descriptionEn}
-                        </p>
-                        <p className="mt-2 text-xs text-muted">
-                          {req.currentDocument ? t('hasFile') : t('needsFile')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {currentStep === 'documents' && (
-                  <div className="space-y-3">
-                    <div>
-                      <h3 className="font-medium text-navy">{t('documentsTitle')}</h3>
-                      <p className="mt-1 text-sm text-muted">{t('documentsHint')}</p>
-                    </div>
-                    {requirements.map((req) => (
-                      <div
-                        key={req.id}
-                        className="rounded-2xl border border-primary/12 bg-background px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="font-medium text-navy">
-                            {locale === 'ar' ? req.labelAr : req.labelEn}
-                          </p>
-                          <Badge variant={req.required ? 'default' : 'muted'}>
-                            {req.required ? t('required') : t('optional')}
-                          </Badge>
-                        </div>
-                        {req.currentDocument ? (
-                          <p className="mt-2 text-sm text-muted">
-                            {t('uploadedFile', { name: req.currentDocument.originalFileName })}
-                            {' · '}
-                            {t(`docStatus.${req.currentDocument.reviewStatus}`)}
-                          </p>
-                        ) : null}
-                        {req.currentDocument?.rejectionReason ? (
-                          <p className="mt-1 text-sm text-danger">{req.currentDocument.rejectionReason}</p>
-                        ) : null}
-                        {editable ? (
-                          <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp,application/pdf"
-                              className="sr-only"
-                              data-testid={`partner-doc-upload-${req.id}`}
-                              disabled={uploadingId === req.id}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) void handleUpload(req.id, file);
-                                e.target.value = '';
-                              }}
-                            />
-                            {uploadingId === req.id ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                {t('uploading')}
-                              </>
-                            ) : req.currentDocument ? (
-                              t('replaceFile')
-                            ) : (
-                              t('uploadFile')
-                            )}
-                          </label>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {currentStep === 'payout' && (
-                  <div className="space-y-4">
-                    <p className="text-sm text-muted">{t('payoutHint')}</p>
-                    {onboarding?.payout.ibanMasked ? (
-                      <p
-                        data-testid="partner-iban-masked"
-                        className="rounded-xl bg-primary-soft px-4 py-3 text-sm text-navy"
-                      >
-                        {t('ibanSaved')}: {onboarding.payout.ibanMasked}
-                      </p>
-                    ) : null}
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('beneficiaryName')}</label>
-                        <Input
-                          disabled={!editable}
-                          data-testid="partner-payout-beneficiary"
-                          value={form.beneficiaryName}
-                          onChange={(e) =>
-                            setForm((f) => ({ ...f, beneficiaryName: e.target.value }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-navy">{t('bankName')}</label>
-                        <Input
-                          disabled={!editable}
-                          data-testid="partner-payout-bank"
-                          value={form.bankName}
-                          onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <label className="text-sm font-medium text-navy">{t('iban')}</label>
-                        <Input
-                          dir="ltr"
-                          disabled={!editable}
-                          data-testid="partner-payout-iban"
-                          value={form.iban}
-                          onChange={(e) => setForm((f) => ({ ...f, iban: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <label className="text-sm font-medium text-navy">{t('payoutNotes')}</label>
-                        <Input
-                          disabled={!editable}
-                          value={form.optionalNotes}
-                          onChange={(e) => setForm((f) => ({ ...f, optionalNotes: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                    {editable ? (
-                      <Button
-                        type="button"
-                        data-testid="partner-payout-save"
-                        disabled={saving || form.iban.trim().length < 8}
-                        onClick={() => void handleSavePayout()}
-                      >
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('savePayout')}
-                      </Button>
-                    ) : null}
-                  </div>
-                )}
-
-                {currentStep === 'agreement' && (
-                  <div className="space-y-4">
-                    {agreement ? (
-                      <>
-                        <div>
-                          <h3 className="font-medium text-navy">{agreementTitle}</h3>
-                          <p className="text-xs text-muted">
-                            {t('agreementVersion', { version: agreement.version })}
-                          </p>
-                          <p className="mt-2 text-sm text-muted">{agreementSummary}</p>
-                        </div>
-                        <div className="max-h-64 overflow-y-auto rounded-2xl border border-border bg-background p-4 text-sm whitespace-pre-wrap text-navy">
-                          {agreementContent}
-                        </div>
-                        {onboarding?.acceptedAgreement ? (
-                          <p className="text-sm text-primary">
-                            {t('agreementAcceptedOn', {
-                              date: new Date(onboarding.acceptedAgreement.acceptedAt).toLocaleDateString(
-                                locale === 'ar' ? 'ar-JO' : 'en-GB',
-                              ),
-                            })}
-                          </p>
-                        ) : null}
-                        <label className="flex items-start gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            data-testid="owner-apply-terms"
-                            checked={acceptedTerms || Boolean(onboarding?.acceptedAgreement)}
-                            disabled={!editable || Boolean(onboarding?.acceptedAgreement)}
-                            onChange={(e) => setAcceptedTerms(e.target.checked)}
-                            className="mt-1"
-                          />
-                          <span className="text-muted">{t('terms')}</span>
-                        </label>
-                        {editable && !onboarding?.acceptedAgreement ? (
-                          <Button
-                            type="button"
-                            data-testid="partner-agreement-accept"
-                            disabled={saving || !acceptedTerms}
-                            onClick={() => void handleAcceptAgreement()}
-                          >
-                            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('acceptAgreement')}
-                          </Button>
-                        ) : null}
-                      </>
-                    ) : (
-                      <p className="text-sm text-muted">{t('readOnlyHint')}</p>
-                    )}
-                  </div>
-                )}
-
-                {currentStep === 'review' && onboarding && (
-                  <div className="space-y-4">
-                    <div>
-                      <h3 className="font-medium text-navy">{t('reviewTitle')}</h3>
-                      <p className="mt-1 text-sm text-muted">{t('reviewHint')}</p>
-                    </div>
-                    <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                      <div>
-                        <dt className="text-muted">{t('reviewEntity')}</dt>
-                        <dd className="font-medium text-navy">
-                          {onboarding.entityType
-                            ? t(
-                                onboarding.entityType === 'business'
-                                  ? 'entityBusiness'
-                                  : 'entityIndividual',
-                              )
-                            : '—'}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">{t('displayName')}</dt>
-                        <dd className="font-medium text-navy">{onboarding.displayName}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">{t('phone')}</dt>
-                        <dd className="font-medium text-navy" dir="ltr">
-                          {onboarding.phone}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">{t('city')}</dt>
-                        <dd className="font-medium text-navy">
-                          {onboarding.area} — {onboarding.city}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">{t('reviewPayout')}</dt>
-                        <dd className="font-medium text-navy">
-                          {onboarding.payout.ibanMasked ?? '—'}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">{t('reviewAgreement')}</dt>
-                        <dd className="font-medium text-navy">
-                          {onboarding.acceptedAgreement
-                            ? t('agreementVersion', { version: onboarding.acceptedAgreement.version })
-                            : '—'}
-                        </dd>
-                      </div>
-                    </dl>
-                    <div>
-                      <p className="text-sm text-muted">{t('reviewDocs')}</p>
-                      <ul className="mt-1 space-y-1 text-sm text-navy">
-                        {requirements.map((req) => (
-                          <li key={req.id}>
-                            {locale === 'ar' ? req.labelAr : req.labelEn}
-                            {': '}
-                            {req.currentDocument
-                              ? t(`docStatus.${req.currentDocument.reviewStatus}`)
-                              : t('needsFile')}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    {!onboarding.readiness.canSubmit && onboarding.readiness.missingRequirements.length > 0 ? (
-                      <div className="rounded-xl bg-primary-soft px-4 py-3 text-sm text-navy">
-                        <p>{t('missingHint')}</p>
-                        <ul className="mt-1 list-inside list-disc">
-                          {onboarding.readiness.missingRequirements
-                            .filter((key) =>
-                              [
-                                'profile',
-                                'required_documents',
-                                'payout_profile',
-                                'agreement',
-                                'unresolved_changes',
-                              ].includes(key),
-                            )
-                            .map((key) => (
-                              <li key={key}>{t(`missing.${key}`)}</li>
-                            ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                    {editable ? (
-                      <Button
-                        type="button"
-                        className="w-full shadow-soft sm:w-auto"
-                        disabled={saving || !onboarding.readiness.canSubmit}
-                        data-testid="partner-submit"
-                        onClick={() => void handleSubmit()}
-                      >
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('submit')}
-                      </Button>
-                    ) : null}
-                  </div>
-                )}
-                </div>
-
-                <div className="sticky bottom-0 flex gap-2 border-t border-border/60 bg-surface/95 py-3 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 sm:flex-none"
-                    disabled={step === 0}
-                    onClick={() => setStep((s) => Math.max(0, s - 1))}
-                  >
-                    {locale === 'ar' ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-                    {t('back')}
-                  </Button>
-                  {currentStep !== 'review' ? (
-                    <Button
-                      type="button"
-                      className="flex-1 shadow-soft sm:flex-none"
-                      disabled={saving || (editable && !stepValid && currentStep !== 'payout' && currentStep !== 'agreement')}
-                      data-testid="partner-wizard-next"
-                      onClick={() => void handleNext()}
-                    >
-                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t('next')}
-                      {locale === 'ar' ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+      {/* Keep legacy testid available on page for approved redirect fallback */}
+      {isApproved && onboarding ? (
+        <div className="sr-only">
+          <Link href="/owner/properties/new">{t('goToAddFarm')}</Link>
+        </div>
+      ) : null}
+    </MarketplacePageShell>
   );
 }

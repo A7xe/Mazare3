@@ -10,7 +10,8 @@ export function formatDateOnlyUtc(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function decimalToNumber(value: { toNumber(): number } | number): number {
+export function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
   return typeof value === 'number' ? value : value.toNumber();
 }
 

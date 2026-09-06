@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  CreateOwnerPropertyDraftInput,
   CreateOwnerPropertyInput,
   OwnerApplicationView,
   OwnerApplyInput,
@@ -181,6 +182,14 @@ export async function applyOwnerRuleToFuture(
 
 export async function createOwnerProperty(input: CreateOwnerPropertyInput) {
   return ownerFetch<{ data: OwnerPropertyEdit }>('/owner/properties', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** AF-1.1c — Create incomplete Add Farm draft from Basic Information only. */
+export async function createOwnerPropertyDraft(input: CreateOwnerPropertyDraftInput) {
+  return ownerFetch<{ data: OwnerPropertyEdit }>('/owner/properties/draft', {
     method: 'POST',
     body: JSON.stringify(input),
   });

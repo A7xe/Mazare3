@@ -65,6 +65,8 @@ export function parseSearchParams(
     allowsOvernight: get('allowsOvernight') === 'true' ? true : undefined,
     allowsEvents: get('allowsEvents') === 'true' ? true : undefined,
     featured: get('featured') === 'true' ? true : undefined,
+    offersOnly: get('offersOnly') === 'true' ? true : undefined,
+    newlyAdded: get('newlyAdded') === 'true' ? true : undefined,
     verifiedOnly: get('verifiedOnly') === 'true' || get('verified') === 'true' ? true : undefined,
     sort:
       sort && (PROPERTY_SORT_OPTIONS as readonly string[]).includes(sort)
