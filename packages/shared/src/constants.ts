@@ -162,6 +162,12 @@ export const PUBLIC_PROPERTY_SORT_OPTIONS = [
 export const SEARCH_DEFAULT_PAGE_SIZE = 24;
 export const SEARCH_MAX_PAGE_SIZE = 48;
 
+/**
+ * Truthful “Recently Added / New places” window — `createdAt` only (not `updatedAt`).
+ * Shared by Homepage discovery, Explore campaign tiles, and `newlyAdded=true` search.
+ */
+export const RECENTLY_ADDED_WINDOW_DAYS = 7;
+
 export const PROPERTY_TYPES = [
   'farm',
   'chalet',

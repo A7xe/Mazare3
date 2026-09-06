@@ -12,6 +12,7 @@ export class PaymentApiError extends Error {
     message: string,
     public code?: string,
     public status?: number,
+    public details?: unknown,
   ) {
     super(message);
     this.name = 'PaymentApiError';
@@ -30,6 +31,7 @@ async function paymentFetch<T>(path: string, init?: RequestInit): Promise<T> {
       (body as { error?: string }).error ?? 'Request failed',
       (body as { code?: string }).code,
       res.status,
+      (body as { details?: unknown }).details,
     );
   }
   return body as T;

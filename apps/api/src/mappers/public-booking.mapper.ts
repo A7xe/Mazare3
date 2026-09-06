@@ -139,7 +139,7 @@ export function toPublicBookingSummary(booking: BookingWithRelations): PublicBoo
     propertySlug: booking.property.slug,
     propertyTitleAr: booking.property.titleAr,
     propertyTitleEn: booking.property.titleEn ?? booking.property.titleAr,
-    approximateLocation: booking.property.approximateAddress,
+    approximateLocation: booking.property.approximateAddress?.trim() || '',
     arrival: canRevealExactLocation({
       status: booking.status,
       paymentState: booking.paymentState,

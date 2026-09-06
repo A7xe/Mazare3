@@ -1,8 +1,7 @@
 import { prisma, PropertyStatus, OwnerStatus } from '@mazare3/db';
 import type { PublicPropertySummary } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
-import { toPublicPropertySummary, applyLiveRating } from '../mappers/public-property.mapper.js';
-import { getPublishedReviewStats } from './review.service.js';
+import { loadPublicPropertyCardsByIds } from './property-search.service.js';
 
 const favoritePropertyInclude = {
   media: { orderBy: { sortOrder: 'asc' as const }, take: 1 },
@@ -45,14 +44,22 @@ export async function listBookableFavorites(userId: string): Promise<PublicPrope
     include: { property: { include: favoritePropertyInclude } },
   });
 
-  const bookable = rows.filter((r) => isBookableFavorite(r.property)).map((r) => r.property);
-  const stats = await getPublishedReviewStats(bookable.map((p) => p.id));
+  const bookableIds = rows
+    .filter((r) => isBookableFavorite(r.property))
+    .map((r) => r.property.id);
 
-  return bookable.map((p) => ({
-    ...applyLiveRating(toPublicPropertySummary(p), stats.get(p.id)),
-    isFavorited: true,
-    pricingMode: 'browse_from' as const,
-  }));
+  // Batched card hydration includes live promotion summaries (no N+1).
+  const cards = await loadPublicPropertyCardsByIds(bookableIds);
+  const byId = new Map(cards.map((c) => [c.id, c]));
+
+  return bookableIds
+    .map((id) => byId.get(id))
+    .filter((c): c is PublicPropertySummary => Boolean(c))
+    .map((c) => ({
+      ...c,
+      isFavorited: true,
+      pricingMode: c.pricingMode ?? 'browse_from',
+    }));
 }
 
 export async function addFavorite(userId: string, propertyId: string): Promise<{ favorited: true }> {

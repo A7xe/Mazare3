@@ -15,6 +15,9 @@ import { fetchHomeTestimonials, mapHomeTestimonials } from '@/lib/home-testimoni
 import { HomeOwnerCta } from '@/components/home/home-owner-cta';
 import { HomeFaq } from '@/components/home/home-faq';
 import { getHomeFaqItems } from '@/lib/home-faq';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
+import { getSessionUser } from '@/lib/get-session-user';
+import { resolveAddFarmHref, resolveAddFarmLabelKey } from '@/lib/add-farm-entry';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +83,10 @@ export default async function HomePage({ params }: Props) {
 
   const t = await getTranslations('home');
   const tSearch = await getTranslations('search');
+  const tAddFarmCta = await getTranslations('common.addFarmCta');
+  const sessionUser = await getSessionUser();
+  const addFarmHref = resolveAddFarmHref(sessionUser);
+  const addFarmLabel = tAddFarmCta(resolveAddFarmLabelKey({ user: sessionUser }));
 
   const [discoverySettled, testimonialsSettled] = await Promise.allSettled([
     fetchDiscovery(),
@@ -125,7 +132,7 @@ export default async function HomePage({ params }: Props) {
         className="pointer-events-none absolute -left-20 top-[410px] h-[250px] w-[210px] rounded-[46%] bg-[#EDF4FF]/70"
       />
 
-      <div className="relative mx-auto w-full max-w-[1360px] px-2 pt-5 sm:px-3 lg:px-4 lg:pt-6">
+      <MarketplacePageShell className="relative pt-5 lg:pt-6">
         <div
           dir="ltr"
           className="grid items-start gap-5 lg:grid-cols-[310px_minmax(0,1fr)] xl:gap-7"
@@ -144,6 +151,7 @@ export default async function HomePage({ params }: Props) {
               properties={offers}
               sectionId="offers"
               layout="stack"
+              tone="promotional"
             />
 
             <DiscoveryRail
@@ -169,7 +177,7 @@ export default async function HomePage({ params }: Props) {
             dir={contentDir}
             className="order-3 min-w-0 lg:order-none lg:col-start-2 lg:row-start-2"
           >
-            <HomeTrustStrip />
+            <HomeTrustStrip addFarmHref={addFarmHref} addFarmLabel={addFarmLabel} />
 
             <div className="mt-4">
               <DiscoveryRail
@@ -231,8 +239,8 @@ export default async function HomePage({ params }: Props) {
           <HomeOwnerCta
             title={t('ownerBannerTitle')}
             description={t('ownerBannerDesc')}
-            primaryLabel={t('ownerBannerPrimary')}
-            primaryHref="/become-owner"
+            primaryLabel={addFarmLabel}
+            primaryHref={addFarmHref}
             secondaryLabel={t('ownerBannerSecondary')}
             secondaryHref="/about"
             contentDir={contentDir}
@@ -246,7 +254,7 @@ export default async function HomePage({ params }: Props) {
             contentDir={contentDir}
           />
         </div>
-      </div>
+      </MarketplacePageShell>
     </div>
   );
 }

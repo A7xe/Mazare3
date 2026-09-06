@@ -10,6 +10,8 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { searchHref } from '@mazare3/shared';
 import { Link } from '@/i18n/navigation';
 import { cn } from '@/lib/utils';
+import type { AddFarmHref } from '@/lib/add-farm-entry';
+import { ADD_FARM_PARTNER_HREF } from '@/lib/add-farm-entry';
 
 type ActionVariant = 'pill' | 'circle';
 
@@ -22,7 +24,13 @@ type ActionItem = {
   icon: typeof Home;
 };
 
-export async function HomeTrustStrip() {
+export async function HomeTrustStrip({
+  addFarmHref = ADD_FARM_PARTNER_HREF,
+  addFarmLabel,
+}: {
+  addFarmHref?: AddFarmHref;
+  addFarmLabel?: string;
+} = {}) {
   const t = await getTranslations('home');
   const locale = await getLocale();
   const isRtl = locale === 'ar';
@@ -39,9 +47,9 @@ export async function HomeTrustStrip() {
     },
     {
       key: 'list',
-      title: t('actionListTitle'),
+      title: addFarmLabel ?? t('actionListTitle'),
       desc: t('actionListDesc'),
-      href: '/become-owner',
+      href: addFarmHref,
       variant: 'pill',
       icon: Home,
     },

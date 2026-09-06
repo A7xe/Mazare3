@@ -8,16 +8,18 @@ import {
 import type {
   CreatePropertyPromotionInput,
   PropertyPromotionRow,
+  PublicPropertySummary,
   UpdatePropertyPromotionInput,
   UserRole,
 } from '@mazare3/shared';
-import { resolveSlotPromotion, type PromotionPriceInput } from '@mazare3/shared';
+import { resolveSlotPromotion, computePromotionDiscount, type PromotionPriceInput } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
 import { resolveOwnerScope } from './owner-access.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 
-function decimalToNumber(value: { toNumber(): number } | number): number {
+function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
   return typeof value === 'number' ? value : value.toNumber();
 }
 
@@ -97,6 +99,58 @@ export async function loadLivePromotionsByProperty(
     map.set(row.propertyId, list);
   }
   return map;
+}
+
+/** Live promotion property filter — mirrors Featured placement truthfulness. */
+export function liveActivePromotionFilter(now = new Date()): Prisma.PropertyWhereInput {
+  return {
+    promotions: {
+      some: {
+        status: PromotionStatus.active,
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+      },
+    },
+  };
+}
+
+/**
+ * Best live promotion summary for public browse cards.
+ * Prices are computed from `basePrice` only when the discount applies safely.
+ */
+export function buildActivePromotionSummary(
+  basePrice: number,
+  promos: PropertyPromotionRow[],
+): NonNullable<PublicPropertySummary['activePromotionSummary']> | null {
+  if (!promos.length) return null;
+
+  let best: NonNullable<PublicPropertySummary['activePromotionSummary']> | null = null;
+
+  for (const promo of promos) {
+    const computed = computePromotionDiscount(
+      basePrice,
+      promo.discountType,
+      promo.discountValue,
+    );
+    const candidate: NonNullable<PublicPropertySummary['activePromotionSummary']> = {
+      discountType: promo.discountType,
+      discountValue: promo.discountValue,
+      endsAt: promo.endsAt,
+      titleAr: promo.titleAr,
+      titleEn: promo.titleEn,
+      originalFromPrice: computed?.originalPrice ?? null,
+      promotionalFromPrice: computed?.finalPrice ?? null,
+      savingsAmount: computed?.discountAmount ?? null,
+    };
+
+    const bestSavings = best?.savingsAmount ?? -1;
+    const nextSavings = candidate.savingsAmount ?? -1;
+    if (!best || nextSavings > bestSavings) {
+      best = candidate;
+    }
+  }
+
+  return best;
 }
 
 /** Live promotion property ids — independent of newest-catalog caps. */
@@ -193,6 +247,9 @@ export async function createOwnerPromotion(
     select: { basePrice: true },
   });
   if (!property) throw new AppError(404, 'NOT_FOUND', 'Property not found');
+  if (property.basePrice == null) {
+    throw new AppError(400, 'PROPERTY_LISTING_INCOMPLETE', 'Set a base price before creating a promotion');
+  }
   if (
     input.discountType === 'fixed_amount' &&
     input.discountValue >= decimalToNumber(property.basePrice)

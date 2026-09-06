@@ -1,7 +1,9 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Link } from '@/i18n/navigation';
+import { Link, usePathname } from '@/i18n/navigation';
+import { AddFarmLink } from '@/components/layout/add-farm-link';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 
 const HELP_LINKS = [
   { href: '/about', key: 'about', testId: 'footer-legal-about' },
@@ -15,11 +17,22 @@ const HELP_LINKS = [
 export function SiteFooter() {
   const t = useTranslations('common');
   const tLegal = useTranslations('legal');
+  const pathname = usePathname();
   const year = new Date().getFullYear();
+
+  if (
+    pathname.startsWith('/auth') ||
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/signup') ||
+    pathname.startsWith('/forgot-password') ||
+    pathname.startsWith('/reset-password')
+  ) {
+    return null;
+  }
 
   return (
     <footer className="gradient-premium mt-auto border-t border-night/20 text-primary-foreground">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+      <MarketplacePageShell className="py-12">
         <div className="flex flex-col gap-10 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-lg font-semibold">{t('brand')}</p>
@@ -28,9 +41,10 @@ export function SiteFooter() {
               <Link href="/search" className="transition-colors hover:text-primary-foreground">
                 {t('explore')}
               </Link>
-              <Link href="/become-owner" className="transition-colors hover:text-primary-foreground">
-                {t('listProperty')}
-              </Link>
+              <AddFarmLink
+                className="transition-colors hover:text-primary-foreground"
+                data-testid="footer-add-farm"
+              />
             </div>
           </div>
           <nav aria-label={tLegal('helpNav')} data-testid="footer-legal-nav">
@@ -51,7 +65,7 @@ export function SiteFooter() {
           </nav>
         </div>
         <p className="mt-10 text-xs text-primary-foreground/50">© {year}</p>
-      </div>
+      </MarketplacePageShell>
     </footer>
   );
 }

@@ -1,7 +1,7 @@
 import { isSmtpConfigured, loadEmailConfig } from '../../config/email-config.js';
 import type { EmailMessage, EmailProvider, EmailSendResult } from './email-provider.interface.js';
 
-/** SMTP placeholder — validates env only; does not open network connections in Phase 9B. */
+/** SMTP foundation stub — env validation only. AUTH-3 live send uses Resend. */
 export class SmtpEmailProvider implements EmailProvider {
   readonly name = 'smtp';
 

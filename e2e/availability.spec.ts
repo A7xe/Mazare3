@@ -183,6 +183,10 @@ test.describe('Phase 10B.1 customer overlap and timed display', () => {
     expect(gen.status).toBe(200);
     await api(ownerCookie, 'POST', `/owner/properties/${prop.id}/submit-review`);
     const adminCookie = await loginViaApi(ADMIN_EMAIL, ADMIN_PASSWORD);
+    const approved = await api(adminCookie, 'PATCH', `/admin/properties/${prop.id}/status`, {
+      status: 'approved',
+    });
+    expect(approved.status).toBe(200);
     const pub = await api(adminCookie, 'PATCH', `/admin/properties/${prop.id}/status`, {
       status: 'published',
     });

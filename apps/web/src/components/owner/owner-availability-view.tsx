@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useRouter } from '@/i18n/navigation';
 import { Loader2, Lock, LockOpen, Save } from 'lucide-react';
 import type { OwnerAvailabilitySlotRow, OwnerPropertyCard } from '@mazare3/shared';
-import { AVAILABILITY_PERIODS } from '@mazare3/shared';
+import { AVAILABILITY_PERIODS, isOwnerReviewContentMutableStatus } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -104,6 +104,11 @@ export function OwnerAvailabilityView() {
   }, [slots]);
 
   async function toggleBlock(slot: OwnerAvailabilitySlotRow) {
+    const selected = properties.find((p) => p.id === propertyId);
+    if (!isOwnerReviewContentMutableStatus(selected?.status)) {
+      setError(t('pendingReviewAvailabilityFrozen'));
+      return;
+    }
     if (slot.hasActiveBooking || slot.status === 'booked') {
       setError(t('slotBookedError'));
       return;
@@ -126,6 +131,11 @@ export function OwnerAvailabilityView() {
   }
 
   async function savePrice(slot: OwnerAvailabilitySlotRow) {
+    const selected = properties.find((p) => p.id === propertyId);
+    if (!isOwnerReviewContentMutableStatus(selected?.status)) {
+      setError(t('pendingReviewAvailabilityFrozen'));
+      return;
+    }
     if (slot.hasActiveBooking || slot.status === 'booked') {
       setError(t('slotBookedError'));
       return;
@@ -172,6 +182,7 @@ export function OwnerAvailabilityView() {
   const propertyTitle =
     selectedProperty &&
     (locale === 'ar' ? selectedProperty.titleAr : selectedProperty.titleEn);
+  const availabilityMutable = isOwnerReviewContentMutableStatus(selectedProperty?.status);
 
   return (
     <div data-testid="owner-availability" className="space-y-6">
@@ -213,7 +224,11 @@ export function OwnerAvailabilityView() {
       )}
 
       {propertyId && (
-        <OwnerAvailabilitySchedule propertyId={propertyId} onGenerated={() => void loadSlots()} />
+        <OwnerAvailabilitySchedule
+          propertyId={propertyId}
+          onGenerated={() => void loadSlots()}
+          readOnly={!availabilityMutable}
+        />
       )}
 
       {error && (
@@ -246,7 +261,10 @@ export function OwnerAvailabilityView() {
                   {AVAILABILITY_PERIODS.map((period) => {
                     const slot = daySlots.find((s) => s.period === period);
                     if (!slot) return null;
-                    const locked = slot.hasActiveBooking || slot.status === 'booked';
+                    const locked =
+                      slot.hasActiveBooking ||
+                      slot.status === 'booked' ||
+                      !availabilityMutable;
                     return (
                       <div
                         key={slot.id}

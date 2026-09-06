@@ -143,7 +143,7 @@ export function AdminPartnerDetailView({ ownerId }: { ownerId: string }) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle className="text-2xl">{partner.displayName}</CardTitle>
-              <p className="mt-1 text-sm text-muted">{partner.email}</p>
+              <p className="mt-1 text-sm text-muted">{partner.email ?? '—'}</p>
               {partner.businessName ? (
                 <p className="text-sm text-muted">{partner.businessName}</p>
               ) : null}
@@ -164,7 +164,7 @@ export function AdminPartnerDetailView({ ownerId }: { ownerId: string }) {
           </p>
           <p>
             <span className="text-muted">{t('colEmail')}: </span>
-            {partner.contactEmail ?? partner.email}
+            {partner.contactEmail ?? partner.email ?? '—'}
           </p>
           <p dir="ltr">
             <span className="text-muted">{t('colOwner')}: </span>

@@ -71,7 +71,7 @@ export function MyBookingsView() {
       const supportRes = await fetchMySupportTickets().catch(() => ({ data: [] as SupportTicketSummary[] }));
       setSupportTickets(supportRes.data);
     } catch {
-      router.push('/login?returnUrl=' + encodeURIComponent('/account/bookings'));
+      router.push('/auth?returnUrl=' + encodeURIComponent('/account/bookings'));
     } finally {
       setLoading(false);
     }
@@ -158,7 +158,7 @@ export function MyBookingsView() {
     <div className="space-y-8 pb-4" data-testid="my-bookings">
       <AccountSubnav />
       <div>
-        <h1 className="text-3xl font-bold text-navy">{t('title')}</h1>
+        <h1 className="text-3xl font-heading text-navy">{t('title')}</h1>
         <p className="mt-2 text-muted">{t('subtitle')}</p>
       </div>
 

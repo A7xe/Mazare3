@@ -1,9 +1,9 @@
 import { prisma, PropertyStatus, OwnerStatus } from '@mazare3/db';
 import type { PropertySearchQuery } from '@mazare3/shared';
-import { toPublicPropertyDetail, toPublicPropertySummary, applyLiveRating } from '../mappers/public-property.mapper.js';
-import { searchPublishedProperties } from './property-search.service.js';
+import { toPublicPropertyDetail, applyLiveRating } from '../mappers/public-property.mapper.js';
+import { searchPublishedProperties, loadPublicPropertyCardsByIds } from './property-search.service.js';
 import { getPublishedReviewStats, listPublishedReviewsForProperty } from './review.service.js';
-import { loadLivePromotionsByProperty } from './promotion.service.js';
+import { loadLivePromotionsByProperty, buildActivePromotionSummary } from './promotion.service.js';
 import { applyPlacementFlags, loadLivePlacementsByPropertyIds } from './placement.service.js';
 
 const publishedInclude = {
@@ -35,10 +35,12 @@ export async function getPublishedPropertyBySlug(slug: string) {
   )[0]!;
   const bookable = row.owner.status === OwnerStatus.approved;
   const offers = promoMap.get(row.id) ?? [];
+  const summary = buildActivePromotionSummary(detail.basePrice, offers);
   return {
     ...detail,
     reviews,
     hasActivePromotion: offers.length > 0,
+    activePromotionSummary: summary,
     activeOffers: offers.map((o) => ({
       id: o.id,
       titleAr: o.titleAr,
@@ -63,22 +65,11 @@ export async function listSimilarProperties(slug: string, city: string, limit = 
       slug: { not: slug },
       city,
     },
-    include: publishedInclude,
+    select: { id: true },
     take: limit,
     orderBy: { createdAt: 'desc' },
   });
 
-  const stats = await getPublishedReviewStats(rows.map((r) => r.id));
-  const ids = rows.map((r) => r.id);
-  const [promoMap, placeMap] = await Promise.all([
-    loadLivePromotionsByProperty(ids),
-    loadLivePlacementsByPropertyIds(ids),
-  ]);
-  return applyPlacementFlags(
-    rows.map((r) => ({
-      ...applyLiveRating(toPublicPropertySummary(r), stats.get(r.id)),
-      hasActivePromotion: (promoMap.get(r.id) ?? []).length > 0,
-    })),
-    placeMap,
-  );
+  // Batched public cards include promotion summaries.
+  return loadPublicPropertyCardsByIds(rows.map((r) => r.id));
 }

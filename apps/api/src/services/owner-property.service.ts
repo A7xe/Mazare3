@@ -1,6 +1,6 @@
 import { prisma, PropertyStatus, type PropertyType } from '@mazare3/db';
 import {
-  OWNER_LOCATION_PATCH_KEYS,
+  type CreateOwnerPropertyDraftInput,
   type CreateOwnerPropertyInput,
   type OwnerPropertyEdit,
   type UpdateOwnerPropertyInput,
@@ -13,13 +13,14 @@ import { assertMediaForSubmitReview } from '../lib/property-media-guards.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveOwnerScope } from './owner-access.js';
 import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
+import { assertPropertyListingComplete } from '../lib/property-listing-guards.js';
+import {
+  assertOwnerCanEditListingStatus,
+  assertOwnerNotPendingReview,
+} from '../lib/owner-property-mutation-guards.js';
 
-const OWNER_EDITABLE_STATUSES: PropertyStatus[] = [
-  PropertyStatus.draft,
-  PropertyStatus.changes_requested,
-];
-
-function decimalToNumber(value: { toNumber(): number } | number): number {
+function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
   return typeof value === 'number' ? value : value.toNumber();
 }
 
@@ -71,7 +72,7 @@ function mapPropertyEdit(
     longitudeExact: p.longitudeExact,
     arrivalInstructionsAr: p.arrivalInstructionsAr,
     arrivalInstructionsEn: p.arrivalInstructionsEn,
-    basePrice: decimalToNumber(p.basePrice),
+    basePrice: p.basePrice == null ? null : decimalToNumber(p.basePrice),
     currency: p.currency,
     capacity: p.capacity,
     status: p.status,
@@ -84,6 +85,9 @@ function mapPropertyEdit(
     imageUrls: media.map((m) => m.url),
     media,
     rules: p.rules.map((r) => ({ titleAr: r.titleAr, titleEn: r.titleEn })),
+    reviewChangeReason: p.reviewChangeReason ?? null,
+    reviewRejectionReason: p.reviewRejectionReason ?? null,
+    reviewRejectedAt: p.reviewRejectedAt?.toISOString() ?? null,
   };
 }
 
@@ -100,16 +104,6 @@ async function loadPropertyForEdit(propertyId: string, ownerProfileId: string) {
     throw new AppError(404, 'NOT_FOUND', 'Property not found');
   }
   return p;
-}
-
-function assertOwnerCanEditStatus(status: PropertyStatus) {
-  if (!OWNER_EDITABLE_STATUSES.includes(status)) {
-    throw new AppError(
-      403,
-      'PROPERTY_NOT_EDITABLE',
-      'Property cannot be edited in its current status',
-    );
-  }
 }
 
 export async function createOwnerProperty(
@@ -199,6 +193,66 @@ export async function createOwnerProperty(
   return mapPropertyEdit(property);
 }
 
+/**
+ * AF-1.1c — Create an incomplete onboarding draft from Basic Information only.
+ * Location + basePrice remain null. Status is always draft.
+ */
+export async function createOwnerPropertyDraft(
+  userId: string,
+  role: import('@mazare3/shared').UserRole,
+  input: CreateOwnerPropertyDraftInput,
+  req?: AuthenticatedRequest,
+): Promise<OwnerPropertyEdit> {
+  const scope = await resolveOwnerScope(userId, role);
+  if (scope.isAdmin) {
+    throw new AppError(403, 'FORBIDDEN', 'Use admin tools to create properties');
+  }
+  if (!scope.ownerProfileId) {
+    throw new AppError(403, 'FORBIDDEN', 'Approved owner profile required');
+  }
+
+  const slug = await uniquePropertySlug(input.titleEn ?? input.titleAr);
+
+  const property = await prisma.property.create({
+    data: {
+      ownerId: scope.ownerProfileId,
+      slug,
+      type: input.type as PropertyType,
+      titleAr: input.titleAr.trim(),
+      titleEn: input.titleEn?.trim() || null,
+      descriptionAr: input.descriptionAr.trim(),
+      descriptionEn: input.descriptionEn?.trim() || null,
+      capacity: input.capacity,
+      allowsOvernight: input.allowsOvernight ?? true,
+      allowsFamilies: input.allowsFamilies ?? true,
+      allowsYouth: input.allowsYouth ?? false,
+      // Truthful incomplete draft — do not invent location/price.
+      city: null,
+      area: null,
+      approximateAddress: null,
+      exactAddress: null,
+      basePrice: null,
+      status: PropertyStatus.draft,
+    },
+    include: {
+      media: { orderBy: { sortOrder: 'asc' } },
+      amenities: { include: { amenity: true } },
+      rules: { orderBy: { sortOrder: 'asc' } },
+    },
+  });
+
+  await createAuditLog({
+    actorUserId: userId,
+    action: 'owner.property_draft_created',
+    entityType: 'property',
+    entityId: property.id,
+    metadata: { slug: property.slug, status: property.status, source: 'add_farm' },
+    req,
+  });
+
+  return mapPropertyEdit(property);
+}
+
 export async function getOwnerPropertyForEdit(
   userId: string,
   role: import('@mazare3/shared').UserRole,
@@ -228,12 +282,9 @@ export async function updateOwnerProperty(
   );
   const bookingModeOnly =
     definedKeys.length === 1 && definedKeys[0] === 'instantBookingEnabled';
-  const locationOnly =
-    definedKeys.length > 0 &&
-    definedKeys.every((key) =>
-      (OWNER_LOCATION_PATCH_KEYS as readonly string[]).includes(key),
-    );
   if (bookingModeOnly) {
+    // Operational toggle for live listings; still frozen while Admin is reviewing.
+    assertOwnerNotPendingReview(existing.status);
     await prisma.property.update({
       where: { id: propertyId },
       data: { instantBookingEnabled: input.instantBookingEnabled },
@@ -248,9 +299,9 @@ export async function updateOwnerProperty(
     });
     return mapPropertyEdit(await loadPropertyForEdit(propertyId, scope.ownerProfileId!));
   }
-  if (!locationOnly) {
-    assertOwnerCanEditStatus(existing.status);
-  }
+
+  // Location-only must not bypass the canonical listing edit gate.
+  assertOwnerCanEditListingStatus(existing.status);
 
   const amenityIds =
     input.amenityKeys !== undefined ? await resolveAmenityIds(input.amenityKeys) : undefined;
@@ -373,10 +424,15 @@ export async function submitOwnerPropertyForReview(
   }
 
   assertMediaForSubmitReview(existing.media);
+  assertPropertyListingComplete(existing);
 
   await prisma.property.update({
     where: { id: propertyId },
-    data: { status: PropertyStatus.pending_review },
+    data: {
+      status: PropertyStatus.pending_review,
+      reviewChangeReason: null,
+      reviewChangeRequestedAt: null,
+    },
   });
 
   await createAuditLog({

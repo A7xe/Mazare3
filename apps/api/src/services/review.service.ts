@@ -356,7 +356,7 @@ export async function listHomePublicTestimonials(
       customerDisplayName: customerDisplayName(row.customer.name),
       propertyTitleAr: row.property.titleAr,
       propertyTitleEn: row.property.titleEn ?? row.property.titleAr,
-      propertyCity: row.property.city,
+      propertyCity: row.property.city ?? '',
     });
     if (out.length >= limit) break;
   }

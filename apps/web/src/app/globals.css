@@ -19,8 +19,8 @@
   --color-success: #0e6ba8;
   --color-warning: #d97706;
   --color-danger: #dc2626;
-  --font-sans: var(--font-inter), system-ui, sans-serif;
-  --font-arabic: var(--font-tajawal), system-ui, sans-serif;
+  --font-sans: var(--font-cairo), ui-sans-serif, system-ui, sans-serif;
+  --font-arabic: var(--font-cairo), ui-sans-serif, system-ui, sans-serif;
   --radius-lg: 1.25rem;
   --radius-xl: 1.5rem;
   --radius-2xl: 1.75rem;
@@ -40,17 +40,34 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: var(--font-sans);
+    /* Resolve through next/font local CSS variable (set on <body>), not Tailwind default sans. */
+    font-family: var(--font-cairo), ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /* Keep form controls on the global typeface (browsers often reset them). */
+  button,
+  input,
+  textarea,
+  select {
+    font-family: inherit;
   }
 
   [dir='rtl'] body {
-    font-family: var(--font-arabic);
+    font-family: var(--font-cairo), ui-sans-serif, system-ui, sans-serif;
   }
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  /**
+   * Major display headings — Cairo variable weight ≈ Google Fonts preview (854).
+   * Use only on true page/hero/display titles; not body or card chrome.
+   */
+  .font-heading {
+    font-weight: 850;
   }
 
   /* Light: #fbfbfb → subtle primary */
@@ -127,7 +144,7 @@
     background: #9db4d4;
   }
 
-  /* Homepage typography — Arabic DIN-style hierarchy (Tajawal) */
+  /* Homepage typography hierarchy — Cairo (global brand typeface) */
   .home-typography {
     color: #0d2046;
   }

@@ -9,19 +9,30 @@ import {
   type CSSProperties,
   type TransitionEvent,
 } from 'react';
+import {
+  CAROUSEL_GAP_PX,
+  computeCarouselCardWidthPx,
+  computeCarouselUnusedSpacePx,
+} from './carousel-layout';
 
-const GAP_PX = 16;
 const TRANSITION = 'transform 360ms cubic-bezier(0.22, 1, 0.36, 1)';
+
+export type CircularCarouselAlign = 'start' | 'end';
 
 /**
  * Smooth transform-based circular carousel.
  * Card widths are always measured in viewport pixels (never % of the track),
  * because percentage widths inside an auto-sized flex track collapse to 0.
+ *
+ * Low-item rails size cards for the *intended* breakpoint capacity (not itemCount),
+ * so a single card does not stretch to 100% of the rail on desktop/tablet.
  */
 export function useCircularCarousel(
   itemCount: number,
   resolveVisibleCount: (width: number) => number,
+  options?: { align?: CircularCarouselAlign },
 ) {
+  const align = options?.align ?? 'start';
   const viewportRef = useRef<HTMLDivElement>(null);
   const animatingRef = useRef(false);
   const [responsiveVisible, setResponsiveVisible] = useState(1);
@@ -29,11 +40,19 @@ export function useCircularCarousel(
   const [position, setPosition] = useState(0);
   const [transitionEnabled, setTransitionEnabled] = useState(false);
   const [cardWidthPx, setCardWidthPx] = useState(0);
+  const [viewportWidthPx, setViewportWidthPx] = useState(0);
 
   const actualVisible =
     itemCount <= 0 ? 1 : Math.min(itemCount, Math.max(1, responsiveVisible));
   const canNavigate = itemCount > 1;
-  const stepPx = cardWidthPx > 0 ? cardWidthPx + GAP_PX : 0;
+  const stepPx = cardWidthPx > 0 ? cardWidthPx + CAROUSEL_GAP_PX : 0;
+  const unusedSpacePx = computeCarouselUnusedSpacePx({
+    viewportWidthPx,
+    itemCount,
+    cardWidthPx,
+    gapPx: CAROUSEL_GAP_PX,
+  });
+  const alignOffsetPx = align === 'end' ? unusedSpacePx : 0;
 
   const measure = useCallback(() => {
     const node = viewportRef.current;
@@ -44,9 +63,14 @@ export function useCircularCarousel(
 
     const nextResponsive = Math.max(1, resolveVisibleCount(width));
     setResponsiveVisible((prev) => (prev === nextResponsive ? prev : nextResponsive));
+    setViewportWidthPx((prev) => (prev === width ? prev : width));
 
-    const visible = Math.min(itemCount, nextResponsive);
-    const nextCardWidth = (width - GAP_PX * Math.max(0, visible - 1)) / visible;
+    const nextCardWidth = computeCarouselCardWidthPx({
+      viewportWidthPx: width,
+      itemCount,
+      intendedVisible: nextResponsive,
+      gapPx: CAROUSEL_GAP_PX,
+    });
     setCardWidthPx(nextCardWidth);
   }, [itemCount, resolveVisibleCount]);
 
@@ -111,12 +135,16 @@ export function useCircularCarousel(
 
   // Geometry layer is always LTR so translate3d(-position * stepPx) aligns with
   // flex order. Card content keeps page locale via dir on each card/wrapper.
+  // align=end (Arabic) shifts sparse rails toward the inline-end (right in LTR geometry).
   const trackStyle: CSSProperties = {
     display: 'flex',
     direction: 'ltr',
-    gap: GAP_PX,
+    gap: CAROUSEL_GAP_PX,
     width: 'max-content',
-    transform: stepPx > 0 ? `translate3d(-${position * stepPx}px, 0, 0)` : 'translate3d(0, 0, 0)',
+    transform:
+      stepPx > 0
+        ? `translate3d(${-position * stepPx + alignOffsetPx}px, 0, 0)`
+        : 'translate3d(0, 0, 0)',
     transition: transitionEnabled && stepPx > 0 ? TRANSITION : 'none',
     willChange: 'transform',
   };
@@ -140,10 +168,13 @@ export function useCircularCarousel(
     cardStyle,
     handleTransitionEnd,
     actualVisible,
+    intendedVisible: responsiveVisible,
+    unusedSpacePx,
     canNavigate,
     goNext,
     goPrev,
-    gapPx: GAP_PX,
+    gapPx: CAROUSEL_GAP_PX,
     ready: cardWidthPx > 0,
+    cardWidthPx,
   };
 }

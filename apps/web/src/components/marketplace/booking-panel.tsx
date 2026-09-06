@@ -1,17 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { usePathname, useRouter } from '@/i18n/navigation';
-import { Calendar, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
-import type { AvailabilityPeriod, CouponValidationResult, PublicAvailabilitySlot, PublicPropertyDetail } from '@mazare3/shared';
+import {
+  Calendar,
+  Clock,
+  ShieldCheck,
+  Loader2,
+  AlertCircle,
+  Users,
+} from 'lucide-react';
+import type {
+  AvailabilityPeriod,
+  CouponValidationResult,
+  PublicAvailabilitySlot,
+  PublicPropertyDetail,
+} from '@mazare3/shared';
 import { AVAILABILITY_PERIODS } from '@mazare3/shared';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { PriceDisplay } from './price-display';
-import { TrustBadges } from './trust-badges';
+import { Label } from '@/components/ui/label';
+import { FavoriteButton } from '@/components/favorites/favorite-button';
 import { fetchPropertyAvailability } from '@/lib/api-properties';
 import {
   BookingApiError,
@@ -24,7 +34,7 @@ import {
 } from '@/lib/api-bookings';
 import { getMe } from '@/lib/api-auth';
 import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
-
+import { formatPrice } from '@/lib/property-helpers';
 import { todayIsoInPlatformZone } from '@/lib/format-platform-time';
 
 interface BookingPanelProps {
@@ -47,6 +57,55 @@ function todayIso(): string {
   return todayIsoInPlatformZone();
 }
 
+function CloudMark() {
+  return (
+    <svg
+      viewBox="0 0 76 48"
+      className="h-9 w-[56px] text-[#7EB6FF]/45"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M13 35c-5 0-9-4-9-9 0-4 3-8 7-9 2-7 8-12 16-12 8 0 15 6 16 14 6 1 11 6 11 12 0 6-5 10-11 10H13Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function StackedField({
+  icon,
+  label,
+  htmlFor,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  htmlFor: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-[14px] border border-[#E7EEF8] bg-white px-2.5 py-2 shadow-[0_4px_12px_rgba(47,110,246,.04)]">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F3F8FF] text-[#2F6EF6]">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1 text-start">
+        <Label
+          htmlFor={htmlFor}
+          className="mb-0 block text-[10px] font-medium leading-none text-[#8794A7]"
+        >
+          {label}
+        </Label>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const stackedControlClass =
+  'w-full appearance-none border-0 bg-transparent p-0 text-start text-[12px] font-semibold leading-tight text-[#0D2046] outline-none ring-0 placeholder:font-medium placeholder:text-[#8794A7] focus:outline-none focus:ring-0';
+
 export function BookingPanel({
   property,
   locale,
@@ -58,7 +117,7 @@ export function BookingPanel({
 }: BookingPanelProps) {
   const t = useTranslations('property');
   const tCommon = useTranslations('common');
-  const tHome = useTranslations('home');
+  const tSearch = useTranslations('search');
   const router = useRouter();
   const pathname = usePathname();
 
@@ -76,6 +135,7 @@ export function BookingPanel({
   const [couponBusy, setCouponBusy] = useState(false);
 
   const minDate = todayIso();
+  const currency = property.currency;
 
   useEffect(() => {
     if (initialGuests) setGuests(Math.min(initialGuests, property.capacity));
@@ -98,30 +158,30 @@ export function BookingPanel({
     });
   }, [property.slug, date, period, guests]);
 
-  const loadSlots = useCallback(async (selectedDate: string) => {
-    if (!selectedDate) return;
-    setLoadingSlots(true);
-    setError(null);
-    try {
-      const to = addDays(selectedDate, 14);
-      const data = await fetchPropertyAvailability(property.slug, selectedDate, to);
-      setSlots(data);
-    } catch {
-      setError(t('availabilityError'));
-      setSlots([]);
-    } finally {
-      setLoadingSlots(false);
-    }
-  }, [property.slug, t]);
+  const loadSlots = useCallback(
+    async (selectedDate: string) => {
+      if (!selectedDate) return;
+      setLoadingSlots(true);
+      setError(null);
+      try {
+        const to = addDays(selectedDate, 14);
+        const data = await fetchPropertyAvailability(property.slug, selectedDate, to);
+        setSlots(data);
+      } catch {
+        setError(t('availabilityError'));
+        setSlots([]);
+      } finally {
+        setLoadingSlots(false);
+      }
+    },
+    [property.slug, t],
+  );
 
   useEffect(() => {
     if (date) void loadSlots(date);
   }, [date, loadSlots]);
 
-  const slotsForDate = useMemo(
-    () => slots.filter((s) => s.date === date),
-    [slots, date],
-  );
+  const slotsForDate = useMemo(() => slots.filter((s) => s.date === date), [slots, date]);
 
   useEffect(() => {
     if (!date || !preferredPeriod || loadingSlots) return;
@@ -209,7 +269,7 @@ export function BookingPanel({
       }
     } catch {
       const returnUrl = encodeURIComponent(pathname);
-      router.push(`/login?returnUrl=${returnUrl}`);
+      router.push(`/auth?returnUrl=${returnUrl}`);
       return;
     }
 
@@ -248,48 +308,41 @@ export function BookingPanel({
     }
   }
 
-  const title = locale === 'ar' ? property.titleAr : property.titleEn;
   const displayPrice = coupon?.finalPrice ?? selectedSlot?.price ?? property.basePrice;
-  const displayOriginal = coupon?.originalPrice ?? selectedSlot?.originalPrice;
   const displayDeposit = coupon?.depositAmount ?? selectedSlot?.depositAmount;
   const displayRemaining = coupon?.remainingAmount ?? selectedSlot?.remainingAmount;
   const displayDiscount = coupon?.discountAmount ?? selectedSlot?.discountAmount;
+  const slotCurrency = selectedSlot?.currency ?? currency;
 
   return (
-    <Card
+    <div
       data-testid="booking-panel"
-      className="glass-panel overflow-hidden rounded-3xl border-primary/12 lg:sticky lg:top-24"
+      className="relative overflow-hidden rounded-[22px] border border-[#E0E8F3] bg-[linear-gradient(165deg,rgba(236,245,255,.92)_0%,rgba(255,255,255,.78)_48%,rgba(232,243,255,.88)_100%)] px-3.5 pb-3.5 pt-3.5 shadow-[0_8px_14px_-8px_rgba(47,90,150,.18)] backdrop-blur-[18px] sm:px-4 sm:pb-4 sm:pt-4"
     >
-      <div className="gradient-primary h-1" />
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <CardTitle>{t('bookingPanelTitle')}</CardTitle>
-          <Badge variant="highlight" className="shrink-0 gap-1">
-            <ShieldCheck className="h-3 w-3" />
-            {tHome('trustBooking')}
-          </Badge>
-        </div>
-        {property.instantBookingEnabled === false && (
-          <p className="text-sm text-muted">{t('ownerApprovalHint')}</p>
-        )}
-        <PriceDisplay
-          amount={displayPrice}
-          currency={selectedSlot?.currency ?? property.currency}
-          locale={locale}
-          fromLabel={selectedSlot ? undefined : tCommon('from')}
-          perDayLabel={selectedSlot ? undefined : tCommon('perDay')}
-          exact={Boolean(selectedSlot)}
-          large
-          originalAmount={displayOriginal}
-        />
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div>
-          <label className="mb-2 flex items-center gap-2 text-sm font-medium text-navy">
-            <Calendar className="h-4 w-4 text-primary" />
-            {t('selectDate')}
-          </label>
-          <Input
+      <div className="pointer-events-none absolute left-2 top-3 opacity-80">
+        <CloudMark />
+      </div>
+
+      <div className="relative text-start">
+        <h2 className="text-[18px] font-bold leading-snug text-[#0D2046]">
+          {t('bookingPanelTitle')}
+        </h2>
+        <p className="mt-1 max-w-[260px] text-[11px] font-medium leading-relaxed text-[#53637A]">
+          {t('bookingPanelSubtitle')}
+        </p>
+        {property.instantBookingEnabled === false ? (
+          <p className="mt-2 text-[11px] text-[#5B6B7C]">{t('ownerApprovalHint')}</p>
+        ) : null}
+      </div>
+
+      <div className="relative mt-3 flex flex-col gap-1.5">
+        <StackedField
+          icon={<Calendar className="h-4 w-4" aria-hidden />}
+          label={t('selectDate')}
+          htmlFor="booking-date"
+        >
+          <input
+            id="booking-date"
             data-testid="booking-date"
             type="date"
             min={minDate}
@@ -298,28 +351,27 @@ export function BookingPanel({
               setDate(e.target.value);
               setPeriod('');
             }}
-            onBlur={(e) => {
-              const v = e.target.value;
-              if (v && v !== date) {
-                setDate(v);
-                setPeriod('');
-              }
-            }}
+            className={stackedControlClass}
           />
-        </div>
+        </StackedField>
 
-        {date && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-navy">{t('selectPeriod')}</p>
+        {date ? (
+          <div className="rounded-[14px] border border-[#E7EEF8] bg-white px-2.5 py-2 shadow-[0_4px_12px_rgba(47,110,246,.04)]">
+            <div className="mb-1.5 flex items-center gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F3F8FF] text-[#2F6EF6]">
+                <Clock className="h-4 w-4" aria-hidden />
+              </div>
+              <p className="text-[10px] font-medium text-[#8794A7]">{t('selectPeriod')}</p>
+            </div>
             {loadingSlots ? (
-              <p className="flex items-center gap-2 text-sm text-muted">
-                <Loader2 className="h-4 w-4 animate-spin" />
+              <p className="flex items-center gap-2 px-1 text-[12px] text-[#5B6B7C]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {t('loadingAvailability')}
               </p>
             ) : availablePeriods.length === 0 ? (
-              <p className="text-sm text-muted">{t('noSlotsForDate')}</p>
+              <p className="px-1 text-[12px] text-[#5B6B7C]">{t('noSlotsForDate')}</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-1.5">
                 {availablePeriods.map((p) => {
                   const slot = slotsForDate.find((s) => s.period === p && s.bookable);
                   return (
@@ -329,36 +381,43 @@ export function BookingPanel({
                       data-testid={`booking-period-${p}`}
                       aria-pressed={period === p}
                       onClick={() => setPeriod(p)}
-                      className={`rounded-xl border px-3 py-2 text-start text-sm transition-colors ${
+                      className={`rounded-[10px] border px-2 py-1.5 text-start text-[11px] transition-colors ${
                         period === p
-                          ? 'border-primary bg-primary-soft text-navy'
-                          : 'border-border bg-surface hover:border-primary/40'
+                          ? 'border-[#2F6EF6] bg-[#EEF4FF] text-[#0D2046]'
+                          : 'border-[#E7EEF8] bg-[#F8FBFF] hover:border-[#2F6EF6]/40'
                       }`}
                     >
-                      <span className="font-medium">{t(`period.${p}`)}</span>
-                      {slot && (
-                        <span className="mt-0.5 block text-xs text-muted">
-                          {slot.startAtLocal && slot.endAtLocal
-                            ? `${slot.startAtLocal} – ${slot.endAtLocal}`
-                            : null}
-                          {slot.startAtLocal ? ' · ' : ''}
-                          {slot.price} {slot.currency}
+                      <span className="font-semibold">{t(`period.${p}`)}</span>
+                      {slot?.startAtLocal && slot?.endAtLocal ? (
+                        <span className="mt-0.5 block text-[10px] font-medium text-[#8794A7]">
+                          {slot.startAtLocal} – {slot.endAtLocal}
                         </span>
-                      )}
+                      ) : null}
                     </button>
                   );
                 })}
               </div>
             )}
           </div>
+        ) : (
+          <StackedField
+            icon={<Clock className="h-4 w-4" aria-hidden />}
+            label={t('selectPeriod')}
+            htmlFor="booking-period-placeholder"
+          >
+            <p id="booking-period-placeholder" className="text-[12px] font-semibold text-[#8794A7]">
+              {tSearch('filterAnyPeriod')}
+            </p>
+          </StackedField>
         )}
 
-        <div className="space-y-2">
-          <label htmlFor="guests" className="text-sm font-medium text-navy">
-            {t('guestsCount')}
-          </label>
-          <Input
-            id="guests"
+        <StackedField
+          icon={<Users className="h-4 w-4" aria-hidden />}
+          label={t('guestsCount')}
+          htmlFor="booking-guests"
+        >
+          <input
+            id="booking-guests"
             data-testid="booking-guests"
             type="number"
             min={1}
@@ -368,112 +427,131 @@ export function BookingPanel({
               const n = Number(e.target.value);
               if (!Number.isNaN(n) && n >= 1) setGuests(Math.min(n, property.capacity));
             }}
+            className={stackedControlClass}
           />
+        </StackedField>
+
+        {/* Price summary */}
+        <div className="mt-1 space-y-1.5 rounded-[14px] border border-[#E7EEF8] bg-white/90 px-3 py-2.5 text-[12px] text-[#5B6B7C] shadow-[0_4px_12px_rgba(47,110,246,.04)]">
+          {selectedSlot ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <span>{t(`period.${period}`)}</span>
+                <span className="tabular-nums font-medium text-[#0D2046]">
+                  {formatPrice(selectedSlot.price, slotCurrency, locale)}
+                </span>
+              </div>
+              {displayDiscount ? (
+                <div
+                  className="flex items-center justify-between gap-3"
+                  data-testid="booking-summary-discount"
+                >
+                  <span>{t('summaryDiscount')}</span>
+                  <span className="tabular-nums">
+                    −{formatPrice(displayDiscount, slotCurrency, locale)}
+                  </span>
+                </div>
+              ) : null}
+              <div
+                className="flex items-center justify-between gap-3"
+                data-testid="booking-summary-deposit"
+              >
+                <span>{t('summaryDeposit')}</span>
+                <span className="tabular-nums">
+                  {formatPrice(displayDeposit ?? 0, slotCurrency, locale)}
+                </span>
+              </div>
+              <div
+                className="flex items-center justify-between gap-3"
+                data-testid="booking-summary-remaining"
+              >
+                <span>{t('summaryRemaining')}</span>
+                <span className="tabular-nums">
+                  {formatPrice(displayRemaining ?? 0, slotCurrency, locale)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                {tCommon('from')} / {tCommon('perDay')}
+              </span>
+              <span className="tabular-nums font-medium text-[#0D2046]">
+                {formatPrice(property.basePrice, currency, locale)}
+              </span>
+            </div>
+          )}
+          <div
+            className="flex items-center justify-between gap-3 border-t border-[#E7EEF8] pt-1.5 text-[13px] font-bold text-[#0D2046]"
+            data-testid="booking-summary-price"
+          >
+            <span>{t('total')}</span>
+            <span className="tabular-nums text-[15px]">
+              {formatPrice(displayPrice, slotCurrency, locale)}
+            </span>
+          </div>
         </div>
 
-        {date && period && selectedSlot && (
-          <div className="rounded-2xl border border-border bg-primary-soft/30 p-4 text-sm text-navy">
-            <p className="font-semibold">{t('bookingSummary')}</p>
-            <ul className="mt-2 space-y-1 text-muted">
-              <li>
-                <span className="text-navy">{t('summaryProperty')}:</span> {title}
-              </li>
-              <li>
-                <span className="text-navy">{t('summaryDate')}:</span> {date}
-              </li>
-              <li>
-                <span className="text-navy">{t('summaryPeriod')}:</span> {t(`period.${period}`)}
-              </li>
-              {selectedSlot.startAtLocal && selectedSlot.endAtLocal && (
-                <li data-testid="booking-summary-times">
-                  <span className="text-navy">{t('summaryTimes')}:</span>{' '}
-                  {selectedSlot.startAtLocal} – {selectedSlot.endAtLocal} ({selectedSlot.timeZone})
-                </li>
+        {date && period && selectedSlot?.bookable ? (
+          <div className="space-y-2 rounded-[14px] border border-[#E7EEF8] bg-white/90 px-3 py-2.5" data-testid="coupon-box">
+            <p className="text-[11px] font-medium text-[#0D2046]">{t('couponPrompt')}</p>
+            <div className="flex gap-2">
+              <Input
+                data-testid="coupon-input"
+                value={couponInput}
+                onChange={(e) => setCouponInput(e.target.value)}
+                disabled={Boolean(coupon)}
+                className="h-9 rounded-[10px] border-[#E7EEF8] bg-white text-[12px]"
+              />
+              {coupon ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="coupon-remove"
+                  onClick={() => {
+                    setCoupon(null);
+                    setCouponInput('');
+                  }}
+                  className="h-9 rounded-[10px] text-[12px]"
+                >
+                  {t('couponRemove')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  data-testid="coupon-apply"
+                  disabled={couponBusy || !couponInput.trim()}
+                  onClick={() => void applyCoupon()}
+                  className="h-9 rounded-[10px] bg-[#2F6EF6] text-[12px] hover:bg-[#2563EB]"
+                >
+                  {t('couponApply')}
+                </Button>
               )}
-              <li>
-                <span className="text-navy">{t('summaryGuests')}:</span> {guests}
-              </li>
-              <li data-testid="booking-summary-price">
-                <span className="text-navy">{t('summaryPrice')}:</span> {displayPrice}{' '}
-                {selectedSlot.currency}
-              </li>
-              {displayDiscount ? (
-                <li data-testid="booking-summary-discount">
-                  <span className="text-navy">{t('summaryDiscount')}:</span>{' '}
-                  {displayDiscount} {selectedSlot.currency}
-                  {displayOriginal ? ` (${displayOriginal} → ${displayPrice})` : ''}
-                </li>
-              ) : null}
-              <li data-testid="booking-summary-deposit">
-                <span className="text-navy">{t('summaryDeposit')}:</span> {displayDeposit}{' '}
-                {selectedSlot.currency} ({t('depositPartOfTotal')})
-              </li>
-              <li data-testid="booking-summary-remaining">
-                <span className="text-navy">{t('summaryRemaining')}:</span>{' '}
-                {displayRemaining} {selectedSlot.currency}
-              </li>
-            </ul>
-            {selectedSlot.bookable ? (
-              <div className="mt-3 space-y-2" data-testid="coupon-box">
-                <p className="text-sm font-medium text-navy">{t('couponPrompt')}</p>
-                <div className="flex gap-2">
-                  <Input
-                    data-testid="coupon-input"
-                    value={couponInput}
-                    onChange={(e) => setCouponInput(e.target.value)}
-                    disabled={Boolean(coupon)}
-                  />
-                  {coupon ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      data-testid="coupon-remove"
-                      onClick={() => {
-                        setCoupon(null);
-                        setCouponInput('');
-                      }}
-                    >
-                      {t('couponRemove')}
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      data-testid="coupon-apply"
-                      disabled={couponBusy || !couponInput.trim()}
-                      onClick={() => void applyCoupon()}
-                    >
-                      {t('couponApply')}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ) : null}
-            <p className="mt-3 rounded-lg border border-primary/15 bg-surface/80 px-3 py-2 text-xs leading-relaxed text-muted">
-              {t('paymentAtCheckout')}
-            </p>
+            </div>
           </div>
-        )}
+        ) : null}
 
-        {error && (
+        {error ? (
           <p
             data-testid="booking-error"
-            className="flex items-start gap-2 rounded-xl border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger"
+            className="flex items-start gap-2 rounded-[12px] border border-danger/20 bg-danger/10 px-3 py-2 text-[12px] text-danger"
           >
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {error}
           </p>
-        )}
+        ) : null}
 
         <Button
           data-testid="booking-submit"
-          className="w-full shadow-soft"
+          type="button"
           size="lg"
           disabled={booking || !date || !period || !selectedSlot}
           onClick={() => void handleBook()}
+          className="mt-0.5 h-[42px] w-full rounded-[12px] bg-[linear-gradient(90deg,#2F6EF6_0%,#4B8CFF_100%)] text-[13px] font-semibold text-white shadow-[0_8px_16px_rgba(47,110,246,.22)] transition hover:-translate-y-0.5 hover:bg-[#2F6EF6]"
         >
           {booking ? (
             <>
-              <Loader2 className="me-2 h-4 w-4 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t('bookingInProgress')}
             </>
           ) : (
@@ -481,12 +559,22 @@ export function BookingPanel({
           )}
         </Button>
 
-        <LegalCommitmentNotice testId="booking-legal-notice" />
-        <p className="text-center text-xs leading-relaxed text-muted">{t('bookingPanelNote')}</p>
-        <div className="border-t border-border pt-4">
-          <TrustBadges showSupport compact />
+        <div className="[&_a]:h-[40px] [&_a]:rounded-[12px] [&_a]:border-[#D7E6FA] [&_a]:bg-white/90 [&_a]:text-[12px] [&_a]:shadow-[0_3px_10px_rgba(47,110,246,.05)] [&_button]:h-[40px] [&_button]:rounded-[12px] [&_button]:border-[#D7E6FA] [&_button]:bg-white/90 [&_button]:text-[12px] [&_button]:shadow-[0_3px_10px_rgba(47,110,246,.05)]">
+          <FavoriteButton propertyId={property.id} variant="outline" />
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="flex items-start gap-2 px-0.5 pt-1">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#16A34A]" aria-hidden />
+          <div className="min-w-0 text-start">
+            <p className="text-[12px] font-bold text-[#0D2046]">{t('safeBookingTitle')}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[#53637A]">
+              {t('safeBookingSubtitle')}
+            </p>
+          </div>
+        </div>
+
+        <LegalCommitmentNotice testId="booking-legal-notice" />
+      </div>
+    </div>
   );
 }

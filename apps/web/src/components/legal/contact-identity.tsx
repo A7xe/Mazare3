@@ -2,6 +2,8 @@ import { getTranslations } from 'next-intl/server';
 import { Link } from '@/i18n/navigation';
 import type { Locale } from '@mazare3/shared';
 import type { SiteIdentity } from '@/lib/legal/site-identity';
+import { getSessionUser } from '@/lib/get-session-user';
+import { resolveAddFarmHref, resolveAddFarmLabelKey } from '@/lib/add-farm-entry';
 
 export async function ContactIdentity({
   locale,
@@ -11,6 +13,10 @@ export async function ContactIdentity({
   identity: SiteIdentity;
 }) {
   const t = await getTranslations('legal');
+  const tAddFarmCta = await getTranslations('common.addFarmCta');
+  const sessionUser = await getSessionUser();
+  const addFarmHref = resolveAddFarmHref(sessionUser);
+  const addFarmLabel = tAddFarmCta(resolveAddFarmLabelKey({ user: sessionUser }));
   const product = locale === 'ar' ? identity.productNameAr : identity.productNameEn;
   const rows: { label: string; value: string }[] = [];
   if (identity.legalEntityName) {
@@ -68,8 +74,8 @@ export async function ContactIdentity({
           {t('goToBookings')}
         </Link>
         <span className="mx-2 text-muted">·</span>
-        <Link href="/become-owner" className="font-medium text-primary hover:underline">
-          {t('goToBecomeOwner')}
+        <Link href={addFarmHref} className="font-medium text-primary hover:underline">
+          {addFarmLabel}
         </Link>
       </p>
     </div>

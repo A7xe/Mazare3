@@ -633,8 +633,28 @@ export async function notifyPropertyChangesRequested(params: {
     title: t(locale, 'مطلوب تعديلات على العقار', 'Property changes requested'),
     message: t(
       locale,
-      `يرجى مراجعة العقار «${params.titleAr}» وإجراء التعديلات المطلوبة.`,
-      `Please review "${params.titleAr}" and apply the requested changes.`,
+      `هناك تعديلات مطلوبة على مزرعتك «${params.titleAr}». راجع الملاحظات في صفحة المزرعة.`,
+      `Changes are needed on "${params.titleAr}". Review the notes on your property page.`,
+    ),
+    entityType: 'property',
+    entityId: params.propertyId,
+  });
+}
+
+export async function notifyPropertyRejected(params: {
+  ownerUserId: string;
+  propertyId: string;
+  titleAr: string;
+  titleEn: string;
+}) {
+  const locale = await userLocale(params.ownerUserId);
+  await createForUser(params.ownerUserId, {
+    type: 'admin.property_rejected',
+    title: t(locale, 'لم يتم اعتماد المزرعة', 'Property not approved'),
+    message: t(
+      locale,
+      `لم يتم اعتماد مزرعتك «${params.titleAr}». يمكنك مراجعة سبب الرفض من صفحة المزرعة.`,
+      `Your property "${params.titleEn}" was not approved. Review the rejection reason on the property page.`,
     ),
     entityType: 'property',
     entityId: params.propertyId,

@@ -18,7 +18,10 @@ export function SiteHeader() {
 
   const showOwnerPanel = user?.role === 'owner' && user.ownerProfileStatus === 'approved';
   const showAdminPanel = user?.role === 'admin';
-  const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/signup');
+  const isAuthPage =
+    pathname.startsWith('/auth') ||
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/signup');
 
   async function handleLogout() {
     try {
@@ -90,8 +93,8 @@ export function SiteHeader() {
             </>
           ) : !user && isAuthPage ? (
             <Button size="sm" asChild className="shadow-soft">
-              <Link href={pathname.startsWith('/signup') ? '/login' : '/signup'}>
-                {pathname.startsWith('/signup') ? t('login') : t('signup')}
+              <Link href="/auth">
+                {t('login')}
               </Link>
             </Button>
           ) : null}

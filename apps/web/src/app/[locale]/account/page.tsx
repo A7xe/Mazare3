@@ -1,5 +1,6 @@
 import { setRequestLocale } from 'next-intl/server';
 import { AccountHomeView } from '@/components/account/account-home-view';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 
 type Props = { params: Promise<{ locale: string }> };
 
@@ -7,8 +8,8 @@ export default async function AccountHomePage({ params }: Props) {
   const { locale } = await params;
   setRequestLocale(locale);
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+    <MarketplacePageShell className="py-10">
       <AccountHomeView />
-    </div>
+    </MarketplacePageShell>
   );
 }

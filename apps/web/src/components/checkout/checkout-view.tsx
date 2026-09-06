@@ -8,17 +8,21 @@ import type { CheckoutBookingView, PaymentMethod, PaymentPublicConfig, PaymentSu
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 import {
   createPaymentIntent,
   fetchCheckoutBooking,
   fetchPaymentConfig,
+  PaymentApiError,
   simulatePaymentFailure,
   simulatePaymentSuccess,
 } from '@/lib/api-payments';
 import { Link } from '@/i18n/navigation';
 import { formatPlatformDateTime } from '@/lib/format-platform-time';
 import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+
+type ContactRequiredFields = Array<'email' | 'phone' | 'name'>;
 
 export function CheckoutView({ bookingId }: { bookingId: string }) {
   const t = useTranslations('checkout');
@@ -33,6 +37,9 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [contactRequired, setContactRequired] = useState<ContactRequiredFields | null>(null);
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +90,24 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     void load();
   }, [load]);
 
+  function applyPaymentContactError(e: unknown): boolean {
+    if (!(e instanceof PaymentApiError)) return false;
+    if (e.code === 'PAYMENT_CONTACT_EMAIL_UNAVAILABLE') {
+      setError(t('paymentContactEmailUnavailable'));
+      return true;
+    }
+    if (e.code === 'PAYMENT_CONTACT_REQUIRED') {
+      const details = e.details as { requiredFields?: ContactRequiredFields } | undefined;
+      const fields = details?.requiredFields?.filter((f) => f === 'email' || f === 'phone') ?? [
+        'email',
+      ];
+      setContactRequired(fields.length ? fields : ['email']);
+      setError(null);
+      return true;
+    }
+    return false;
+  }
+
   async function handleSimulateSuccess() {
     if (!payment) return;
     setActing(true);
@@ -113,24 +138,35 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     }
   }
 
-  async function handlePaytabsCheckout() {
+  async function handlePaytabsCheckout(opts?: { withContact?: boolean }) {
     setActing(true);
     setError(null);
     try {
       const duePurpose = booking?.duePurpose;
       if (!duePurpose) throw new Error(t('payError'));
-      const intent = await createPaymentIntent({
+      const payload: Parameters<typeof createPaymentIntent>[0] = {
         bookingId,
         method: 'card',
         purpose: duePurpose,
-      });
+      };
+      if (opts?.withContact || contactRequired) {
+        if (contactRequired?.includes('email') || contactEmail.trim()) {
+          payload.contactEmail = contactEmail.trim();
+        }
+        if (contactRequired?.includes('phone') || contactPhone.trim()) {
+          payload.contactPhone = contactPhone.trim();
+        }
+      }
+      const intent = await createPaymentIntent(payload);
       setPayment(intent.data);
+      setContactRequired(null);
       if (intent.data.redirectUrl) {
         window.location.assign(intent.data.redirectUrl);
         return;
       }
       setError(t('payError'));
     } catch (e) {
+      if (applyPaymentContactError(e)) return;
       setError(e instanceof Error ? e.message : t('payError'));
     } finally {
       setActing(false);
@@ -378,7 +414,60 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
             </>
           )}
 
-          {liveHosted && awaitingPay && (
+          {liveHosted && awaitingPay && contactRequired && (
+            <div
+              data-testid="checkout-payment-contact"
+              className="space-y-3 rounded-2xl border border-primary/20 bg-white/70 p-4"
+            >
+              <div>
+                <p className="text-sm font-semibold text-navy">{t('paymentContactTitle')}</p>
+                <p className="mt-1 text-sm text-muted">{t('paymentContactBody')}</p>
+              </div>
+              {contactRequired.includes('email') && (
+                <div className="space-y-1">
+                  <label className="text-sm text-navy" htmlFor="checkout-contact-email">
+                    {t('paymentContactEmail')}
+                  </label>
+                  <Input
+                    id="checkout-contact-email"
+                    data-testid="checkout-contact-email"
+                    type="email"
+                    autoComplete="email"
+                    value={contactEmail}
+                    onChange={(ev) => setContactEmail(ev.target.value)}
+                  />
+                </div>
+              )}
+              {contactRequired.includes('phone') && (
+                <div className="space-y-1">
+                  <label className="text-sm text-navy" htmlFor="checkout-contact-phone">
+                    {t('paymentContactPhone')}
+                  </label>
+                  <Input
+                    id="checkout-contact-phone"
+                    data-testid="checkout-contact-phone"
+                    type="tel"
+                    autoComplete="tel"
+                    inputMode="tel"
+                    value={contactPhone}
+                    onChange={(ev) => setContactPhone(ev.target.value)}
+                  />
+                  <p className="text-xs text-muted">{t('paymentContactPhoneHint')}</p>
+                </div>
+              )}
+              <Button
+                className="w-full shadow-soft"
+                data-testid="checkout-payment-contact-continue"
+                disabled={acting}
+                onClick={() => void handlePaytabsCheckout({ withContact: true })}
+              >
+                {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                {t('paymentContactContinue')}
+              </Button>
+            </div>
+          )}
+
+          {liveHosted && awaitingPay && !contactRequired && (
             <Button
               className="w-full shadow-soft"
               data-testid="checkout-paytabs-pay"

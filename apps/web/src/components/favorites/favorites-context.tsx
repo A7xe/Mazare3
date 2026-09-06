@@ -35,7 +35,14 @@ export function FavoritesProvider({ children }: { children: ReactNode }) {
   const [ids, setIds] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
-    if (isCheckoutReturnPath(pathname)) {
+    if (
+      isCheckoutReturnPath(pathname) ||
+      pathname.startsWith('/auth') ||
+      pathname.startsWith('/login') ||
+      pathname.startsWith('/signup') ||
+      pathname.startsWith('/forgot-password') ||
+      pathname.startsWith('/reset-password')
+    ) {
       setReady(true);
       return;
     }

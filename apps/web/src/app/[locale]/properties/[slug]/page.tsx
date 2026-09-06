@@ -7,6 +7,7 @@ import { ErrorState } from '@/components/marketplace/error-state';
 import { getTranslations } from 'next-intl/server';
 import { AVAILABILITY_PERIODS, type AvailabilityPeriod } from '@mazare3/shared';
 import { Link } from '@/i18n/navigation';
+import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,27 +53,29 @@ export default async function PropertyDetailPage({ params, searchParams }: Props
     if (err instanceof ApiError && err.status === 404) {
       if (rebookId) {
         return (
-          <div className="mx-auto max-w-lg px-4 py-16 text-center sm:px-6">
-            <h1 className="text-xl font-semibold text-navy">{t('rebookUnavailable')}</h1>
-            <p className="mt-2 text-sm text-muted">{t('rebookUnavailableHint')}</p>
-            <p className="mt-6">
-              <Link href="/search" className="font-medium text-primary">
-                {t('rebookSearchCta')}
-              </Link>
-            </p>
-          </div>
+          <MarketplacePageShell className="py-16 text-center">
+            <div className="mx-auto max-w-lg">
+              <h1 className="text-xl font-semibold text-navy">{t('rebookUnavailable')}</h1>
+              <p className="mt-2 text-sm text-muted">{t('rebookUnavailableHint')}</p>
+              <p className="mt-6">
+                <Link href="/search" className="font-medium text-primary">
+                  {t('rebookSearchCta')}
+                </Link>
+              </p>
+            </div>
+          </MarketplacePageShell>
         );
       }
       notFound();
     }
 
     return (
-      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
+      <MarketplacePageShell className="py-16">
         <ErrorState
           title={t('errorTitle')}
           description={err instanceof ApiError ? err.message : t('errorGeneric')}
         />
-      </div>
+      </MarketplacePageShell>
     );
   }
 }

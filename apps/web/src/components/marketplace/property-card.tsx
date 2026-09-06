@@ -12,6 +12,10 @@ import { VerifiedBadge } from './verified-badge';
 import { PriceDisplay } from './price-display';
 import { AmenityPills } from './amenity-pills';
 import { FavoriteButton } from '@/components/favorites/favorite-button';
+import {
+  PropertyOfferBadge,
+  usePropertyOfferPresentation,
+} from '@/components/marketplace/property-offer-indicators';
 import { getPropertyTitle, getApproxLocation } from '@/lib/property-helpers';
 import type { PropertySearchParams } from '@/lib/api-properties';
 
@@ -25,6 +29,7 @@ export function PropertyCard({ property, searchIntent }: PropertyCardProps) {
   const t = useTranslations('common');
   const tSearch = useTranslations('search');
   const tProperty = useTranslations('property');
+  const { badgeLabel, pricing } = usePropertyOfferPresentation(property);
 
   const title = getPropertyTitle(property, locale);
   const location = getApproxLocation(property);
@@ -64,7 +69,7 @@ export function PropertyCard({ property, searchIntent }: PropertyCardProps) {
               <p className="text-lg font-semibold">{title}</p>
             </div>
           )}
-          <div className="absolute start-3 top-3 z-10 flex flex-wrap gap-2">
+          <div className="absolute start-3 top-3 z-10 flex max-w-[60%] flex-wrap gap-2">
             <VerifiedBadge
               status={property.verificationStatus}
               hidden={Boolean(property.isSponsored || property.isFeatured || property.hasActivePromotion)}
@@ -78,11 +83,7 @@ export function PropertyCard({ property, searchIntent }: PropertyCardProps) {
                 {t('featured')}
               </Badge>
             ) : null}
-            {property.hasActivePromotion && (
-              <Badge variant="highlight" data-testid="offer-badge">
-                {tSearch('offerAvailable')}
-              </Badge>
-            )}
+            {badgeLabel ? <PropertyOfferBadge label={badgeLabel} className="text-[10px]" /> : null}
           </div>
         </div>
 
@@ -136,11 +137,11 @@ export function PropertyCard({ property, searchIntent }: PropertyCardProps) {
               )}
               <div className="mt-2">
                 <PriceDisplay
-                  amount={match.slotPrice!}
+                  amount={pricing.displayPrice}
                   currency={property.currency}
                   locale={locale}
                   exact
-                  originalAmount={match.originalSlotPrice ?? undefined}
+                  originalAmount={pricing.originalPrice ?? undefined}
                 />
               </div>
               {match.depositAmount != null && (
@@ -154,11 +155,12 @@ export function PropertyCard({ property, searchIntent }: PropertyCardProps) {
             </div>
           ) : (
             <PriceDisplay
-              amount={property.basePrice}
+              amount={pricing.displayPrice}
               currency={property.currency}
               locale={locale}
               fromLabel={t('from')}
               browseHint={tSearch('browsePriceHint')}
+              originalAmount={pricing.originalPrice ?? undefined}
             />
           )}
 

@@ -15,18 +15,49 @@ export const patchAdminOwnerStatusSchema = z.object({
   rejectionReason: z.string().max(500).optional(),
 });
 
-export const patchAdminPropertyStatusSchema = z.object({
-  status: z.enum([
-    'draft',
-    'pending_review',
-    'changes_requested',
-    'approved',
-    'published',
-    'unpublished',
-    'suspended',
-    'rejected',
-  ]),
-});
+/** Owner-facing change-request reason — required only when status is changes_requested. */
+export const PROPERTY_REVIEW_CHANGE_REASON_MIN = 8;
+export const PROPERTY_REVIEW_CHANGE_REASON_MAX = 2000;
+
+/** Owner-facing rejection reason — required only when status is rejected. */
+export const PROPERTY_REVIEW_REJECTION_REASON_MIN = PROPERTY_REVIEW_CHANGE_REASON_MIN;
+export const PROPERTY_REVIEW_REJECTION_REASON_MAX = PROPERTY_REVIEW_CHANGE_REASON_MAX;
+
+export const patchAdminPropertyStatusSchema = z
+  .object({
+    status: z.enum([
+      'draft',
+      'pending_review',
+      'changes_requested',
+      'approved',
+      'published',
+      'unpublished',
+      'suspended',
+      'rejected',
+    ]),
+    reason: z.string().max(PROPERTY_REVIEW_CHANGE_REASON_MAX).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const trimmed = data.reason?.trim() ?? '';
+    if (data.status === 'changes_requested') {
+      if (trimmed.length < PROPERTY_REVIEW_CHANGE_REASON_MIN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `reason is required when requesting changes (min ${PROPERTY_REVIEW_CHANGE_REASON_MIN} characters)`,
+          path: ['reason'],
+        });
+      }
+    }
+    if (data.status === 'rejected') {
+      if (trimmed.length < PROPERTY_REVIEW_REJECTION_REASON_MIN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `reason is required when rejecting (min ${PROPERTY_REVIEW_REJECTION_REASON_MIN} characters)`,
+          path: ['reason'],
+        });
+      }
+    }
+  });
 
 export const patchAdminAvailabilitySchema = z
   .object({

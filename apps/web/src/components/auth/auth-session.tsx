@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { usePathname } from '@/i18n/navigation';
-import { getMe, type AuthUser } from '@/lib/api-auth';
+import { AuthApiError, getMe, type AuthUser } from '@/lib/api-auth';
 import { isCheckoutReturnPath } from '@/lib/checkout-return-path';
 
 type AuthSessionValue = {
@@ -41,7 +41,12 @@ export function AuthSessionProvider({
     try {
       const res = await getMe();
       setUser(res.data.user);
-    } catch {
+    } catch (err) {
+      // Transient rate-limit must not wipe a known session mid-navigation.
+      if (err instanceof AuthApiError && err.status === 429) {
+        setReady(true);
+        return;
+      }
       setUser(null);
     } finally {
       setReady(true);

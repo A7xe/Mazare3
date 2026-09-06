@@ -46,6 +46,8 @@ export function sanitizeRecentSearchParams(
     allowsOvernight: params.allowsOvernight,
     allowsEvents: params.allowsEvents,
     featured: params.featured,
+    offersOnly: params.offersOnly,
+    newlyAdded: params.newlyAdded,
     verifiedOnly: params.verifiedOnly,
     sort: params.sort === 'distance_asc' ? 'recommended' : params.sort,
     // Intentionally omit lat/lng — never persist precise user location.

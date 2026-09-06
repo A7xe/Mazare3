@@ -20,6 +20,10 @@ type Props = {
   media: PropertyMediaItem[];
   onMediaChange: (media: PropertyMediaItem[]) => void;
   disabled?: boolean;
+  /** When true, ask before deleting an uploaded photo. */
+  confirmDelete?: boolean;
+  /** Hide external URL import (wizard prefers file upload only). */
+  hideUrlAdd?: boolean;
 };
 
 function mediaErrorMessage(
@@ -73,6 +77,8 @@ export function OwnerPropertyMediaEditor({
   media,
   onMediaChange,
   disabled = false,
+  confirmDelete = false,
+  hideUrlAdd = false,
 }: Props) {
   const t = useTranslations('ownerProperty');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,6 +164,9 @@ export function OwnerPropertyMediaEditor({
 
   async function removeMedia(mediaId: string) {
     if (busyLocked) return;
+    if (confirmDelete && typeof window !== 'undefined') {
+      if (!window.confirm(t('mediaDeleteConfirm'))) return;
+    }
     const next = await runMediaAction(async () => {
       const res = await deleteOwnerPropertyMedia(propertyId, mediaId);
       return res.data.media;
@@ -197,7 +206,7 @@ export function OwnerPropertyMediaEditor({
   return (
     <section className="space-y-4" data-testid="owner-media-editor">
       <div>
-        <h2 className="text-sm font-medium text-navy">{t('imageUrls')}</h2>
+        <h2 className="text-sm font-medium text-navy">{t('mediaUpload')}</h2>
         <p className="mt-1 text-xs text-muted">{t('mediaGalleryHint')}</p>
       </div>
 
@@ -224,7 +233,7 @@ export function OwnerPropertyMediaEditor({
         </p>
       ) : (
         <div
-          className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-3"
+          className="grid grid-cols-2 gap-3 lg:grid-cols-3"
           data-testid="owner-media-gallery"
         >
           {media.map((item, index) => (
@@ -365,25 +374,27 @@ export function OwnerPropertyMediaEditor({
         )}
       </div>
 
-      <div>
-        <p className="mb-1 text-sm font-medium text-navy">{t('mediaAddUrl')}</p>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            placeholder={t('mediaUrlPlaceholder')}
-            value={urlToAdd}
-            disabled={busyLocked}
-            onChange={(e) => setUrlToAdd(e.target.value)}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busyLocked || !urlToAdd.trim()}
-            onClick={() => void addUrl()}
-          >
-            {t('addImage')}
-          </Button>
+      {hideUrlAdd ? null : (
+        <div>
+          <p className="mb-1 text-sm font-medium text-navy">{t('mediaAddUrl')}</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              placeholder={t('mediaUrlPlaceholder')}
+              value={urlToAdd}
+              disabled={busyLocked}
+              onChange={(e) => setUrlToAdd(e.target.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busyLocked || !urlToAdd.trim()}
+              onClick={() => void addUrl()}
+            >
+              {t('addImage')}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }

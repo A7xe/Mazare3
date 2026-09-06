@@ -208,6 +208,8 @@ export function ExploreSearchBar({ initial }: ExploreSearchBarProps) {
         allowsOvernight: initial?.allowsOvernight,
         allowsEvents: initial?.allowsEvents,
         featured: initial?.featured,
+        offersOnly: initial?.offersOnly,
+        newlyAdded: initial?.newlyAdded,
         verifiedOnly: initial?.verifiedOnly,
         sort: initial?.sort ?? 'recommended',
       };
@@ -229,6 +231,8 @@ export function ExploreSearchBar({ initial }: ExploreSearchBarProps) {
         allowsOvernight: initial?.allowsOvernight,
         allowsEvents: initial?.allowsEvents,
         featured: initial?.featured,
+        offersOnly: initial?.offersOnly,
+        newlyAdded: initial?.newlyAdded,
         verifiedOnly: initial?.verifiedOnly,
       },
       parsed,

@@ -11,6 +11,7 @@ import {
 } from './constants.js';
 import { applySessionToPage } from './helpers/session.js';
 import { loginViaApi } from './helpers/api.js';
+import { ensureTestPropertyPublished } from './helpers/publish-test-property.js';
 
 async function payFully(cookie: string, bookingId: string) {
   const base = getApiBase();
@@ -82,12 +83,7 @@ test.describe('Phase 10F.4B personalized homepage', () => {
     const other = listBody.data?.find((p) => p.slug !== PROPERTY_SLUG && p.slug);
     let favoriteSlug = PROPERTY_SLUG;
     if (other?.id) {
-      const admin = await loginViaApi(ADMIN_EMAIL, ADMIN_PASSWORD);
-      await fetch(`${getApiBase()}/admin/properties/${other.id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Cookie: admin },
-        body: JSON.stringify({ status: 'published' }),
-      });
+      await ensureTestPropertyPublished(other.id);
       favoriteSlug = other.slug;
       await fetch(`${getApiBase()}/me/favorites/${other.id}`, {
         method: 'POST',

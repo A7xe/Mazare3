@@ -401,7 +401,7 @@ export type AdminPartnerListRow = {
   userId: string;
   displayName: string;
   businessName: string | null;
-  email: string;
+  email: string | null;
   status: string;
   verificationStatus: PartnerVerificationStatus;
   entityType: PartnerEntityType | null;
@@ -434,7 +434,7 @@ export type AdminPartnerCommercialTermsRow = {
 };
 
 export type AdminPartnerDetail = PartnerOnboardingView & {
-  email: string;
+  email: string | null;
   userRole: string;
   userStatus: string;
   payoutReviewStatus: 'pending' | 'reviewed' | 'rejected' | null;

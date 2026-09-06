@@ -6,8 +6,11 @@ const COOKIE_NAME = 'mazare3_session';
 
 export interface SessionPayload {
   userId: string;
-  email: string;
+  /** May be null for future phone-first / passwordless accounts. Anchored by userId. */
+  email: string | null;
   role: UserRole;
+  /** passwordChangedAt getTime() at issue time; 0 if never set. Used to revoke older sessions. */
+  pwdAt?: number;
 }
 
 function getSecret(): string {

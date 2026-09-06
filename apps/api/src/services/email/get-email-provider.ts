@@ -1,5 +1,6 @@
 import { loadEmailConfig, type EmailProviderName } from '../../config/email-config.js';
 import type { EmailProvider } from './email-provider.interface.js';
+import { MemoryEmailProvider } from './memory-email-provider.js';
 import { NoneEmailProvider } from './none-email-provider.js';
 import { ResendEmailProvider } from './resend-email-provider.js';
 import { SendgridEmailProvider } from './sendgrid-email-provider.js';
@@ -9,6 +10,7 @@ const noneProvider = new NoneEmailProvider();
 const smtpProvider = new SmtpEmailProvider();
 const resendProvider = new ResendEmailProvider();
 const sendgridProvider = new SendgridEmailProvider();
+const memoryProvider = new MemoryEmailProvider();
 
 export function getEmailProvider(name?: EmailProviderName): EmailProvider {
   const provider = name ?? loadEmailConfig().provider;
@@ -19,6 +21,8 @@ export function getEmailProvider(name?: EmailProviderName): EmailProvider {
       return resendProvider;
     case 'sendgrid':
       return sendgridProvider;
+    case 'memory':
+      return memoryProvider;
     default:
       return noneProvider;
   }

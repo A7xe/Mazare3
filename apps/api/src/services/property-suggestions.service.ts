@@ -7,7 +7,7 @@ export type PropertyTitleSuggestion = {
   titleAr: string;
   titleEn: string | null;
   type: string;
-  city: string;
+  city: string | null;
 };
 
 const MAX_CANDIDATES = 40;

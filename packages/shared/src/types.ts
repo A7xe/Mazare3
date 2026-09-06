@@ -66,6 +66,20 @@ export interface PublicPropertySummary {
   isFavorited?: boolean;
   /** True when a currently live property promotion exists (browse mode). */
   hasActivePromotion?: boolean;
+  /**
+   * Best live promotion summary for browse cards (offers rail).
+   * Prices are computed from `basePrice` when the discount can be applied safely.
+   */
+  activePromotionSummary?: {
+    discountType?: 'percentage' | 'fixed_amount' | null;
+    discountValue?: number | null;
+    endsAt?: string | null;
+    titleAr?: string | null;
+    titleEn?: string | null;
+    originalFromPrice?: number | null;
+    promotionalFromPrice?: number | null;
+    savingsAmount?: number | null;
+  } | null;
 }
 
 export interface PropertySearchPeriodSummary {
@@ -125,12 +139,27 @@ export interface MarketplaceDiscoverySection {
   properties: PublicPropertySummary[];
 }
 
+/** Browse-mode campaign tile hints (Phase 2I-A). Absent key = omit that tile. */
+export type MarketplaceCampaignTileHint = {
+  imageUrl?: string | null;
+};
+
 export interface MarketplaceDiscoveryResponse {
   timeZone: string;
   mode: 'browse' | 'availability';
   sections: MarketplaceDiscoverySection[];
   /** Published property counts keyed by Jordan city slug (homepage destinations). */
   cityPropertyCounts?: Record<string, number>;
+  /**
+   * Truthful campaign availability for Explore Campaign Tiles.
+   * Derived from the same discovery inventory (no per-tile requests).
+   */
+  campaignTiles?: {
+    offers?: MarketplaceCampaignTileHint;
+    newlyAdded?: MarketplaceCampaignTileHint;
+    overnight?: MarketplaceCampaignTileHint;
+    featured?: MarketplaceCampaignTileHint;
+  };
 }
 
 export interface HomeBookAgainItem {
@@ -233,9 +262,12 @@ export interface OwnerPropertyCard {
   titleAr: string;
   titleEn: string;
   status: string;
-  area: string;
-  city: string;
-  basePrice: number;
+  /** Null on incomplete drafts (AF-1.1b). */
+  area: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  city: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  basePrice: number | null;
   currency: string;
   bookingsCount: number;
   imageUrl?: string;
@@ -245,6 +277,11 @@ export interface OwnerPropertyDetail extends OwnerPropertyCard {
   capacity: number;
   allowsOvernight: boolean;
   upcomingBookingsCount: number;
+  /** Active owner-safe change-request reason when status is changes_requested. */
+  reviewChangeReason?: string | null;
+  /** Owner-visible rejection reason when status is rejected. */
+  reviewRejectionReason?: string | null;
+  reviewRejectedAt?: string | null;
 }
 
 export interface PropertyPromotionRow {
@@ -492,7 +529,7 @@ export interface AdminDashboardSummary {
 export interface AdminUserRow {
   id: string;
   name: string | null;
-  email: string;
+  email: string | null;
   role: string;
   status: string;
   createdAt: string;
@@ -530,9 +567,12 @@ export interface OwnerPropertyEdit {
   titleEn: string;
   descriptionAr: string;
   descriptionEn: string;
-  city: string;
-  area: string;
-  approximateAddress: string;
+  /** Null on incomplete drafts (AF-1.1b). */
+  city: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  area: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  approximateAddress: string | null;
   exactAddress: string | null;
   latitudeApprox: number | null;
   longitudeApprox: number | null;
@@ -540,7 +580,8 @@ export interface OwnerPropertyEdit {
   longitudeExact: number | null;
   arrivalInstructionsAr: string | null;
   arrivalInstructionsEn: string | null;
-  basePrice: number;
+  /** Null on incomplete drafts (AF-1.1b). */
+  basePrice: number | null;
   currency: string;
   capacity: number;
   status: string;
@@ -553,6 +594,11 @@ export interface OwnerPropertyEdit {
   imageUrls: string[];
   media?: PropertyMediaItem[];
   rules: { titleAr: string; titleEn: string | null }[];
+  /** Active owner-safe change-request reason when status is changes_requested. */
+  reviewChangeReason?: string | null;
+  /** Owner-visible rejection reason when status is rejected. */
+  reviewRejectionReason?: string | null;
+  reviewRejectedAt?: string | null;
 }
 
 export interface PropertyMediaItem {
@@ -573,7 +619,7 @@ export interface AdminOwnerRow {
   userId: string;
   displayName: string;
   businessName: string | null;
-  email: string;
+  email: string | null;
   status: string;
   city: string | null;
   area: string | null;
@@ -589,12 +635,15 @@ export interface AdminPropertyRow {
   titleAr: string;
   titleEn: string;
   ownerDisplayName: string;
-  ownerEmail: string;
-  area: string;
-  city: string;
+  ownerEmail: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  area: string | null;
+  /** Null on incomplete drafts (AF-1.1b). */
+  city: string | null;
   status: string;
   verificationStatus: string;
-  basePrice: number;
+  /** Null on incomplete drafts (AF-1.1b). */
+  basePrice: number | null;
   currency: string;
   bookingsCount: number;
   imageUrl?: string;
@@ -605,7 +654,8 @@ export interface AdminPropertyDetail extends AdminPropertyRow {
   allowsOvernight: boolean;
   descriptionAr: string;
   descriptionEn: string;
-  approximateAddress: string;
+  /** Null on incomplete drafts (AF-1.1b). */
+  approximateAddress: string | null;
   exactAddress: string | null;
   latitudeApprox?: number | null;
   longitudeApprox?: number | null;
@@ -620,6 +670,12 @@ export interface AdminPropertyDetail extends AdminPropertyRow {
   promotions?: PropertyPromotionRow[];
   coupons?: PropertyCouponRow[];
   placements?: PropertyPlacementRow[];
+  /** Active owner-safe change-request reason when status is changes_requested. */
+  reviewChangeReason?: string | null;
+  reviewChangeRequestedAt?: string | null;
+  /** Owner-visible rejection reason when status is rejected. */
+  reviewRejectionReason?: string | null;
+  reviewRejectedAt?: string | null;
 }
 
 export interface AdminBookingRow {
@@ -627,7 +683,7 @@ export interface AdminBookingRow {
   publicCode: string;
   status: BookingStatus;
   customerName: string | null;
-  customerEmail: string;
+  customerEmail: string | null;
   propertySlug: string;
   propertyTitleAr: string;
   propertyTitleEn: string;
@@ -834,7 +890,7 @@ export interface AdminRefundRequestRow {
   bookingId: string;
   publicCode: string;
   customerName: string | null;
-  customerEmail: string;
+  customerEmail: string | null;
   propertySlug: string;
   propertyTitleAr: string;
   propertyTitleEn: string;
@@ -854,7 +910,7 @@ export interface AdminDisputeRow {
   bookingId: string;
   publicCode: string;
   customerName: string | null;
-  customerEmail: string;
+  customerEmail: string | null;
   ownerDisplayName: string;
   propertySlug: string;
   propertyTitleAr: string;
@@ -912,7 +968,7 @@ export interface AdminPayoutRow {
   publicCode: string;
   ownerId: string;
   ownerDisplayName: string;
-  ownerEmail: string;
+  ownerEmail: string | null;
   propertySlug: string;
   propertyTitleAr: string;
   propertyTitleEn: string;
@@ -1069,7 +1125,7 @@ export interface AdminPaymentRow {
   bookingId: string;
   publicCode: string;
   customerName: string | null;
-  customerEmail: string;
+  customerEmail: string | null;
   method: string;
   provider: string;
   amount: number;

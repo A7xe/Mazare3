@@ -11,18 +11,36 @@ import { FavoriteButton } from '@/components/favorites/favorite-button';
 import { formatPrice, getApproxLocation, getPropertyTitle } from '@/lib/property-helpers';
 import { cn } from '@/lib/utils';
 import { TYPE_BADGE_CLASS } from './home-visual';
+import {
+  getOfferUrgencyKey,
+  offerBadgeClass,
+  offerCardChromeClass,
+  resolveCardOfferPricing,
+  resolveOfferBadge,
+} from './offer-presentation';
+import { PropertyOfferBadge } from '@/components/marketplace/property-offer-indicators';
 
 type HomeCardVariant = 'feature' | 'offer' | 'rated';
+
+/** `compact` = Homepage sidebar stack; `standard` = Explore/carousel vertical card. */
+type OfferDensity = 'compact' | 'standard';
 
 interface HomePropertyCardProps {
   property: PublicPropertySummary;
   variant?: HomeCardVariant;
+  /** Only applies when variant is `offer`. Default keeps Homepage compact layout. */
+  offerDensity?: OfferDensity;
 }
 
-export function HomePropertyCard({ property, variant = 'feature' }: HomePropertyCardProps) {
+export function HomePropertyCard({
+  property,
+  variant = 'feature',
+  offerDensity = 'compact',
+}: HomePropertyCardProps) {
   const locale = useLocale() as 'ar' | 'en';
   const t = useTranslations('common');
   const tSearch = useTranslations('search');
+  const tHome = useTranslations('home');
 
   const title = getPropertyTitle(property, locale);
   const location = getApproxLocation(property);
@@ -35,6 +53,26 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
       ? `${cityLabel} - ${location}`
       : cityLabel;
 
+  const promo = property.activePromotionSummary;
+  const badgeResolution = resolveOfferBadge(property, locale);
+  const offerBadgeLabel = (() => {
+    if (!badgeResolution) return null;
+    if (badgeResolution.kind === 'percent') {
+      return tHome('offerDiscountPercent', { percent: badgeResolution.percent });
+    }
+    if (badgeResolution.kind === 'save') {
+      return tHome('offerSaveAmount', { amount: badgeResolution.amountLabel });
+    }
+    return tSearch('offerAvailable');
+  })();
+
+  const urgencyKey = getOfferUrgencyKey(promo?.endsAt);
+  const cardPricing = resolveCardOfferPricing(property);
+  const hasPriceAnchor = cardPricing.hasAnchor;
+  const displayPrice = cardPricing.displayPrice;
+  const originalPrice = cardPricing.originalPrice;
+  const savingsAmount = cardPricing.savingsAmount;
+
   const placementBadges = (
     <>
       {property.isSponsored ? (
@@ -43,11 +81,7 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
         </Badge>
       ) : null}
 
-      {property.hasActivePromotion ? (
-        <Badge variant="highlight" data-testid="offer-badge">
-          {tSearch('offerAvailable')}
-        </Badge>
-      ) : null}
+      {offerBadgeLabel ? <PropertyOfferBadge label={offerBadgeLabel} className="text-[10px]" /> : null}
     </>
   );
 
@@ -84,6 +118,46 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
     </div>
   );
 
+  const offerPriceBlock = (opts: { priceClass: string; metaClass: string; urgencyClass: string }) => (
+    <div data-testid="browse-from-price">
+      {hasPriceAnchor && originalPrice != null ? (
+        <span className="sr-only">
+          {formatPrice(originalPrice, property.currency, locale)}
+          {' → '}
+          {formatPrice(displayPrice, property.currency, locale)}
+        </span>
+      ) : null}
+      <div className="flex flex-wrap items-baseline gap-1.5" aria-hidden={hasPriceAnchor}>
+        {originalPrice != null ? (
+          <span
+            className="text-[10px] font-medium tabular-nums text-[#8794A7] line-through decoration-[#8794A7]/80"
+            data-testid="price-original"
+          >
+            {formatPrice(originalPrice, property.currency, locale)}
+          </span>
+        ) : null}
+        <span className={opts.priceClass} data-testid="price-final">
+          {formatPrice(displayPrice, property.currency, locale)}
+        </span>
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span className={opts.metaClass}>/{t('perDay')}</span>
+        {savingsAmount != null ? (
+          <span className="text-[9px] font-semibold text-[#B45309]" data-testid="offer-savings">
+            {tHome('offerSaveAmount', {
+              amount: formatPrice(savingsAmount, property.currency, locale),
+            })}
+          </span>
+        ) : null}
+      </div>
+      {urgencyKey ? (
+        <p className={opts.urgencyClass} data-testid="offer-urgency">
+          {tHome(urgencyKey)}
+        </p>
+      ) : null}
+    </div>
+  );
+
   if (variant === 'rated') {
     return (
       <article
@@ -115,11 +189,87 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
     );
   }
 
+  if (variant === 'offer' && offerDensity === 'standard') {
+    return (
+      <article
+        data-testid="property-card"
+        className={cn('group relative overflow-hidden rounded-[20px]', offerCardChromeClass)}
+      >
+        <div className="absolute left-3 top-3 z-20">
+          <FavoriteButton propertyId={property.id} variant="overlay" />
+        </div>
+
+        <Link href={href} data-testid={`property-card-${property.slug}`} className="block">
+          <div className="relative h-[160px] overflow-hidden bg-[#EEF5FF]">
+            {property.imageUrl ? (
+              <Image
+                src={property.imageUrl}
+                alt={title}
+                fill
+                className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                sizes="(max-width: 760px) 100vw, 320px"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center p-4 text-center text-[12px] font-semibold text-[#0D2046]">
+                {title}
+              </div>
+            )}
+
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/25 to-transparent"
+            />
+
+            {offerBadgeLabel ? (
+              <span
+                data-testid="offer-badge"
+                className={cn('absolute right-3 top-3 z-10', offerBadgeClass, 'text-[10px]')}
+              >
+                {offerBadgeLabel}
+              </span>
+            ) : null}
+
+            <span
+              className={cn(
+                'absolute bottom-3 right-3 rounded-full px-3 py-1 text-[10px] font-semibold text-white/95 shadow-sm',
+                typeClass,
+                'opacity-90',
+              )}
+            >
+              {tSearch(`propertyType.${property.type}`)}
+            </span>
+          </div>
+
+          <div className="flex min-h-[88px] items-stretch justify-between gap-3 px-3.5 pb-3.5 pt-3">
+            <div className="flex min-w-0 flex-1 flex-col text-start">
+              <h3 className="line-clamp-1 text-[14px] font-semibold text-[#0D2046]">{title}</h3>
+
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-[#8794A7]">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-[#8794A7]" aria-hidden />
+                <span className="line-clamp-1">{shortLocation}</span>
+              </p>
+
+              <div className="mt-auto pt-2">{featureRating}</div>
+            </div>
+
+            <div className="flex shrink-0 flex-col justify-end text-start">
+              {offerPriceBlock({
+                priceClass: 'text-[17px] font-bold leading-none tabular-nums text-[#0D2046]',
+                metaClass: 'text-[10px] font-medium text-[#8794A7]',
+                urgencyClass: 'mt-0.5 text-[9px] font-semibold text-[#92400E]',
+              })}
+            </div>
+          </div>
+        </Link>
+      </article>
+    );
+  }
+
   if (variant === 'offer') {
     return (
       <article
         data-testid="property-card"
-        className="relative overflow-hidden rounded-[12px] border border-[#E6EDF6] bg-white shadow-[0_5px_14px_rgba(31,67,115,.045)]"
+        className={cn('relative overflow-hidden rounded-[12px]', offerCardChromeClass)}
       >
         <Link
           href={href}
@@ -135,7 +285,10 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
                 <span className="line-clamp-1">{shortLocation}</span>
               </p>
 
-              <div className="mt-1 flex items-center gap-1 text-[9.5px] font-medium text-[#8794A7]" data-testid="property-card-rating">
+              <div
+                className="mt-1 flex items-center gap-1 text-[9.5px] font-medium text-[#8794A7]"
+                data-testid="property-card-rating"
+              >
                 <Star
                   className={cn(
                     'h-2.5 w-2.5',
@@ -156,16 +309,12 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
               </div>
             </div>
 
-            <div className="mt-auto" data-testid="browse-from-price">
-              <div className="flex flex-wrap items-baseline gap-1">
-                <span
-                  className="text-[14px] font-bold leading-none tabular-nums text-[#0D2046]"
-                  data-testid="price-final"
-                >
-                  {formatPrice(property.basePrice, property.currency, locale)}
-                </span>
-              </div>
-              <div className="mt-0.5 text-[9px] font-medium text-[#8794A7]">/{t('perDay')}</div>
+            <div className="mt-auto">
+              {offerPriceBlock({
+                priceClass: 'text-[14px] font-bold leading-none tabular-nums text-[#0D2046]',
+                metaClass: 'text-[9px] font-medium text-[#8794A7]',
+                urgencyClass: 'mt-0.5 text-[8.5px] font-semibold text-[#92400E]',
+              })}
             </div>
           </div>
 
@@ -174,12 +323,14 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
               <Image src={property.imageUrl} alt={title} fill className="object-cover" sizes="160px" />
             ) : null}
 
-            {property.hasActivePromotion ? (
-              <span
-                data-testid="offer-badge"
-                className="absolute left-1.5 top-1.5 rounded-[7px] bg-[#7C5CFF] px-1.5 py-0.5 text-[8.5px] font-semibold text-white shadow-[0_2px_8px_rgba(124,92,255,.28)]"
-              >
-                {tSearch('offerAvailable')}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/25 to-transparent"
+            />
+
+            {offerBadgeLabel ? (
+              <span data-testid="offer-badge" className={cn('absolute left-1.5 top-1.5 z-[1]', offerBadgeClass)}>
+                {offerBadgeLabel}
               </span>
             ) : null}
           </div>
@@ -239,14 +390,12 @@ export function HomePropertyCard({ property, variant = 'feature' }: HomeProperty
             <div className="mt-auto pt-2">{featureRating}</div>
           </div>
 
-          <div className="flex shrink-0 flex-col justify-end text-start" data-testid="browse-from-price">
-            <div
-              className="text-[17px] font-bold leading-none tabular-nums text-[#0D2046]"
-              data-testid="price-final"
-            >
-              {formatPrice(property.basePrice, property.currency, locale)}
-            </div>
-            <div className="mt-1 text-[10px] font-medium text-[#8794A7]">/{t('perDay')}</div>
+          <div className="flex shrink-0 flex-col justify-end text-start">
+            {offerPriceBlock({
+              priceClass: 'text-[17px] font-bold leading-none tabular-nums text-[#0D2046]',
+              metaClass: 'text-[10px] font-medium text-[#8794A7]',
+              urgencyClass: 'mt-0.5 text-[9px] font-semibold text-[#92400E]',
+            })}
           </div>
         </div>
       </Link>

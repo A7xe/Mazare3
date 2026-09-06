@@ -84,7 +84,7 @@ const depositParams = {
   purpose: 'deposit',
   idempotencyKey: providerIdempotencyKey('pay_deposit_1', 'deposit'),
   description: 'Mazare3 deposit TEST',
-  customer: { name: 'Customer', email: 'customer@mazare3.jo' },
+  customer: { name: 'Customer', email: 'customer@mazare3.jo', phone: '0791234567' },
 };
 
 const saleBody = gw.buildSaleRequestBody(depositParams);

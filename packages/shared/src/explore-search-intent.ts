@@ -379,6 +379,8 @@ export function applyParsedExploreSearchIntent(
     allowsOvernight: base.allowsOvernight,
     allowsEvents: base.allowsEvents,
     featured: base.featured,
+    offersOnly: base.offersOnly,
+    newlyAdded: base.newlyAdded,
     verifiedOnly: base.verifiedOnly,
   };
 

@@ -105,16 +105,16 @@ export type PublicLocationView = {
 };
 
 export function toPublicLocation(property: {
-  city: string;
-  area: string;
-  approximateAddress: string;
+  city: string | null;
+  area: string | null;
+  approximateAddress: string | null;
   latitudeApprox?: number | null;
   longitudeApprox?: number | null;
 }): PublicLocationView {
   return {
-    city: property.city,
-    area: property.area,
-    approximateLocation: property.approximateAddress,
+    city: property.city?.trim() || '',
+    area: property.area?.trim() || '',
+    approximateLocation: property.approximateAddress?.trim() || '',
     latitudeApprox: isFiniteCoordinate(property.latitudeApprox) ? property.latitudeApprox : null,
     longitudeApprox: isFiniteCoordinate(property.longitudeApprox) ? property.longitudeApprox : null,
   };

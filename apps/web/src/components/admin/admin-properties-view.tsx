@@ -76,17 +76,21 @@ export function AdminPropertiesView() {
                 <td className="px-4 py-3 font-medium text-navy">{title}</td>
                 <td className="px-4 py-3">
                   <span className="block">{p.ownerDisplayName}</span>
-                  <span className="text-xs text-muted">{p.ownerEmail}</span>
+                  <span className="text-xs text-muted">{p.ownerEmail ?? '—'}</span>
                 </td>
                 <td className="px-4 py-3">
-                  {p.area} — {p.city}
+                  {p.area && p.city ? `${p.area} — ${p.city}` : p.city || p.area || '—'}
                 </td>
                 <td className="px-4 py-3">
                   <Badge variant="muted">{t(`propertyStatus.${p.status}`)}</Badge>
                 </td>
                 <td className="px-4 py-3 text-xs">{t(`verification.${p.verificationStatus}`)}</td>
                 <td className="px-4 py-3">
-                  <PriceDisplay amount={p.basePrice} currency={p.currency} locale={locale} />
+                  {p.basePrice != null ? (
+                    <PriceDisplay amount={p.basePrice} currency={p.currency} locale={locale} />
+                  ) : (
+                    '—'
+                  )}
                 </td>
                 <td className="px-4 py-3">{p.bookingsCount}</td>
                 <td className="px-4 py-3">

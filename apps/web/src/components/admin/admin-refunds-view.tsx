@@ -79,7 +79,7 @@ export function AdminRefundsView() {
                   <div>
                     <p className="font-mono text-sm font-semibold text-navy">{r.publicCode}</p>
                     <p className="text-sm text-muted">
-                      {r.customerName ?? '—'} · {r.customerEmail}
+                      {r.customerName ?? '—'} · {r.customerEmail ?? '—'}
                     </p>
                     <p className="text-sm">{r.propertyTitleAr}</p>
                   </div>

@@ -81,7 +81,7 @@ export function AdminOwnersView() {
 
   const filtered = q.trim()
     ? owners.filter((o) =>
-        `${o.displayName} ${o.businessName ?? ''} ${o.email}`
+        `${o.displayName} ${o.businessName ?? ''} ${o.email ?? ''}`
           .toLowerCase()
           .includes(q.trim().toLowerCase()),
       )
@@ -156,7 +156,7 @@ export function AdminOwnersView() {
                       <span className="mt-0.5 block text-xs text-muted">{o.businessName}</span>
                     ) : null}
                   </td>
-                  <td className="px-4 py-3">{o.email}</td>
+                  <td className="px-4 py-3">{o.email ?? '—'}</td>
                   <td className="px-4 py-3 text-muted">
                     {o.city && o.area ? `${o.area} — ${o.city}` : '—'}
                   </td>

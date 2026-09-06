@@ -1,7 +1,7 @@
 import { isSendgridConfigured, loadEmailConfig } from '../../config/email-config.js';
 import type { EmailMessage, EmailProvider, EmailSendResult } from './email-provider.interface.js';
 
-/** SendGrid placeholder — no API calls in Phase 9B. */
+/** SendGrid foundation stub — no live API calls. AUTH-3 live send uses Resend. */
 export class SendgridEmailProvider implements EmailProvider {
   readonly name = 'sendgrid';
 

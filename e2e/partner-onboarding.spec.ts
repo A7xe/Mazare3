@@ -75,9 +75,6 @@ test.describe('Partner onboarding E2E', () => {
     await waitWizardStep(page, 'contact');
     await clickWizardNext(page);
 
-    await waitWizardStep(page, 'requirements');
-    await clickWizardNext(page);
-
     await waitWizardStep(page, 'documents');
     const uploads = page.locator('[data-testid^="partner-doc-upload-"]');
     await expect(uploads.first()).toBeAttached({ timeout: 20_000 });

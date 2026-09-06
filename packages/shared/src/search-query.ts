@@ -57,6 +57,8 @@ export function serializePropertySearchQuery(
   if (query.allowsOvernight === true) sp.set('allowsOvernight', 'true');
   if (query.allowsEvents === true) sp.set('allowsEvents', 'true');
   if (query.featured === true) sp.set('featured', 'true');
+  if (query.offersOnly === true) sp.set('offersOnly', 'true');
+  if (query.newlyAdded === true) sp.set('newlyAdded', 'true');
   if (query.verifiedOnly === true || query.verified === true) sp.set('verifiedOnly', 'true');
   if (query.sort && query.sort !== 'recommended') sp.set('sort', String(query.sort));
   if (typeof query.lat === 'number' && Number.isFinite(query.lat)) sp.set('lat', String(query.lat));

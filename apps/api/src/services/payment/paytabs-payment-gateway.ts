@@ -23,6 +23,8 @@ import {
   redactPaytabsSecrets,
   type PaytabsConfig,
 } from '../../config/paytabs-config.js';
+import { AppError } from '../../lib/errors.js';
+import { buildPayTabsCustomerContact } from '../payment-contact.service.js';
 
 export type PaytabsFetch = (
   input: string,
@@ -69,16 +71,7 @@ export class PayTabsPaymentGateway implements PaymentGateway {
         params.description?.slice(0, 120) ||
         `Mazare3 ${params.purpose} ${params.paymentId.slice(0, 8)}`,
       paypage_lang: 'ar',
-      customer_details: {
-        name: params.customer?.name?.trim() || 'Mazare3 Customer',
-        email: params.customer?.email?.trim() || 'customer@mazare3.jo',
-        phone: params.customer?.phone?.trim() || '0790000000',
-        street1: 'Amman',
-        city: 'Amman',
-        state: 'Amman',
-        country: 'JO',
-        zip: '11118',
-      },
+      customer_details: buildPayTabsCustomerDetails(params),
       return: interpolatePaytabsUrl(this.config.returnUrl, params),
       callback: this.config.callbackUrl,
     };
@@ -225,16 +218,7 @@ export class PayTabsPaymentGateway implements PaymentGateway {
         params.description?.slice(0, 120) ||
         `Mazare3 ${params.purpose} ${params.paymentId.slice(0, 8)}`,
       paypage_lang: 'ar',
-      customer_details: {
-        name: params.customer?.name?.trim() || 'Mazare3 Customer',
-        email: params.customer?.email?.trim() || 'customer@mazare3.jo',
-        phone: params.customer?.phone?.trim() || '0790000000',
-        street1: 'Amman',
-        city: 'Amman',
-        state: 'Amman',
-        country: 'JO',
-        zip: '11118',
-      },
+      customer_details: buildPayTabsCustomerDetails(params),
       return: interpolatePaytabsUrl(this.config.returnUrl, params),
       callback: this.config.callbackUrl,
     };
@@ -307,6 +291,30 @@ function interpolatePaytabsUrl(template: string, params: CreatePaymentParams): s
     .replaceAll('{paymentId}', params.paymentId)
     .replaceAll('{purpose}', params.purpose)
     .replaceAll('{locale}', 'ar');
+}
+
+/**
+ * UA-5 — Truthful customer_details only. Never fabricates email/phone/name.
+ * Jordan HPP address defaults are marketplace defaults, not personal identity.
+ */
+function buildPayTabsCustomerDetails(params: CreatePaymentParams) {
+  const c = params.customer;
+  const name = c?.name?.trim() ?? '';
+  const email = c?.email?.trim() ?? '';
+  const phone = c?.phone?.trim() ?? '';
+  const requiredFields: Array<'email' | 'phone' | 'name'> = [];
+  if (!name) requiredFields.push('name');
+  if (!email) requiredFields.push('email');
+  if (!phone) requiredFields.push('phone');
+  if (requiredFields.length > 0) {
+    throw new AppError(
+      422,
+      'PAYMENT_CONTACT_REQUIRED',
+      'Additional contact details are required to continue to payment',
+      { requiredFields },
+    );
+  }
+  return buildPayTabsCustomerContact({ name, email, phone });
 }
 
 /** Safe constructor that throws ProviderNotConfiguredError when env is incomplete. */

@@ -58,6 +58,10 @@ export const propertySearchQuerySchema = z.object({
   allowsOvernight: optionalBoolTrue,
   allowsEvents: optionalBoolTrue,
   featured: optionalBoolTrue,
+  /** Properties with a currently live active promotion (Phase 2I-A). */
+  offersOnly: optionalBoolTrue,
+  /** Properties whose `createdAt` falls in the shared recently-added window. */
+  newlyAdded: optionalBoolTrue,
   verifiedOnly: optionalBoolTrue,
   verified: optionalBoolTrue,
   sort: z.preprocess(

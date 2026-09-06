@@ -83,7 +83,7 @@ export function AdminBookingsView() {
                 <td className="px-4 py-3 font-mono text-xs">{b.publicCode}</td>
                 <td className="px-4 py-3">
                   <span className="block">{b.customerName ?? '—'}</span>
-                  <span className="text-xs text-muted">{b.customerEmail}</span>
+                  <span className="text-xs text-muted">{b.customerEmail ?? '—'}</span>
                 </td>
                 <td className="px-4 py-3">
                   <Link
