@@ -24,7 +24,7 @@ When a PSP is selected, set `CARD_GATEWAY_PROVIDER` to that vendor’s identifie
 
 | Area | Status |
 |------|--------|
-| Policy | `PAYMENT_MODE=full` — customer pays **100%** at checkout; **12%** platform commission on booking total |
+| Policy | Deposit + balance model; **18%** standard / **15%** platform-verified commission on booking total |
 | Active provider | `PAYMENT_PROVIDER=test` — simulate success/failure in dev/QA/E2E only |
 | CliQ / card adapters | **Placeholders** — `createIntent` throws `PROVIDER_NOT_CONFIGURED` |
 | Webhooks | `test` ack only; `cliq` / `card_gateway` return **501** |

@@ -51,6 +51,26 @@ export async function validatePlatformCoupon(
   );
 }
 
+export async function fetchBookingQuote(
+  slug: string,
+  input: {
+    date: string;
+    period: string;
+    guestsCount: number;
+    couponCode?: string;
+  },
+  init?: { signal?: AbortSignal },
+) {
+  return bookingFetch<{ data: import('@mazare3/shared').BookingQuote }>(
+    `/properties/${slug}/booking-quote`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+      signal: init?.signal,
+    },
+  );
+}
+
 export async function createBooking(input: CreateBookingInput) {
   return bookingFetch<{ data: PublicBookingSummary }>('/bookings', {
     method: 'POST',
@@ -66,6 +86,12 @@ export async function fetchRebookIntent(bookingId: string) {
 
 export async function fetchMyBookings() {
   return bookingFetch<{ data: PublicBookingSummary[] }>('/me/bookings', {
+    cache: 'no-store',
+  });
+}
+
+export async function fetchMyBooking(id: string) {
+  return bookingFetch<{ data: PublicBookingSummary }>(`/me/bookings/${id}`, {
     cache: 'no-store',
   });
 }

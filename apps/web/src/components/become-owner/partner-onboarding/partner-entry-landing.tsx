@@ -10,6 +10,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { sanitizeReturnUrl } from '@mazare3/shared';
 import { Button } from '@/components/ui/button';
 import { Link } from '@/i18n/navigation';
 
@@ -24,7 +25,7 @@ const BENEFIT_KEYS = [
 
 const HOW_KEYS = ['apply', 'complete', 'review', 'list'] as const;
 
-const NEED_KEYS = ['identity', 'partner', 'documents', 'payout', 'agreement'] as const;
+const NEED_KEYS = ['identity', 'partner', 'documents', 'agreement'] as const;
 
 type Props = {
   returnUrl: string;
@@ -32,12 +33,22 @@ type Props = {
   onStart?: () => void;
 };
 
+/** Unified Auth chooser handoff — never forces email mode. */
+function partnerAuthHandoffHref(returnUrl: string): string {
+  const safe = sanitizeReturnUrl(returnUrl) ?? '/become-owner';
+  return `/auth?returnUrl=${encodeURIComponent(safe)}`;
+}
+
 export function PartnerEntryLanding({ returnUrl, mode, onStart }: Props) {
   const t = useTranslations('becomeOwner');
+  const authHref = partnerAuthHandoffHref(returnUrl);
 
   return (
     <div className="space-y-10 sm:space-y-12" data-testid="partner-entry-landing">
-      <section className="relative overflow-hidden rounded-[24px] border border-[#DCE6F5] bg-gradient-to-br from-[#F4F8FF] via-white to-[#EEF4FF] px-5 py-10 text-start sm:px-10 sm:py-14">
+      <section
+        className="relative overflow-hidden rounded-[24px] border border-[#DCE6F5] bg-gradient-to-br from-[#F4F8FF] via-white to-[#EEF4FF] px-5 py-8 text-start sm:px-10 sm:py-12"
+        data-testid="partner-acquisition-hero"
+      >
         <div
           aria-hidden
           className="pointer-events-none absolute -end-16 -top-20 h-56 w-56 rounded-full bg-[#2F6EF6]/10 blur-2xl"
@@ -45,39 +56,44 @@ export function PartnerEntryLanding({ returnUrl, mode, onStart }: Props) {
         <p className="text-sm font-semibold text-primary" data-testid="partner-entry-eyebrow">
           {t('entry.eyebrow')}
         </p>
-        <h1 className="mt-3 max-w-2xl font-heading text-[1.85rem] leading-tight text-[#0D2046] sm:text-[2.35rem]">
+        <h1 className="mt-2 max-w-2xl font-heading text-[1.85rem] leading-tight text-[#0D2046] sm:text-[2.35rem]">
           {t('entry.headline')}
         </h1>
         <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-[#53637A] sm:text-base">
           {t('entry.supporting')}
         </p>
-        <p className="mt-3 max-w-xl text-[13px] font-medium text-[#0D2046]/85" data-testid="become-owner-entry-bridge">
+        <p
+          className="mt-2 max-w-xl text-[13px] font-medium text-[#0D2046]/85"
+          data-testid="become-owner-entry-bridge"
+        >
           {t('entryBridge')}
         </p>
 
         {mode === 'guest' ? (
-          <div className="mt-7 max-w-lg rounded-2xl border border-[#D7E3F4] bg-white/90 p-5 shadow-[0_8px_24px_rgba(13,32,70,.04)]" data-testid="partner-auth-bridge">
-            <p className="text-sm font-medium text-[#0D2046]">{t('authBridge.title')}</p>
-            <p className="mt-1 text-[13px] text-[#53637A]">{t('authBridge.body')}</p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <Button asChild className="shadow-soft" data-testid="partner-start-signup">
-                <Link href={`/auth?mode=email&emailMode=signup&returnUrl=${encodeURIComponent(returnUrl)}`}>
-                  {t('authBridge.signup')}
-                </Link>
-              </Button>
-              <Button asChild variant="outline" data-testid="partner-start-login">
-                <Link href={`/auth?returnUrl=${encodeURIComponent(returnUrl)}`}>
-                  {t('authBridge.login')}
-                </Link>
-              </Button>
-            </div>
-            <p className="mt-3 text-[12px] text-[#8A96A8]">{t('authBridge.ctaNote')}</p>
+          <div
+            className="mt-6 flex max-w-lg flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"
+            data-testid="partner-acquisition-ctas"
+          >
+            <Button asChild className="h-12 min-h-12 w-full shadow-soft sm:w-auto sm:min-w-[12rem]">
+              <Link href={authHref} data-testid="partner-start-application">
+                {t('entry.startCta')}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              className="h-12 min-h-12 w-full border-[#D8E3F0] bg-white sm:w-auto sm:min-w-[12rem]"
+            >
+              <Link href={authHref} data-testid="partner-resume-application">
+                {t('entry.resumeCta')}
+              </Link>
+            </Button>
           </div>
         ) : (
-          <div className="mt-7">
+          <div className="mt-6">
             <Button
               type="button"
-              className="shadow-soft"
+              className="h-12 min-h-12 w-full shadow-soft sm:w-auto"
               data-testid="partner-start-application"
               onClick={onStart}
             >

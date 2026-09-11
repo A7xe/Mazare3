@@ -10,7 +10,7 @@ test.describe('Customer account dock destination', () => {
     await expect(page.getByTestId('marketplace-bottom-nav')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('nav-login')).toBeVisible();
     await page.getByTestId('nav-login').click();
-    await expect(page).toHaveURL(/\/ar\/login/);
+    await expect(page).toHaveURL(/\/ar\/auth/);
   });
 
   test('customer Account opens /account in Arabic and English', async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe('Customer account dock destination', () => {
     await page.getByTestId('nav-account').click();
     await expect(page).toHaveURL(/\/ar\/account(?:\/)?$/);
     await expect(page.getByTestId('account-home')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('account-nav-bookings')).toBeVisible();
+    await expect(page.getByTestId('account-home-bookings')).toBeVisible();
     await expect(page.getByTestId('account-home-notifications')).toBeVisible();
 
     await page.goto('/en');
@@ -54,7 +54,7 @@ test.describe('Customer account dock destination', () => {
     await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
     await page.goto('/ar/account');
     await expect(page.getByTestId('account-home')).toBeVisible({ timeout: 20_000 });
-    await page.getByTestId('nav-logout').click();
+    await page.getByTestId('account-home').getByTestId('nav-logout').click();
     await page.waitForURL((url) => !url.pathname.includes('/account'), { timeout: 20_000 });
     await expect(page.getByTestId('nav-login')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('nav-list-property')).toBeVisible();

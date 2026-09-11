@@ -69,15 +69,16 @@ test.describe('Phase 10B.2 Arabic mobile marketplace', () => {
       await page.getByTestId(`property-card-${prop.slug}`).click();
       await expect(page).toHaveURL(new RegExp(`/properties/${prop.slug}`));
       await expect(page).toHaveURL(new RegExp(`date=${date}`));
-      await expect(page.getByTestId('booking-date')).toHaveValue(date);
+      await page.getByTestId('booking-entry-cta').click();
+      await expect(page).toHaveURL(new RegExp(`/properties/${prop.slug}/book`));
+      await expect(page.getByTestId('booking-date')).toHaveValue(date, { timeout: 20_000 });
       await expect(page.getByTestId('booking-period-morning')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.getByTestId('booking-guests')).toHaveValue('6');
-      await expect(page.getByTestId('booking-summary-times')).toBeVisible();
-      await expect(page.getByTestId('booking-summary-deposit')).toBeVisible();
+      await expect(page.getByTestId('booking-summary-deposit')).toBeVisible({ timeout: 20_000 });
       await expect(page.getByTestId('booking-summary-remaining')).toBeVisible();
 
       await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
-      await page.goto(`/ar/properties/${prop.slug}?date=${date}&period=morning&guests=6`);
+      await page.goto(`/ar/properties/${prop.slug}/book?date=${date}&period=morning&guests=6`);
       await expect(page.getByTestId('booking-submit')).toBeEnabled({ timeout: 30_000 });
       await page.getByTestId('booking-submit').click();
       await expect(page).toHaveURL(/\/checkout\//, { timeout: 45_000 });

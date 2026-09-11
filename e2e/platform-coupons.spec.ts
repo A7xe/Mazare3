@@ -91,7 +91,9 @@ test.describe('Platform-funded coupons (10F.2B)', () => {
     await expect(page.getByTestId('platform-coupon-row-active').first()).toBeVisible({ timeout: 15_000 });
 
     await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
-    await page.goto(`/ar/properties/${PROPERTY_SLUG}?date=${slot.date}&period=${slot.period}`);
+    await page.goto(
+      `/ar/properties/${PROPERTY_SLUG}/book?date=${slot.date}&period=${slot.period}`,
+    );
     await expect(page.getByTestId('booking-panel')).toBeVisible({ timeout: 20_000 });
     await selectBookingSlot(page, slot, 4);
     const priceBefore = await page.getByTestId('booking-summary-price').innerText();

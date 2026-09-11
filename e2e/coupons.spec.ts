@@ -74,7 +74,9 @@ test.describe('Owner-funded coupons (10F.2A)', () => {
     await expect(page.getByTestId('coupon-row-active').first()).toBeVisible({ timeout: 15_000 });
 
     await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
-    await page.goto(`/ar/properties/${PROPERTY_SLUG}?date=${slot.date}&period=${slot.period}`);
+    await page.goto(
+      `/ar/properties/${PROPERTY_SLUG}/book?date=${slot.date}&period=${slot.period}`,
+    );
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(page.getByTestId('booking-panel')).toBeVisible({ timeout: 20_000 });
     await selectBookingSlot(page, slot, 4);
@@ -122,7 +124,9 @@ test.describe('Owner-funded coupons (10F.2A)', () => {
       price: nextBody.data!.price,
       status: 'available',
     };
-    await page.goto(`/ar/properties/${PROPERTY_SLUG}?date=${nextSlot.date}&period=${nextSlot.period}`);
+    await page.goto(
+      `/ar/properties/${PROPERTY_SLUG}/book?date=${nextSlot.date}&period=${nextSlot.period}`,
+    );
     await selectBookingSlot(page, nextSlot, 4);
     await page.getByTestId('coupon-input').fill(code);
     await page.getByTestId('coupon-apply').click();

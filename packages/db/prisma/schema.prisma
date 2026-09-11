@@ -367,6 +367,7 @@ model User {
   notificationDeliveries NotificationDelivery[]
   passwordResetTokens    PasswordResetToken[]
   authIdentities         AuthIdentity[]
+  savedPaymentMethods    SavedPaymentMethod[]
   // LoginAbuseState is keyed by HMAC(email), not userId — no User relation.
 
   @@index([role])
@@ -915,6 +916,8 @@ model Booking {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   cancelledAt        DateTime?
+  /// Phase 1 — machine-readable cancel reason (e.g. BALANCE_NOT_PAID, CUSTOMER_CANCEL).
+  cancellationReasonCode String?
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   property Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -1018,6 +1021,37 @@ model PaymentEvent {
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@index([paymentId, createdAt])
+}
+
+/**
+ * CB-5A — persistent PayTabs saved-card vault (token only; never PAN/CVV).
+ * Charging with these tokens is deferred to CB-5B.
+ */
+model SavedPaymentMethod {
+  id                            String          @id @default(cuid())
+  userId                        String
+  provider                      PaymentProvider
+  /** AES-GCM ciphertext of PayTabs persistent card token (pv1.…). Never return to browser. */
+  providerTokenCipher           String
+  /** HMAC fingerprint of plaintext token for uniqueness / dedupe. */
+  providerTokenFingerprint      String
+  providerOriginalTransactionRef String?
+  brand                         String?
+  /** Safe display e.g. Visa •••• 4242 — only when provider metadata allows. */
+  maskedDisplay                 String?
+  last4                         String?
+  expiryMonth                   Int?
+  expiryYear                    Int?
+  isDefault                     Boolean         @default(false)
+  revokedAt                     DateTime?
+  createdAt                     DateTime        @default(now())
+  updatedAt                     DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, providerTokenFingerprint])
+  @@index([userId, revokedAt])
+  @@index([userId, isDefault])
 }
 
 model RefundRequest {

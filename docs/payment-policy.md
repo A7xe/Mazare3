@@ -1,37 +1,46 @@
-# Mazare3 — Payment policy (Phase 10A)
+# Mazare3 — Payment policy (Phase 1)
 
-New bookings use a **deposit + remaining balance** model. Legacy bookings created before this phase stay on **full payment** (`paymentCollectionMode=full`).
+SSOT: `packages/shared/src/marketplace-financial-policy.ts`
 
-## Deposit (عربون)
+## Commission
 
-- `DEFAULT_DEPOSIT_PERCENT` (test default **30**) is the platform rate. Optional per-property override: `Property.depositPercent`.
-- Deposit is a **share of booking total**, not a separate fee.
-- Commission is always calculated on the **full booking total**, never on the deposit alone.
-- Customer service fee (if `CUSTOMER_SERVICE_FEE_PERCENT` > 0) is collected with the **first installment**.
-- Amounts are rounded to 2 decimal places using integer fils (1 JOD = 100 fils).
+- Standard listing: **18%**
+- `Property.verificationStatus === platform_verified`: **15%**
+- Partner KYC alone does **not** grant 15%
+- Commission is snapshotted on booking create (`Booking.platformCommissionPercent`)
+- Custom `PartnerCommercialTerms` override when present
 
-## Remaining balance
+## Deposit + balance
 
-- `remainingAmount = bookingTotal − depositAmount` (snapshot at booking create).
-- `BALANCE_DUE_HOURS_BEFORE_START` (default **24**, **0 allowed**) sets `balanceDueAt` relative to the **slot calendar date at 00:00 UTC**, not a real morning/evening/overnight start time.
-- AvailabilitySlot currently stores `date` + `period` only. Real `startAt`/`endAt` is deferred to **Phase 10B**.
-- After the due time without full payment, `paymentState` becomes `balance_overdue`. No automatic refund, forfeiture, or cancellation in this phase.
+- Default deposit: **30%** of booking total (`DEFAULT_DEPOSIT_PERCENT` / `DEPOSIT_PERCENT`)
+- Optional per-property override: `Property.depositPercent`
+- If booking start is **> 72 hours** away: customer may choose **30% deposit** or **100%**
+- If **≤ 72 hours**: **full payment mandatory** (no deposit option)
+- Balance due: **48 hours before actual booking start** (`bookingStartAt`, Asia/Amman semantics via stored UTC instant)
+- Legacy untimed slots fall back to slot calendar date 00:00 UTC
 
-## Confirmation and payout
+## Unpaid balance
 
-- Successful **deposit** confirms the booking (`status=confirmed`) and holds the slot. **No owner payout.**
-- Successful **balance** (or legacy **full**) sets `paymentState=fully_paid`. Owner payout may become eligible after the visit day + `OWNER_PAYOUT_DELAY_HOURS`, unless a refund/dispute is blocking.
+At balance due with unpaid remainder on a deposit booking → auto-cancel (`cancellationReasonCode=BALANCE_NOT_PAID`), release slot, retain captured deposit only, block payout until financial finalization.
 
-## Hold expiry
+## Customer cancellation (confirmed bookings)
 
-`holdExpiresAt` lives on the **booking**. If the customer never starts payment (no intent required), the booking expires and the slot returns to available.
+Charge % applies to **merchant booking value**. Retained = `min(captured, policyCharge)`. Refund = `max(0, captured - retained)`.
+
+| Hours before start | Charge on merchant value |
+| --- | --- |
+| > 72 | 0% |
+| 48–72 | 30% |
+| 24–48 | 50% |
+| 0–24 | 100% |
+| ≤ 0 | not cancellable |
+
+Retained split: platform = retained × snapshotted commission %; owner = retained − platform.
+
+## Refunds
+
+Paid customer cancel with refund > 0 creates a durable `RefundRequest` automatically (idempotent). PSP refund attempted when safe; failures stay pending with admin note.
 
 ## Configuration (`.env`)
 
-`DEFAULT_DEPOSIT_PERCENT`, `BALANCE_DUE_HOURS_BEFORE_START`, `PAYMENT_CURRENCY`, `PLATFORM_COMMISSION_PERCENT`, `CUSTOMER_SERVICE_FEE_PERCENT`, `OWNER_PAYOUT_DELAY_HOURS`, cancellation hour/percent variables.
-
-Secrets must **not** use the `NEXT_PUBLIC_` prefix.
-
-## Trial / QA payment
-
-When `PAYMENT_SIMULATE_ENABLED=true` (QA/E2E only), checkout offers **card (trial)** and **CliQ (trial)** with simulate success/failure. This is not a live payment connection.
+`PLATFORM_COMMISSION_PERCENT=18`, `PLATFORM_VERIFIED_COMMISSION_PERCENT=15`, `DEFAULT_DEPOSIT_PERCENT=30`, `FULL_PAYMENT_WITHIN_HOURS=72`, `BALANCE_DUE_HOURS_BEFORE_START=48`, cancellation hour boundaries.

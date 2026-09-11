@@ -72,9 +72,11 @@ test.describe('PO-4 transfer details', () => {
 
     await page.screenshot({ path: path.join(SHOT_DIR, 'ar-1440-payout.png'), fullPage: true }).catch(() => undefined);
 
-    // Next → Agreement
+    // Next → Review (agreement lives here after PF-3)
     await page.getByTestId('partner-wizard-next').click();
-    await expect(page.getByTestId('partner-wizard-step-agreement')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('partner-wizard-step-review')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('partner-review-section-agreement')).toBeVisible();
+    await expect(page.getByTestId('partner-wizard-step-agreement')).toHaveCount(0);
 
     // EN smoke
     await page.setViewportSize({ width: 390, height: 844 });

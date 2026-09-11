@@ -1,10 +1,21 @@
 import type { LegalDocument } from '@/lib/legal/types';
+import {
+  BALANCE_DUE_HOURS_BEFORE_START,
+  CANCELLATION_CHARGE_30_UNTIL_HOURS,
+  CANCELLATION_CHARGE_50_UNTIL_HOURS,
+  CANCELLATION_CHARGE_PERCENT_TIER_100,
+  CANCELLATION_CHARGE_PERCENT_TIER_30,
+  CANCELLATION_CHARGE_PERCENT_TIER_50,
+  CANCELLATION_FREE_UNTIL_HOURS,
+  DEPOSIT_PERCENT,
+  FULL_PAYMENT_WITHIN_HOURS,
+} from '@mazare3/shared';
 
 export const cancellationEn: LegalDocument = {
   slug: 'cancellation-refund',
   title: 'Cancellation & Refund Policy',
   intro:
-    'This page matches how Mazare3 currently treats cancellations and refunds. Expected refund amounts are calculated by the platform. Returning money to your original payment method happens only after a refund is processed with the payment provider — it is not always instant.',
+    'This page matches how Mazare3 currently treats cancellations and refunds. Expected refund amounts are calculated by the platform from captured funds and merchant booking value. Returning money to your original payment method happens only after a refund is processed with the payment provider — it is not always instant.',
   sections: [
     {
       id: 'before-payment',
@@ -22,23 +33,34 @@ export const cancellationEn: LegalDocument = {
       ],
     },
     {
+      id: 'payment-plan',
+      title: 'Deposit vs full payment',
+      paragraphs: [
+        `When your booking start is more than ${FULL_PAYMENT_WITHIN_HOURS} hours away, you may pay a ${DEPOSIT_PERCENT}% deposit or pay in full.`,
+        `When your booking start is ${FULL_PAYMENT_WITHIN_HOURS} hours away or less, full payment is required before confirmation proceeds.`,
+        `For deposit bookings, the remaining balance is due ${BALANCE_DUE_HOURS_BEFORE_START} hours before the actual booking start (Jordan local time). If the balance is not paid by then, the booking may be auto-cancelled and the captured deposit retained.`,
+      ],
+    },
+    {
       id: 'after-payment',
       title: 'After a successful deposit or full payment',
       paragraphs: [
         'Once the booking is confirmed and money has been captured, cancellation is allowed only before the booking start. After the start, the platform does not treat the booking as cancellable.',
-        'The platform calculates an expected refund from the amount captured, using hours remaining before the booking start. Your booking page shows the tier that applies to that booking at that moment.',
+        'The platform calculates retention from merchant booking value and caps it at captured funds — you are never charged extra on cancel.',
+        'Your booking page shows the tier that applies using the actual booking period start, not midnight UTC.',
       ],
     },
     {
       id: 'tiers',
       title: 'Current time-based tiers',
       paragraphs: [
-        'These are the operational windows the platform uses today when it calculates an expected refund. They can be changed by the operator; always read the summary on your booking.',
+        'These charge percentages apply to merchant booking value. Retained amount is min(captured, policy charge). Refund is captured minus retained.',
       ],
       bullets: [
-        '72 hours or more before start: expected refund is 100% of the captured amount used in the calculation.',
-        'Less than 72 hours but at least 24 hours before start: expected refund is 50% of that amount.',
-        'Less than 24 hours before start: expected refund is 0%.',
+        `More than ${CANCELLATION_FREE_UNTIL_HOURS} hours before start: 0% charge — full refund of captured funds.`,
+        `Between ${CANCELLATION_CHARGE_30_UNTIL_HOURS + 1} and ${CANCELLATION_FREE_UNTIL_HOURS} hours before start: ${CANCELLATION_CHARGE_PERCENT_TIER_30}% charge on merchant value.`,
+        `Between ${CANCELLATION_CHARGE_50_UNTIL_HOURS + 1} and ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours before start: ${CANCELLATION_CHARGE_PERCENT_TIER_50}% charge on merchant value.`,
+        `Up to ${CANCELLATION_CHARGE_50_UNTIL_HOURS} hours before start: ${CANCELLATION_CHARGE_PERCENT_TIER_100}% charge on merchant value.`,
         'After the booking start: cancellation is not offered.',
       ],
     },
@@ -46,32 +68,29 @@ export const cancellationEn: LegalDocument = {
       id: 'deposit-vs-full',
       title: 'Deposit-only and fully paid bookings',
       paragraphs: [
-        'The calculation uses the amount the platform treats as captured for that booking. If only a deposit was captured, the expected refund is based on that captured amount, not on an unpaid remaining balance. If the booking was later fully paid, captured totals include those successful payments, minus refunds already recorded.',
+        'If only a deposit was captured, retention and refund use that captured amount only — never an unpaid remaining balance. If fully paid later, captured totals include successful payments minus recorded refunds.',
       ],
     },
     {
       id: 'how-money-returns',
       title: 'How money is actually returned',
       paragraphs: [
-        'Cancelling a confirmed paid booking records the expected refund and marks the payment for refund handling. It does not by itself prove that your bank or card issuer has already posted a credit.',
-        'You can also submit a refund request from My bookings for platform review. When the platform marks a refund as processed, it can instruct the payment provider to refund. Timing after that depends on the provider and your bank.',
-        'Mazare3 does not add extra invented percentages on top of the tiers above. Staff review may still be required before a provider refund is sent.',
+        'Cancelling a confirmed paid booking creates a refund obligation when refund > 0. Mazare3 attempts provider refund when safe; otherwise the request stays pending for admin retry.',
+        'You can also submit a refund request from My bookings for platform review.',
       ],
     },
     {
       id: 'partial-full',
       title: 'Partial and full refunds',
       paragraphs: [
-        'A 100% expected refund is a full refund of the captured amount used in the policy calculation. A 50% expected refund is a partial refund of that amount. A 0% tier means the platform does not calculate a refundable amount for that cancellation.',
-        'A booking may later show as partially refunded or fully refunded after recorded refunds. A full refund of captured funds is a platform/payment-provider outcome, not an automatic card credit at the moment you press cancel.',
+        'Refund equals captured minus retained. A 0 JOD refund tier means nothing is returned — not an extra charge beyond captured funds.',
       ],
     },
     {
       id: 'owner-platform',
       title: 'Partner and platform decisions',
       paragraphs: [
-        'Partners accept or decline booking requests that require approval. They do not run the refund calculator. Platform operators can review refund requests and process provider refunds.',
-        'Disputes can be opened from eligible bookings for platform review. Opening a dispute is not the same as an automatic refund.',
+        'Partners accept or decline booking requests that require approval. Platform operators review refund requests and process provider refunds when needed.',
       ],
     },
   ],
@@ -81,13 +100,13 @@ export const cancellationAr: LegalDocument = {
   slug: 'cancellation-refund',
   title: 'سياسة الإلغاء والاسترداد',
   intro:
-    'تطابق هذه الصفحة معاملة مزارع الحالية للإلغاء والاسترداد. تحسب المنصة مبلغ الاسترداد المتوقع. إعادة المال إلى وسيلة الدفع الأصلية تتم فقط بعد معالجة الاسترداد مع مزود الدفع — وليست فورية دائماً.',
+    'تطابق هذه الصفحة معاملة مزارع الحالية للإلغاء والاسترداد. تحسب المنصة الاسترداد من الأموال المحصّلة وقيمة الحجز للشريك. إعادة المال إلى وسيلة الدفع الأصلية تتم فقط بعد معالجة الاسترداد مع مزود الدفع.',
   sections: [
     {
       id: 'before-payment',
       title: 'قبل تحصيل أي مبلغ',
       paragraphs: [
-        'إذا كان حجزك ما زال بانتظار الدفع، أو بانتظار قبول الشريك، يمكنك إلغاءه. تُعاد الفترة إلى التوفر. لا يُجمع عربون في مرحلة انتظار موافقة المالك.',
+        'إذا كان حجزك ما زال بانتظار الدفع، أو بانتظار قبول الشريك، يمكنك إلغاءه. تُعاد الفترة إلى التوفر.',
         'إذا رفض الشريك الطلب، أو انتهت مهلة الرد دون رد، لا يُخصم أي مبلغ.',
       ],
     },
@@ -95,61 +114,63 @@ export const cancellationAr: LegalDocument = {
       id: 'expiry',
       title: 'الحجوزات المنتهية غير المدفوعة',
       paragraphs: [
-        'إذا انتهت نافذة الدفع أو التثبيت قبل دفع ناجح، قد ينتقل الحجز إلى منتهٍ وتعود الفترة متاحة. هذا ليس استرداداً، لأنه لم يُحصَّل مبلغ.',
+        'إذا انتهت نافذة الدفع قبل دفع ناجح، قد ينتقل الحجز إلى منتهٍ. هذا ليس استرداداً لأنه لم يُحصَّل مبلغ.',
+      ],
+    },
+    {
+      id: 'payment-plan',
+      title: 'العربون مقابل الدفع الكامل',
+      paragraphs: [
+        `إذا كانت بداية الحجز بعد أكثر من ${FULL_PAYMENT_WITHIN_HOURS} ساعة، يمكنك دفع عربون ${DEPOSIT_PERCENT}% أو المبلغ كاملاً.`,
+        `إذا كانت البداية خلال ${FULL_PAYMENT_WITHIN_HOURS} ساعة أو أقل، يُطلب الدفع الكامل.`,
+        `لحجوزات العربون، يُستحق الرصيد قبل ${BALANCE_DUE_HOURS_BEFORE_START} ساعة من بداية الحجز الفعلية. إذا لم يُدفع، قد يُلغى الحجز تلقائياً ويُحتفظ بالعربون المحصّل.`,
       ],
     },
     {
       id: 'after-payment',
       title: 'بعد عربون أو دفع كامل ناجح',
       paragraphs: [
-        'بعد تأكيد الحجز وتحصيل المبلغ، يُسمح بالإلغاء فقط قبل بداية الحجز. بعد البداية لا تعامل المنصة الحجز على أنه قابل للإلغاء.',
-        'تحسب المنصة استرداداً متوقعاً من المبلغ المحصّل حسب الساعات المتبقية قبل بداية الحجز. صفحة حجزك تعرض الشريحة التي تنطبق في تلك اللحظة.',
+        'يُسمح بالإلغاء فقط قبل بداية الحجز. بعد البداية لا يُعرض إلغاء.',
+        'تحسب المنصة الاحتفاظ من قيمة الحجز للشريك بحد أقصى المبلغ المحصّل — لا تُخصم مبالغ إضافية عند الإلغاء.',
       ],
     },
     {
       id: 'tiers',
       title: 'الشرائح الزمنية الحالية',
       paragraphs: [
-        'هذه نوافذ التشغيل التي تستخدمها المنصة اليوم عند حساب الاسترداد المتوقع. يمكن للمشغّل تغييرها؛ اقرأ دائماً الملخص على حجزك.',
+        'نسب الاحتفاظ تُطبَّق على قيمة الحجز للشريك. المبلغ المحتفظ = min(المحصّل، رسوم السياسة).',
       ],
       bullets: [
-        'قبل البداية بـ 72 ساعة أو أكثر: الاسترداد المتوقع 100% من المبلغ المحصّل المستخدم في الحساب.',
-        'أقل من 72 ساعة وعلى الأقل 24 ساعة قبل البداية: الاسترداد المتوقع 50% من ذلك المبلغ.',
-        'أقل من 24 ساعة قبل البداية: الاسترداد المتوقع 0%.',
-        'بعد بداية الحجز: لا يُعرض إلغاء.',
+        `أكثر من ${CANCELLATION_FREE_UNTIL_HOURS} ساعة: 0% — استرداد كامل للمحصّل.`,
+        `بين ${CANCELLATION_CHARGE_30_UNTIL_HOURS + 1} و${CANCELLATION_FREE_UNTIL_HOURS} ساعة: ${CANCELLATION_CHARGE_PERCENT_TIER_30}%.`,
+        `بين ${CANCELLATION_CHARGE_50_UNTIL_HOURS + 1} و${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة: ${CANCELLATION_CHARGE_PERCENT_TIER_50}%.`,
+        `حتى ${CANCELLATION_CHARGE_50_UNTIL_HOURS} ساعة: ${CANCELLATION_CHARGE_PERCENT_TIER_100}%.`,
+        'بعد البداية: لا إلغاء.',
       ],
     },
     {
       id: 'deposit-vs-full',
       title: 'العربون فقط والحجز المدفوع بالكامل',
       paragraphs: [
-        'يستخدم الحساب المبلغ الذي تعتبره المنصة محصّلاً لذلك الحجز. إذا حُصّل العربون فقط، يُبنى الاسترداد المتوقع على ذلك المبلغ لا على رصيد غير مدفوع. وإذا دُفع الحجز لاحقاً بالكامل، تشمل المجاميع المحصّلة تلك الدفعات الناجحة ناقص أي استرداد مسجّل.',
+        'إذا حُصّل العربون فقط، يُبنى الاحتفاظ والاسترداد على المحصّل فقط.',
       ],
     },
     {
       id: 'how-money-returns',
-      title: 'كيف يُعاد المال فعلاً',
+      title: 'كيف يُعاد المال',
       paragraphs: [
-        'إلغاء حجز مؤكد مدفوع يسجّل الاسترداد المتوقع ويعلّم الدفعة لمعالجة الاسترداد. هذا وحده لا يثبت أن المصرف أو جهة البطاقة قد أضافت الرصيد.',
-        'يمكنك أيضاً إرسال طلب استرداد من «حجوزاتي» لمراجعة المنصة. عندما تعلّم المنصة الاسترداد كمعالَج يمكنها توجيه مزود الدفع بالرد. الوقت بعد ذلك يعتمد على المزود ومصرفك.',
-        'لا تضيف مزارع نسباً مخترعة فوق الشرائح أعلاه. قد تبقى مراجعة تشغيلية مطلوبة قبل إرسال استرداد المزود.',
+        'إلغاء حجز مدفوع ينشئ التزام استرداد عند refund > 0. تحاول مزارع استرداد المزود عندما يكون آمناً.',
       ],
     },
     {
       id: 'partial-full',
       title: 'الاسترداد الجزئي والكامل',
-      paragraphs: [
-        'استرداد متوقع 100% يعني استرداداً كاملاً للمبلغ المحصّل المستخدم في الحساب. و50% استرداد جزئي لذلك المبلغ. وشريحة 0% تعني أن المنصة لا تحسب مبلغاً قابلاً للرد لذلك الإلغاء.',
-        'قد يظهر الحجز لاحقاً كمسترد جزئياً أو بالكامل بعد استردادات مسجّلة. الاسترداد الكامل للأموال المحصّلة نتيجة للمنصة/مزود الدفع، وليس رصيداً تلقائياً على البطاقة لحظة الضغط على إلغاء.',
-      ],
+      paragraphs: ['الاسترداد = المحصّل − المحتفظ.'],
     },
     {
       id: 'owner-platform',
       title: 'قرارات الشريك والمنصة',
-      paragraphs: [
-        'يقبل الشركاء طلبات الحجز التي تتطلب موافقة أو يرفضونها. لا يشغّلون حاسبة الاسترداد. ويمكن لمشغّلي المنصة مراجعة طلبات الاسترداد ومعالجة استرداد المزود.',
-        'يمكن فتح نزاع من الحجوزات المؤهلة لمراجعة المنصة. فتح النزاع ليس استرداداً تلقائياً.',
-      ],
+      paragraphs: ['يراجع مشغّلو المنصة طلبات الاسترداد ويعالجون استرداد المزود عند الحاجة.'],
     },
   ],
 };

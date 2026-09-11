@@ -78,7 +78,9 @@ export function toCancellationPolicyView(
     refundPercent: result.refundPercent,
     refundableAmount: result.refundableAmount,
     cancellationPenaltyAmount: result.cancellationPenaltyAmount,
-    hoursUntilBookingStart: result.hoursUntilBookingStart,
+    hoursUntilBookingStart: result.hoursUntilStart,
+    chargePercent: result.chargePercent,
+    retainedAmount: result.retainedAmount,
     reason: result.reason,
   };
 }
@@ -127,8 +129,19 @@ export function toPublicBookingSummary(booking: BookingWithRelations): PublicBoo
       cancellationPenaltyAmount: 0,
     };
   } else if (booking.status === 'confirmed' && succeededSum > 0) {
+    const merchantValue =
+      'merchantBookingValue' in booking && booking.merchantBookingValue != null
+        ? decimalToNumber(booking.merchantBookingValue as { toNumber(): number } | number)
+        : decimalToNumber(booking.totalAmount);
+    const commissionPercent = decimalToNumber(booking.platformCommissionPercent);
     cancellationPolicy = toCancellationPolicyView(
-      evaluateCancellationPolicy(succeededSum, booking.slot.date),
+      evaluateCancellationPolicy(
+        merchantValue,
+        succeededSum,
+        booking.bookingStartAt,
+        booking.slot.date,
+        commissionPercent,
+      ),
     );
   }
 

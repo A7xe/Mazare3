@@ -52,8 +52,17 @@ export default defineConfig({
         EMAIL_FROM_NAME: 'Mazare3 QA',
         FRONTEND_URL: WEB_URL,
         NEXT_PUBLIC_APP_URL: WEB_URL,
+        /** Prefer gateway selector so local `.env` PAYMENT_GATEWAY_PROVIDER=paytabs cannot leak into E2E. */
+        PAYMENT_GATEWAY_PROVIDER: 'mock',
         PAYMENT_PROVIDER: 'test',
         PAYMENT_SIMULATE_ENABLED: 'true',
+        /** CB-4 — Managed Form mock seam (HPP remains via create-intent / UI fallback). */
+        PAYTABS_CHECKOUT_MODE: 'managed_form',
+        /** CB-5A — mock vault + save-card opt-in (no real PayTabs). */
+        PAYTABS_TOKENIZATION_ENABLED: 'true',
+        /** CB-5B — default safe customer-present saved-card charge (mock). */
+        PAYTABS_SAVED_CARD_CHARGE_MODE: 'ecom_cvv_redirect',
+        PAYTABS_RECURRING_ENABLED: 'false',
         PRISMA_DISABLE_QUERY_LOG: 'true',
         /** UA-6A — test-safe phone OTP + Google seams (process-scoped; not real .env). */
         SMS_OTP_PROVIDER: 'memory',

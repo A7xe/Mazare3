@@ -18,9 +18,18 @@ export function isAuthPagePath(pathname: string) {
   );
 }
 
-/** Admin and checkout keep the operational SiteHeader. */
+/** Dedicated booking configuration: /properties/:slug/book */
+export function isBookingConfigPath(pathname: string) {
+  return /^\/properties\/[^/]+\/book\/?$/.test(pathname);
+}
+
+/** Admin, checkout, and booking-config keep operational SiteHeader (no marketplace dock). */
 export function isAdminOrCheckout(pathname: string) {
-  return pathname.startsWith('/admin') || pathname.startsWith('/checkout');
+  return (
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/checkout') ||
+    isBookingConfigPath(pathname)
+  );
 }
 
 /** Admin, auth, and checkout flows — excludes marketplace chrome. */
@@ -40,7 +49,8 @@ export function SiteChrome() {
   const showAuthHeader = ready && Boolean(user) && shouldShowAuthenticatedHeader(pathname);
 
   if (isAuthPagePath(pathname)) {
-    return null;
+    // Marketplace dock stays available on auth (home / explore / account entry).
+    return <MarketplaceBottomNav />;
   }
 
   if (isAdminOrCheckout(pathname)) {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Headphones } from 'lucide-react';
+import { Headphones, MessageSquare } from 'lucide-react';
 import type { SupportTicketCategory, SupportTicketSummary } from '@mazare3/shared';
 import { SUPPORT_TICKET_CATEGORIES } from '@mazare3/shared';
 import { Button } from '@/components/ui/button';
@@ -16,11 +16,15 @@ export function BookingSupportForm({
   bookingPublicCode,
   tickets,
   onSubmitted,
+  triggerLabel,
+  triggerClassName,
 }: {
   bookingId: string;
   bookingPublicCode: string;
   tickets: SupportTicketSummary[];
   onSubmitted: () => Promise<void> | void;
+  triggerLabel?: string;
+  triggerClassName?: string;
 }) {
   const t = useTranslations('support');
   const [open, setOpen] = useState(false);
@@ -131,11 +135,15 @@ export function BookingSupportForm({
             size="sm"
             variant="outline"
             data-testid={`booking-support-open-${bookingId}`}
-            className="gap-1"
+            className={triggerClassName ?? 'gap-1'}
             onClick={() => setOpen(true)}
           >
-            <Headphones className="h-4 w-4" />
-            {t('getHelp')}
+            {triggerLabel ? (
+              <MessageSquare className="h-4 w-4" />
+            ) : (
+              <Headphones className="h-4 w-4" />
+            )}
+            {triggerLabel ?? t('getHelp')}
           </Button>
         )
       ) : created ? (

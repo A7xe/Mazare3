@@ -55,21 +55,24 @@ const migrationsDir = join(root, 'packages/db/prisma/migrations');
 console.log('\n— Guest entry —');
 {
   expect('1 partner-entry-landing exists', landing.includes('partner-entry-landing'));
-  expect('2 guest auth bridge', landing.includes('partner-auth-bridge'));
-  expect('3 guest signup CTA', landing.includes('partner-start-signup'));
-  expect('4 guest login CTA', landing.includes('partner-start-login'));
-  expect('5 become-owner uses landing for guests', view.includes('mode="guest"'));
-  expect('6 how it works section', landing.includes('partner-how-it-works'));
-  expect('7 requirements preview', landing.includes('partner-requirements-preview'));
+  expect('2 guest acquisition hero', landing.includes('partner-acquisition-hero'));
+  expect('3 guest Start CTA', landing.includes('partner-start-application'));
+  expect('4 guest Resume CTA', landing.includes('partner-resume-application'));
+  expect('5 no primary Login/Signup auth bridge', !landing.includes('partner-auth-bridge'));
+  expect('5b no forced email signup handoff', !landing.includes('emailMode=signup'));
+  expect('5c Unified Auth handoff helper', landing.includes('partnerAuthHandoffHref') || landing.includes('sanitizeReturnUrl'));
+  expect('6 become-owner uses landing for guests', view.includes('mode="guest"'));
+  expect('7 how it works section', landing.includes('partner-how-it-works'));
+  expect('8 requirements preview', landing.includes('partner-requirements-preview'));
 }
 
 console.log('\n— Start / continue —');
 {
-  expect('8 start application CTA', landing.includes('partner-start-application'));
-  expect('9 continue application CTA', view.includes('partner-continue-application'));
-  expect('10 meaningful progress helper', model.includes('hasMeaningfulPartnerProgress'));
-  expect('11 no property draft create in partner view', !view.includes('createOwnerPropertyDraft'));
-  expect('12 fetchPartnerOnboarding resume', view.includes('fetchPartnerOnboarding'));
+  expect('9 start application CTA', landing.includes('partner-start-application'));
+  expect('10 continue application CTA', view.includes('partner-continue-application'));
+  expect('11 meaningful progress helper', model.includes('hasMeaningfulPartnerProgress'));
+  expect('12 no property draft create in partner view', !view.includes('createOwnerPropertyDraft'));
+  expect('13 fetchPartnerOnboarding resume', view.includes('fetchPartnerOnboarding'));
 }
 
 console.log('\n— Progress truthfulness —');
@@ -80,24 +83,27 @@ console.log('\n— Progress truthfulness —');
   expect('16 visiting step must not auto-complete comment/logic', model.includes('does not mark it complete'));
   expect('17 partnerProgressPercent', model.includes('partnerProgressPercent'));
   expect(
-    '18 six domain steps array',
+    '18 four domain steps array',
     model.includes("'entity'") &&
       model.includes("'contact'") &&
       model.includes("'documents'") &&
-      model.includes("'payout'") &&
-      model.includes("'agreement'") &&
       model.includes("'review'") &&
+      !/'payout',\s*'review'/.test(model.match(/PARTNER_ONBOARDING_STEPS = \[[\s\S]*?\] as const/)?.[0] ?? 'payout') &&
       !/'contact',\s*'requirements',\s*'documents'/.test(model),
   );
   expect(
-    '19 PARTNER_ONBOARDING_STEPS length 6',
+    '19 PARTNER_ONBOARDING_STEPS length 4',
     model.includes('PARTNER_ONBOARDING_STEPS') &&
-      /entity',\s*'contact',\s*'documents',\s*'payout',\s*'agreement',\s*'review'/.test(model),
+      /entity',\s*'contact',\s*'documents',\s*'review'/.test(model),
   );
   expect(
     '19b legacy requirements step aliases to documents',
     model.includes('resolvePartnerOnboardingStepId') &&
       model.includes("requirements: 'documents'"),
+  );
+  expect(
+    '19c legacy agreement aliases to review',
+    model.includes("agreement: 'review'"),
   );
 }
 
@@ -108,13 +114,17 @@ console.log('\n— Shell / status —');
   expect('22 stepper aria-current', stepper.includes("aria-current={active ? 'step'"));
   expect('23 right rail', rail.includes('partner-onboarding-rail'));
   expect('24 no listing preview rail', !rail.includes('add-farm-preview') && !rail.includes('Sponsored'));
-  expect('25 submitted status UX', status.includes('submittedTitle') || status.includes('submittedBody'));
-  expect('26 under review status UX', status.includes('underReviewTitle'));
-  expect('27 changes requested status', status.includes('changesTitle'));
-  expect('28 rejected status', status.includes('rejectedTitle'));
+  expect('25 submitted status UX', status.includes('tracking.submittedTitle') || status.includes('submittedTitle'));
+  expect('26 under review status UX', status.includes('tracking.underReviewTitle') || status.includes('underReviewTitle'));
+  expect('27 changes requested status', status.includes('tracking.changesTitle') || status.includes('changesTitle'));
+  expect('28 rejected status', status.includes('tracking.rejectedTitle') || status.includes('rejectedTitle'));
   expect('29 pending hides wizard via showStatusOnly', view.includes('showStatusOnly'));
   expect('30 changes_requested editable statuses', model.includes("'changes_requested'"));
-  expect('31 approved redirects Add Farm', view.includes("router.replace('/owner/properties/new')"));
+  expect(
+    '31 approved shows tracking + Add Farm CTA (PF-4)',
+    !view.includes("router.replace('/owner/properties/new')") &&
+      status.includes('partner-go-add-farm'),
+  );
   expect('32 under_review in pending list', model.includes("'under_review'"));
   expect('33 submitted in pending list', model.includes("'submitted'"));
 }
@@ -122,7 +132,7 @@ console.log('\n— Shell / status —');
 console.log('\n— Privacy / truthfulness —');
 {
   expect('34 docs privacy copy in rail', rail.includes('docsPrivacyBody'));
-  expect('35 payout privacy copy in rail', rail.includes('payoutPrivacyBody'));
+  expect('35 payout privacy copy preserved for post-approval', rail.includes('payoutPrivacyBody') || model.includes('OWNER_PAYOUT_SETUP_HREF'));
   expect('36 no fake SLA key', status.includes('noSla'));
   expect('37 EN noSLA has no 24h claim', !String(en.becomeOwner.statusUx?.noSla ?? '').includes('24'));
   expect('38 no OTP', !view.toLowerCase().includes('otp') && !landing.toLowerCase().includes('otp'));
@@ -142,8 +152,8 @@ console.log('\n— Routing / schema / i18n —');
   expect('42 approved owner wizard href', entryRouting.includes("'/owner/properties/new'"));
   expect('43 EN entry headline', Boolean(en.becomeOwner.entry?.headline));
   expect('44 AR entry headline', Boolean(ar.becomeOwner.entry?.headline));
-  expect('45 EN auth bridge', Boolean(en.becomeOwner.authBridge?.body));
-  expect('46 AR auth bridge', Boolean(ar.becomeOwner.authBridge?.body));
+  expect('45 EN resume CTA', en.becomeOwner.entry.resumeCta?.includes('continue') || en.becomeOwner.entry.resumeCta?.includes('already'));
+  expect('46 AR resume CTA', ar.becomeOwner.entry.resumeCta === 'لدي طلب سابق — متابعة الطلب');
   expect('47 EN shell progress', Boolean(en.becomeOwner.shell?.progressTitle));
   expect('48 AR docs privacy', String(ar.becomeOwner.shell?.docsPrivacyBody ?? '').includes('زوار'));
   expect('49 no PO-1 migration invent', !existsSync(join(migrationsDir, '20260831130000_po1')));
@@ -154,6 +164,8 @@ console.log('\n— Routing / schema / i18n —');
   expect('54 start CTA AR', ar.becomeOwner.entry.startCta === 'ابدأ طلب الانضمام');
   expect('55 continue CTA EN', en.becomeOwner.entry.continueCta === 'Continue your application');
   expect('56 continue CTA AR', ar.becomeOwner.entry.continueCta === 'أكمل طلب الانضمام');
+  expect('57 AR eyebrow', ar.becomeOwner.entry.eyebrow === 'انضم كشريك');
+  expect('58 EN eyebrow partner', /partner/i.test(String(en.becomeOwner.entry.eyebrow)));
 }
 
 console.log(`\nPO-1 Partner Onboarding shell QA: ${passed} passed, ${failed} failed\n`);

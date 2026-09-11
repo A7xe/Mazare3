@@ -48,6 +48,38 @@ expect('1 canonical /auth page exists', existsSync(authPage));
 expect('2 AR unified title', ar.includes('أهلاً بك في مزارع'));
 expect('3 EN unified title', en.includes('Welcome to Mazare3'));
 expect('4 mobile-first auth card', unified.includes('max-w-[400px]') || unified.includes('rounded-3xl'));
+expect(
+  '4b immersive auth shell for unified',
+  read('apps/web/src/components/auth/auth-shell.tsx').includes('data-auth-shell="immersive"') &&
+    read('apps/web/src/components/auth/auth-shell.tsx').includes('hero-banner.png') &&
+    read('apps/web/src/components/auth/auth-shell.tsx').includes('auth-welcome-to'),
+);
+expect(
+  '4b2 immersive auth has no overlapping brand logo',
+  (() => {
+    const shellSrc = read('apps/web/src/components/auth/auth-shell.tsx');
+    const immersivePart = shellSrc.split('ClassicAuthShell')[0] ?? shellSrc;
+    return (
+      !immersivePart.includes('mazare3.png') &&
+      !immersivePart.includes('data-testid="auth-shell-brand"')
+    );
+  })(),
+);
+expect(
+  '4c chooser uses pill CTAs',
+  unified.includes('rounded-full') && unified.includes('auth-continue-google'),
+);
+expect(
+  '4d no skip CTA on immersive auth',
+  !read('apps/web/src/components/auth/auth-shell.tsx').includes('auth-skip'),
+);
+expect(
+  '4e auth shows marketplace bottom nav',
+  read('apps/web/src/components/layout/site-chrome.tsx').includes('MarketplaceBottomNav') &&
+    /isAuthPagePath[\s\S]*MarketplaceBottomNav/.test(
+      read('apps/web/src/components/layout/site-chrome.tsx'),
+    ),
+);
 expect('5 capability endpoint', routes.includes("/capabilities") && caps.includes('getAuthCapabilities'));
 expect('6 email always available', caps.includes('emailPassword: { available: true }'));
 expect('7 phone hidden when unavailable', phonePublic.includes('isPhoneAuthPubliclyAvailable') && phonePublic.includes('memory'));

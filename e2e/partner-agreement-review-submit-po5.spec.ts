@@ -59,19 +59,19 @@ test.describe('PO-5 agreement review submit', () => {
     if (await start.isVisible().catch(() => false)) await start.click();
     await expect(page.getByTestId('partner-onboarding-shell')).toBeVisible({ timeout: 30_000 });
 
-    // Step 1 — Partner info
+    // Step 1 — About you
     await expect(page.getByTestId('partner-wizard-step-entity')).toBeVisible();
-    await page.getByTestId('partner-entity-individual').click();
     await page.getByTestId('owner-apply-displayName').fill('شريك PO5');
     await page.getByTestId('owner-apply-city').fill('عمان');
     await page.getByTestId('owner-apply-area').fill('خلدا');
+    await clickWizardNext(page);
+
+    // Step 2 — Partner details
+    await expect(page.getByTestId('partner-wizard-step-contact')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('partner-entity-individual').click();
     await page.getByTestId('owner-apply-bio').fill(
       'نبذة تشغيلية واضحة لطلب شراكة مزارع في مرحلة مراجعة الاتفاقية والإرسال.',
     );
-    await clickWizardNext(page);
-
-    // Step 2 — Contact
-    await expect(page.getByTestId('partner-wizard-step-contact')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('owner-apply-phone').fill('0791234599');
     await clickWizardNext(page);
 
@@ -100,8 +100,10 @@ test.describe('PO-5 agreement review submit', () => {
     await expect(page.getByTestId('partner-iban-masked')).not.toContainText(SYNTH_IBAN);
     await clickWizardNext(page);
 
-    // Step 5 — Agreement
-    await expect(page.getByTestId('partner-wizard-step-agreement')).toBeVisible({ timeout: 20_000 });
+    // Step 5 — Review + Agreement (PF-3)
+    await expect(page.getByTestId('partner-wizard-step-review')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('partner-wizard-step-agreement')).toHaveCount(0);
+    await expect(page.getByTestId('partner-review-section-agreement')).toBeVisible();
     await expect(page.getByTestId('partner-agreement-content')).toBeVisible();
     await page.screenshot({ path: path.join(SHOT_DIR, 'ar-390-agreement.png'), fullPage: true }).catch(() => undefined);
 
@@ -114,10 +116,7 @@ test.describe('PO-5 agreement review submit', () => {
     await expect(page.getByTestId('partner-agreement-accepted')).not.toContainText(/معتمد|Approved partner/i);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.screenshot({ path: path.join(SHOT_DIR, 'ar-1440-agreement.png'), fullPage: true }).catch(() => undefined);
-    await clickWizardNext(page);
 
-    // Step 6 — Review
-    await expect(page.getByTestId('partner-wizard-step-review')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('partner-review-checklist')).toBeVisible();
     await expect(page.getByTestId('partner-review-applicant-vs-admin')).toBeVisible();
     await expect(page.getByTestId('partner-review-what-next')).toBeVisible();

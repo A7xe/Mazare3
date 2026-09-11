@@ -316,7 +316,10 @@ export async function getAdminPartnerDetail(ownerProfileId: string): Promise<Adm
 export async function reviewPartnerDocument(params: ReviewPartnerDocumentParams): Promise<AdminPartnerDetail> {
   const profile = await prisma.ownerProfile.findUnique({
     where: { id: params.ownerProfileId },
-    select: { userId: true },
+    select: {
+      userId: true,
+      verificationProfile: { select: { verificationStatus: true } },
+    },
   });
   if (!profile) throw new AppError(404, 'NOT_FOUND', 'Partner not found');
   const doc = await prisma.ownerDocument.findFirst({
@@ -342,22 +345,29 @@ export async function reviewPartnerDocument(params: ReviewPartnerDocumentParams)
     },
   });
   if (params.input.status === 'rejected') {
-    await prisma.ownerVerificationProfile.update({
-      where: { ownerProfileId: params.ownerProfileId },
-      data: {
-        changeRequestReason: rejectReason,
-        verificationStatus: PartnerVerificationStatus.changes_requested,
-        changeRequestAt: new Date(),
-      },
-    });
-    await prisma.ownerOnboardingChangeRequest.create({
-      data: {
-        ownerProfileId: params.ownerProfileId,
-        fieldKey: `document:${doc.documentType}`,
-        reason: rejectReason,
-        createdByUserId: params.actorUserId,
-      },
-    });
+    const isPayoutProof = doc.documentType === 'payout_proof';
+    const approvedPartner =
+      profile.verificationProfile?.verificationStatus === PartnerVerificationStatus.approved ||
+      profile.verificationProfile?.verificationStatus === PartnerVerificationStatus.legacy_approved;
+    // PF-5: payout proof corrections stay in financial review — do not demote Partner KYC.
+    if (!(approvedPartner && isPayoutProof)) {
+      await prisma.ownerVerificationProfile.update({
+        where: { ownerProfileId: params.ownerProfileId },
+        data: {
+          changeRequestReason: rejectReason,
+          verificationStatus: PartnerVerificationStatus.changes_requested,
+          changeRequestAt: new Date(),
+        },
+      });
+      await prisma.ownerOnboardingChangeRequest.create({
+        data: {
+          ownerProfileId: params.ownerProfileId,
+          fieldKey: `document:${doc.documentType}`,
+          reason: rejectReason,
+          createdByUserId: params.actorUserId,
+        },
+      });
+    }
     void notifyPartnerDocumentRejected({
       ownerUserId: profile.userId,
       ownerProfileId: params.ownerProfileId,

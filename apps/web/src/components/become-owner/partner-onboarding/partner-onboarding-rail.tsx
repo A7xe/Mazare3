@@ -74,15 +74,11 @@ export function PartnerOnboardingRail({ current, completion, requirements = [] }
         </div>
       </section>
 
-      {(current === 'contact' || current === 'documents' || current === 'payout') && (
+      {(current === 'contact' || current === 'documents') && (
         <section
           className="rounded-[18px] border border-[#E5EAF1] bg-white p-4"
           data-testid={
-            current === 'contact'
-              ? 'partner-contact-privacy-rail'
-              : current === 'documents'
-                ? 'partner-documents-privacy'
-                : 'partner-payout-privacy'
+            current === 'contact' ? 'partner-contact-privacy-rail' : 'partner-documents-privacy'
           }
         >
           <div className="flex gap-2">
@@ -91,16 +87,10 @@ export function PartnerOnboardingRail({ current, completion, requirements = [] }
               <h2 className="text-[14px] font-bold text-[#0D2046]">
                 {current === 'contact'
                   ? t('shell.contactPrivacyTitle')
-                  : current === 'documents'
-                    ? t('shell.docsPrivacyTitle')
-                    : t('shell.payoutPrivacyTitle')}
+                  : t('shell.docsPrivacyTitle')}
               </h2>
               <p className="mt-1 text-[12px] leading-relaxed text-[#53637A]">
-                {current === 'contact'
-                  ? t('contact.privacyNote')
-                  : current === 'documents'
-                    ? t('shell.docsPrivacyBody')
-                    : t('shell.payoutPrivacyBody')}
+                {current === 'contact' ? t('contact.privacyNote') : t('shell.docsPrivacyBody')}
               </p>
             </div>
           </div>

@@ -35,7 +35,7 @@ test.describe('Customer account profile landing', () => {
 
   test('guest is gated away from /account', async ({ page }) => {
     await page.goto('/ar/account');
-    await page.waitForURL(/\/ar\/login\?returnUrl=/, { timeout: 20_000 });
+    await page.waitForURL(/\/ar\/auth\?returnUrl=/, { timeout: 20_000 });
     expect(page.url()).toContain('returnUrl');
   });
 
@@ -80,7 +80,7 @@ test.describe('Customer account profile landing', () => {
     await expect(page).toHaveURL(/\/ar\/account\/notifications/);
 
     await page.goto('/ar/account');
-    await page.getByTestId('nav-logout').click();
+    await page.getByTestId('account-home').getByTestId('nav-logout').click();
     await page.waitForURL((url) => !url.pathname.includes('/account'), { timeout: 20_000 });
     await expect(page.getByTestId('nav-login')).toBeVisible({ timeout: 20_000 });
   });

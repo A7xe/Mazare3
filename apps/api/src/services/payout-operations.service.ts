@@ -10,6 +10,7 @@ import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
 import { notifyPayoutMarkedPaid } from './notification.service.js';
 import { getBookingOperationsBlock } from '../lib/operations-blocking.js';
+import { assertOwnerHasReviewedPayoutDestination } from '../lib/owner-payout-readiness.js';
 import {
   computePayoutAvailableAt,
   resolvePayoutStatus,
@@ -179,6 +180,8 @@ export async function markAdminPayoutPaid(
   if (new Date() < payoutAvailableAt) {
     throw new AppError(400, 'PAYOUT_NOT_ELIGIBLE', 'Owner payout is not yet eligible');
   }
+
+  await assertOwnerHasReviewedPayoutDestination(payment.booking.property.ownerId);
 
   const slotDate = payment.booking.slot.date;
   const periodFrom = slotDate;

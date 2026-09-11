@@ -17,7 +17,14 @@ import {
 } from '@/lib/api-admin';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 
-export function AdminPartnerSettlements({ ownerId }: { ownerId: string }) {
+export function AdminPartnerSettlements({
+  ownerId,
+  payoutReady = false,
+}: {
+  ownerId: string;
+  /** True when OwnerPayoutProfile.reviewStatus === reviewed */
+  payoutReady?: boolean;
+}) {
   const t = useTranslations('admin');
   const locale = useLocale() as 'ar' | 'en';
   const [through, setThrough] = useState(() => new Date().toISOString().slice(0, 10));
@@ -152,6 +159,14 @@ export function AdminPartnerSettlements({ ownerId }: { ownerId: string }) {
                   ) : null}
                   {s.status === 'ready' ? (
                     <div className="flex flex-wrap gap-2">
+                      {!payoutReady ? (
+                        <p
+                          className="w-full text-xs text-amber-800"
+                          data-testid={`admin-settlement-payout-incomplete-${s.id}`}
+                        >
+                          {t('settlements.payoutIncomplete')}
+                        </p>
+                      ) : null}
                       <Input
                         placeholder={t('settlements.reference')}
                         value={refById[s.id] ?? ''}
@@ -160,11 +175,15 @@ export function AdminPartnerSettlements({ ownerId }: { ownerId: string }) {
                       <Button
                         size="sm"
                         data-testid={`admin-settlement-pay-${s.id}`}
-                        disabled={busy}
+                        disabled={busy || !payoutReady}
                         onClick={() =>
                           void markAdminSettlementPaid(s.id, {
                             paymentReference: refById[s.id] || 'MANUAL',
-                          }).then(load)
+                          })
+                            .then(load)
+                            .catch((e) =>
+                              setError(e instanceof Error ? e.message : t('loadError')),
+                            )
                         }
                       >
                         {t('settlements.markPaid')}

@@ -16,6 +16,10 @@ export const PAYOUT_EXCLUSION_REASONS = [
 
 export type PayoutExclusionReason = (typeof PAYOUT_EXCLUSION_REASONS)[number];
 
+/**
+ * Phase 1: cancelled bookings may still pay owner retained cancellation money once
+ * refunds are finalized (none / processed / rejected) and ownerNet > 0.
+ */
 export function classifyPayoutEligibility(params: {
   purpose: string;
   paymentStatus: string;
@@ -23,26 +27,43 @@ export function classifyPayoutEligibility(params: {
   paymentState: string;
   refundStatus: string;
   slotDate: Date;
+  bookingStartAt?: Date | null;
   payoutAvailableAt: Date | null;
   ownerPayoutRecordStatus?: string | null;
+  ownerNetPayoutAmount?: number;
+  cancellationPenaltyAmount?: number | null;
   operationsBlock: { blocked: boolean; reason: string | null };
   reservedInOtherSettlement: boolean;
   now?: Date;
 }): { eligible: boolean; reason: PayoutExclusionReason | null; payoutStatus: PayoutStatus } {
   const now = params.now ?? new Date();
+  const ownerNet = params.ownerNetPayoutAmount ?? 0;
+  const retained = params.cancellationPenaltyAmount ?? 0;
+  const isCancellationRetention =
+    params.bookingStatus === BookingStatus.cancelled &&
+    retained > 0 &&
+    ownerNet > 0 &&
+    (params.refundStatus === 'none' ||
+      params.refundStatus === 'processed' ||
+      params.refundStatus === 'rejected');
 
-  if (params.purpose === 'deposit') {
-    return { eligible: false, reason: 'deposit_payment', payoutStatus: PayoutStatus.not_ready };
-  }
   if (params.paymentStatus !== PaymentStatus.succeeded) {
     return { eligible: false, reason: 'not_succeeded', payoutStatus: PayoutStatus.not_ready };
   }
-  if (params.paymentState !== 'fully_paid') {
+
+  // Normal completed bookings: deposit installments never pay out alone.
+  if (params.purpose === 'deposit' && !isCancellationRetention) {
+    return { eligible: false, reason: 'deposit_payment', payoutStatus: PayoutStatus.not_ready };
+  }
+
+  if (!isCancellationRetention && params.paymentState !== 'fully_paid') {
     return { eligible: false, reason: 'not_fully_paid', payoutStatus: PayoutStatus.not_ready };
   }
-  if (params.bookingStatus === BookingStatus.cancelled) {
+
+  if (params.bookingStatus === BookingStatus.cancelled && !isCancellationRetention) {
     return { eligible: false, reason: 'cancelled_booking', payoutStatus: PayoutStatus.blocked };
   }
+
   if (params.ownerPayoutRecordStatus === 'paid') {
     return { eligible: false, reason: 'already_paid', payoutStatus: PayoutStatus.paid };
   }
@@ -56,14 +77,16 @@ export function classifyPayoutEligibility(params: {
     return { eligible: false, reason, payoutStatus: PayoutStatus.blocked };
   }
 
-  if (hoursUntilBookingStart(params.slotDate, now) > 0) {
+  // Retention payouts unlock after financial finalization (refund none/processed),
+  // without waiting for the original visit window.
+  if (!isCancellationRetention && hoursUntilBookingStart(params.bookingStartAt, params.slotDate, now) > 0) {
     return { eligible: false, reason: 'visit_not_passed', payoutStatus: PayoutStatus.pending };
   }
 
   const payoutStatus = resolvePayoutStatus({
     paymentSucceeded: true,
     bookingFullyPaid: true,
-    bookingCancelled: false,
+    bookingCancelled: params.bookingStatus === BookingStatus.cancelled,
     refundStatus: params.refundStatus,
     payoutAvailableAt: params.payoutAvailableAt,
     now,

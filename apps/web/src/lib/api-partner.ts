@@ -86,9 +86,10 @@ export type PartnerAcceptedAgreementView = {
 };
 
 export type PartnerOnboardingView = {
-  ownerProfileId: string;
-  ownerStatus: string;
-  verificationStatus: PartnerVerificationStatus;
+  started: boolean;
+  ownerProfileId: string | null;
+  ownerStatus: string | null;
+  verificationStatus: PartnerVerificationStatus | null;
   entityType: PartnerEntityType | null;
   legacyApproved: boolean;
   complianceNotice: boolean;
@@ -105,6 +106,12 @@ export type PartnerOnboardingView = {
   operatingArea: string | null;
   contactEmail: string | null;
   changeRequestReason: string | null;
+  openChangeRequests: {
+    id: string;
+    fieldKey: string;
+    reason: string;
+    createdAt: string;
+  }[];
   rejectionReason: string | null;
   suspensionReason: string | null;
   submittedAt: string | null;
@@ -118,8 +125,8 @@ export type PartnerOnboardingView = {
     termsId: string | null;
   };
   readiness: PartnerReadiness;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: string | null;
+  updatedAt: string | null;
 };
 
 export type PartnerRequirementRow = {
@@ -187,6 +194,10 @@ export async function patchPartnerOnboarding(input: PatchPartnerOnboardingProfil
 
 export async function fetchPartnerRequirements() {
   return partnerFetch<{ data: PartnerRequirementRow[] }>('/owner/onboarding/requirements');
+}
+
+export async function fetchOwnerPayoutRequirements() {
+  return partnerFetch<{ data: PartnerRequirementRow[] }>('/owner/payout-requirements');
 }
 
 export async function uploadPartnerDocument(file: File, requirementId: string) {

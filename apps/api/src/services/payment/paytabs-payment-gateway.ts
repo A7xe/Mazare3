@@ -18,6 +18,7 @@ import {
 } from './paytabs-signature.js';
 import {
   assertPaytabsRuntimeSafety,
+  isTrustedPaytabsRedirectUrl,
   loadPaytabsConfig,
   maskPaytabsProfileId,
   redactPaytabsSecrets,
@@ -25,6 +26,9 @@ import {
 } from '../../config/paytabs-config.js';
 import { AppError } from '../../lib/errors.js';
 import { buildPayTabsCustomerContact } from '../payment-contact.service.js';
+import {
+  extractPaytabsPersistentCardCapture,
+} from './paytabs-card-token.js';
 
 export type PaytabsFetch = (
   input: string,
@@ -59,28 +63,20 @@ export class PayTabsPaymentGateway implements PaymentGateway {
   }
 
   async createIntent(params: CreatePaymentParams): Promise<ProviderIntentResult> {
-    const amount = formatPaytabsAmount(params.amount);
-    const body = {
-      profile_id: Number(this.config.profileId),
-      tran_type: 'sale',
-      tran_class: 'ecom',
-      cart_id: params.idempotencyKey,
-      cart_currency: this.config.currency,
-      cart_amount: amount,
-      cart_description:
-        params.description?.slice(0, 120) ||
-        `Mazare3 ${params.purpose} ${params.paymentId.slice(0, 8)}`,
-      paypage_lang: 'ar',
-      customer_details: buildPayTabsCustomerDetails(params),
-      return: interpolatePaytabsUrl(this.config.returnUrl, params),
-      callback: this.config.callbackUrl,
-    };
+    const token = params.paymentToken?.trim();
+    if (token) {
+      return this.createManagedFormSale(params, token);
+    }
 
+    const body = this.buildSaleRequestBody(params);
     const json = (await this.postJson('/payment/request', body)) as Record<string, unknown>;
     const tranRef = typeof json.tran_ref === 'string' ? json.tran_ref : null;
     const redirectUrl = typeof json.redirect_url === 'string' ? json.redirect_url : null;
     if (!tranRef || !redirectUrl) {
       throw new Error('PAYTABS_INVALID_RESPONSE: missing tran_ref or redirect_url');
+    }
+    if (!isTrustedPaytabsRedirectUrl(redirectUrl, this.config)) {
+      throw new Error('PAYTABS_UNTRUSTED_REDIRECT_URL');
     }
 
     return {
@@ -89,6 +85,26 @@ export class PayTabsPaymentGateway implements PaymentGateway {
       status: 'pending',
       redirectUrl,
     };
+  }
+
+  /**
+   * CB-4 Managed Form — same /payment/request endpoint with payment_token.
+   * May return immediate auth, decline, or 3DS redirect_url.
+   */
+  private async createManagedFormSale(
+    params: CreatePaymentParams,
+    paymentToken: string,
+  ): Promise<ProviderIntentResult> {
+    const body = {
+      ...this.buildSaleRequestBody(params),
+      payment_token: paymentToken,
+    };
+    // Do not include payment_token in any logged body — postJson redacts it.
+    const json = (await this.postJson('/payment/request', body, paymentToken)) as Record<
+      string,
+      unknown
+    >;
+    return normalizeManagedFormResponse(json, this.provider, this.config);
   }
 
   async retrievePayment(params: RetrievePaymentParams): Promise<ProviderPaymentResult> {
@@ -179,6 +195,89 @@ export class PayTabsPaymentGateway implements PaymentGateway {
     };
   }
 
+  async deleteCardToken(params: { token: string }): Promise<{
+    status: 'succeeded' | 'already_absent' | 'failed';
+  }> {
+    const token = params.token.trim();
+    if (!token) return { status: 'failed' };
+    try {
+      await this.postJson('/payment/token/delete', {
+        profile_id: Number(this.config.profileId),
+        token,
+      }, undefined, token);
+      return { status: 'succeeded' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/404|NOT_FOUND|already|invalid/i.test(msg)) {
+        return { status: 'already_absent' };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * CB-5B — charge vaulted PayTabs card.
+   * ecom_cvv_redirect: token + tran_class=ecom → provider redirect for CVV/3DS.
+   * recurring_direct: token + original tran_ref + tran_class=recurring (capability-gated upstream).
+   */
+  async chargeSavedPaymentMethod(
+    params: import('./payment-provider.interface.js').ChargeSavedPaymentMethodParams,
+  ): Promise<ProviderIntentResult> {
+    const token = params.providerToken.trim();
+    if (!token) {
+      throw new Error('PAYTABS_SAVED_CARD_TOKEN_MISSING');
+    }
+    if (params.mode === 'recurring_direct' && !params.providerOriginalTransactionRef?.trim()) {
+      throw new Error('PAYTABS_SAVED_CARD_ORIGINAL_TRAN_REF_MISSING');
+    }
+
+    const amount = formatPaytabsAmount(params.amount);
+    const body: Record<string, unknown> = {
+      profile_id: Number(this.config.profileId),
+      tran_type: 'sale',
+      tran_class: params.mode === 'recurring_direct' ? 'recurring' : 'ecom',
+      cart_id: params.idempotencyKey,
+      cart_currency: this.config.currency,
+      cart_amount: amount,
+      cart_description:
+        params.description?.slice(0, 120) ||
+        `Mazare3 ${params.purpose} ${params.paymentId.slice(0, 8)}`,
+      paypage_lang: 'ar',
+      customer_details: buildPayTabsCustomerDetails({
+        paymentId: params.paymentId,
+        bookingId: params.bookingId,
+        amount: params.amount,
+        currency: params.currency,
+        method: 'card',
+        purpose: params.purpose,
+        idempotencyKey: params.idempotencyKey,
+        description: params.description,
+        customer: params.customer,
+      }),
+      return: interpolatePaytabsUrl(this.config.returnUrl, {
+        paymentId: params.paymentId,
+        bookingId: params.bookingId,
+        amount: params.amount,
+        currency: params.currency,
+        method: 'card',
+        purpose: params.purpose,
+        idempotencyKey: params.idempotencyKey,
+      }),
+      callback: this.config.callbackUrl,
+      token,
+    };
+    if (params.mode === 'recurring_direct') {
+      body.tran_ref = params.providerOriginalTransactionRef!.trim();
+    }
+
+    // Never include CVV/PAN — provider page collects CVV for ecom.
+    const json = (await this.postJson('/payment/request', body, undefined, token)) as Record<
+      string,
+      unknown
+    >;
+    return normalizeSavedCardChargeResponse(json, this.provider, this.config, params.mode);
+  }
+
   async refundPayment(params: RefundPaymentParams): Promise<RefundPaymentResult> {
     if (!params.providerRef) {
       throw new Error('PAYTABS_MISSING_TRAN_REF');
@@ -207,7 +306,7 @@ export class PayTabsPaymentGateway implements PaymentGateway {
   /** Exposed for adapter QA — builds the create payload without network I/O. */
   buildSaleRequestBody(params: CreatePaymentParams): Record<string, unknown> {
     const amount = formatPaytabsAmount(params.amount);
-    return {
+    const body: Record<string, unknown> = {
       profile_id: Number(this.config.profileId),
       tran_type: 'sale',
       tran_class: 'ecom',
@@ -222,9 +321,19 @@ export class PayTabsPaymentGateway implements PaymentGateway {
       return: interpolatePaytabsUrl(this.config.returnUrl, params),
       callback: this.config.callbackUrl,
     };
+    // CB-5A — PayTabs tokenise=2 requests persistent card token on success only when opted in.
+    if (params.tokenise === true) {
+      body.tokenise = 2;
+    }
+    return body;
   }
 
-  private async postJson(path: string, body: Record<string, unknown>): Promise<unknown> {
+  private async postJson(
+    path: string,
+    body: Record<string, unknown>,
+    paymentToken?: string,
+    providerToken?: string,
+  ): Promise<unknown> {
     const url = `${this.config.baseUrl.replace(/\/$/, '')}${path}`;
     const res = await this.http(url, {
       method: 'POST',
@@ -242,9 +351,9 @@ export class PayTabsPaymentGateway implements PaymentGateway {
       throw new Error(`PAYTABS_HTTP_${res.status}: invalid JSON`);
     }
     if (!res.ok) {
-      throw new Error(
-        `PAYTABS_HTTP_${res.status}: ${redactPaytabsSecrets(text.slice(0, 200), this.config.serverKey)}`,
-      );
+      let redacted = redactPaytabsSecrets(text.slice(0, 200), this.config.serverKey, paymentToken);
+      if (providerToken) redacted = redacted.split(providerToken).join('[redacted_provider_token]');
+      throw new Error(`PAYTABS_HTTP_${res.status}: ${redacted}`);
     }
     return json;
   }
@@ -283,6 +392,164 @@ function mapPaytabsPaymentStatus(
   if (s === 'H') return 'pending';
   if (s === 'D' || s === 'E' || s === 'C') return 'failed';
   return 'pending';
+}
+
+/**
+ * CB-5B — normalize saved-card charge response.
+ * Invalid/revoked token responses map to savedCardOutcome=invalid_token.
+ */
+export function normalizeSavedCardChargeResponse(
+  json: Record<string, unknown>,
+  provider: PaymentProvider,
+  config: PaytabsConfig,
+  mode: 'ecom_cvv_redirect' | 'recurring_direct',
+): ProviderIntentResult {
+  const tranRef =
+    typeof json.tran_ref === 'string' && json.tran_ref.trim()
+      ? json.tran_ref.trim()
+      : `pending_${Date.now()}`;
+  const redirectRaw = typeof json.redirect_url === 'string' ? json.redirect_url.trim() : '';
+  const mapped = mapPaytabsPaymentStatus(json);
+  const msg =
+    typeof (json.payment_result as Record<string, unknown> | undefined)?.response_message ===
+    'string'
+      ? String((json.payment_result as Record<string, unknown>).response_message)
+      : typeof json.message === 'string'
+        ? json.message
+        : '';
+  const invalidToken = /invalid.?token|token.*(expired|revoked|not.?found)|card.?token/i.test(msg);
+
+  if (invalidToken || (mapped === 'failed' && /token/i.test(msg))) {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'failed',
+      redirectUrl: null,
+      savedCardOutcome: 'invalid_token',
+      providerRaw: json,
+    };
+  }
+
+  if (redirectRaw) {
+    if (!isTrustedPaytabsRedirectUrl(redirectRaw, config)) {
+      throw new Error('PAYTABS_UNTRUSTED_REDIRECT');
+    }
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'pending',
+      redirectUrl: redirectRaw,
+      savedCardOutcome: 'ecom_redirect',
+      providerRaw: json,
+    };
+  }
+
+  if (mapped === 'succeeded') {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'succeeded',
+      redirectUrl: null,
+      savedCardOutcome: 'authorised',
+      providerRaw: json,
+    };
+  }
+
+  if (mapped === 'failed') {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'failed',
+      redirectUrl: null,
+      savedCardOutcome: 'declined',
+      providerRaw: json,
+    };
+  }
+
+  // Recurring may still require challenge unexpectedly — treat redirect absence + pending carefully.
+  if (mode === 'ecom_cvv_redirect' && !redirectRaw && mapped === 'pending') {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'pending',
+      redirectUrl: null,
+      savedCardOutcome: 'pending',
+      providerRaw: json,
+    };
+  }
+
+  return {
+    provider,
+    providerRef: tranRef,
+    status: 'pending',
+    redirectUrl: null,
+    savedCardOutcome: 'pending',
+    providerRaw: json,
+  };
+}
+
+/** Normalize Managed Form /payment/request response into stable internal result. */
+export function normalizeManagedFormResponse(
+  json: Record<string, unknown>,
+  provider: PaymentProvider,
+  config: PaytabsConfig,
+): ProviderIntentResult {
+  const tranRef =
+    typeof json.tran_ref === 'string' && json.tran_ref.trim()
+      ? json.tran_ref.trim()
+      : `pending_${Date.now()}`;
+  const redirectRaw = typeof json.redirect_url === 'string' ? json.redirect_url.trim() : '';
+  const mapped = mapPaytabsPaymentStatus(json);
+  const persistentCard = extractPaytabsPersistentCardCapture(json);
+
+  if (redirectRaw) {
+    if (!isTrustedPaytabsRedirectUrl(redirectRaw, config)) {
+      throw new Error('PAYTABS_UNTRUSTED_REDIRECT_URL');
+    }
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'pending',
+      redirectUrl: redirectRaw,
+      managedFormOutcome: 'redirect_3ds',
+      persistentCard: null,
+      providerRaw: json,
+    };
+  }
+
+  if (mapped === 'succeeded') {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'succeeded',
+      redirectUrl: null,
+      managedFormOutcome: 'authorised',
+      persistentCard,
+      providerRaw: json,
+    };
+  }
+
+  if (mapped === 'failed') {
+    return {
+      provider,
+      providerRef: tranRef,
+      status: 'failed',
+      redirectUrl: null,
+      managedFormOutcome: 'declined',
+      persistentCard: null,
+      providerRaw: json,
+    };
+  }
+
+  return {
+    provider,
+    providerRef: tranRef,
+    status: 'pending',
+    redirectUrl: null,
+    managedFormOutcome: 'pending',
+    persistentCard: null,
+    providerRaw: json,
+  };
 }
 
 function interpolatePaytabsUrl(template: string, params: CreatePaymentParams): string {

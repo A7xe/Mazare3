@@ -774,3 +774,53 @@ internalRouter.post(
     res.json({ data: { deletedUserIds: deleted } });
   }),
 );
+
+/** CB-5B — process-scoped charge mode override for mock E2E (never production). */
+internalRouter.post(
+  '/qa/paytabs-saved-card-charge-mode',
+  asyncHandler(async (req, res) => {
+    requireInternalQa();
+    const body = (req.body ?? {}) as {
+      mode?: string;
+      recurringEnabled?: boolean;
+    };
+    const mode = String(body.mode ?? 'off').trim().toLowerCase();
+    if (!['off', 'ecom_cvv_redirect', 'recurring_direct'].includes(mode)) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid saved card charge mode');
+    }
+    process.env.PAYTABS_SAVED_CARD_CHARGE_MODE = mode;
+    if (typeof body.recurringEnabled === 'boolean') {
+      process.env.PAYTABS_RECURRING_ENABLED = body.recurringEnabled ? 'true' : 'false';
+    }
+    if (mode === 'recurring_direct' && process.env.PAYTABS_RECURRING_ENABLED !== 'true') {
+      // Explicit: recurring_direct without flag stays inactive via resolveSavedCardChargeMode.
+    }
+    res.json({
+      data: {
+        mode: process.env.PAYTABS_SAVED_CARD_CHARGE_MODE,
+        recurringEnabled: process.env.PAYTABS_RECURRING_ENABLED === 'true',
+      },
+    });
+  }),
+);
+
+internalRouter.post(
+  '/qa/mock-saved-card-outcome',
+  asyncHandler(async (req, res) => {
+    requireInternalQa();
+    const outcome = String((req.body as { outcome?: string })?.outcome ?? '')
+      .trim()
+      .toLowerCase();
+    if (
+      outcome &&
+      !['', 'ecom_redirect', 'authorised', 'declined', 'invalid_token', 'network_unknown'].includes(
+        outcome,
+      )
+    ) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid mock saved card outcome');
+    }
+    if (!outcome) delete process.env.MOCK_SAVED_CARD_OUTCOME;
+    else process.env.MOCK_SAVED_CARD_OUTCOME = outcome;
+    res.json({ data: { outcome: process.env.MOCK_SAVED_CARD_OUTCOME ?? null } });
+  }),
+);

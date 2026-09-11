@@ -23,9 +23,27 @@ export class PaytabsSafetyError extends Error {
   }
 }
 
+export const PAYTABS_CHECKOUT_MODES = ['hpp', 'managed_form'] as const;
+export type PaytabsCheckoutMode = (typeof PAYTABS_CHECKOUT_MODES)[number];
+
+/**
+ * CB-5B — how Checkout may charge a vaulted PayTabs card.
+ * Default `off` is safest for rollout. Never default to recurring_direct.
+ * `ecom_cvv_redirect` — customer-present: provider page collects CVV/3DS.
+ * `recurring_direct` — requires PAYTABS_RECURRING_ENABLED=true (+ merchant approval).
+ */
+export const PAYTABS_SAVED_CARD_CHARGE_MODES = [
+  'off',
+  'ecom_cvv_redirect',
+  'recurring_direct',
+] as const;
+export type PaytabsSavedCardChargeMode = (typeof PAYTABS_SAVED_CARD_CHARGE_MODES)[number];
+
 export type PaytabsConfig = {
   profileId: string;
   serverKey: string;
+  /** Browser-side Managed Form Client Key — never confuse with serverKey. */
+  clientKey: string;
   region: string;
   currency: string;
   baseUrl: string;
@@ -34,6 +52,15 @@ export type PaytabsConfig = {
   profileMode: PaytabsProfileMode;
   profileModeValid: boolean;
   configured: boolean;
+  /**
+   * CB-4: hpp (default / safe) | managed_form (requires client key when PayTabs selected).
+   * Unset defaults to hpp so existing deployments stay safe.
+   */
+  checkoutMode: PaytabsCheckoutMode;
+  /** CB-5B — saved-card charge mode (off | ecom_cvv_redirect | recurring_direct). */
+  savedCardChargeMode: PaytabsSavedCardChargeMode;
+  /** CB-5B — explicit merchant/acquirer recurring approval gate. */
+  recurringEnabled: boolean;
 };
 
 function isNonEmpty(value: string | undefined): boolean {
@@ -62,9 +89,70 @@ export function isPaytabsConfigured(): boolean {
   );
 }
 
+export function parsePaytabsCheckoutMode(
+  raw: string | undefined = process.env.PAYTABS_CHECKOUT_MODE,
+): PaytabsCheckoutMode {
+  const value = (raw ?? 'hpp').trim().toLowerCase();
+  if (value === 'managed_form') return 'managed_form';
+  return 'hpp';
+}
+
+export function parsePaytabsSavedCardChargeMode(
+  raw: string | undefined = process.env.PAYTABS_SAVED_CARD_CHARGE_MODE,
+): PaytabsSavedCardChargeMode {
+  const value = (raw ?? 'off').trim().toLowerCase();
+  if (value === 'ecom_cvv_redirect') return 'ecom_cvv_redirect';
+  if (value === 'recurring_direct') return 'recurring_direct';
+  return 'off';
+}
+
+export function isPaytabsRecurringEnabled(
+  raw: string | undefined = process.env.PAYTABS_RECURRING_ENABLED,
+): boolean {
+  return raw?.trim() === 'true';
+}
+
+/**
+ * Effective saved-card charge mode for Checkout.
+ * recurring_direct requires an explicit recurring approval flag — never inferred.
+ * Misconfigured recurring_direct (flag off) stays off rather than silently charging as ecom
+ * unless product intentionally sets ecom mode.
+ */
+export function resolveSavedCardChargeMode(config: PaytabsConfig = loadPaytabsConfig()): {
+  enabled: boolean;
+  mode: 'ecom_cvv_redirect' | 'recurring_direct' | null;
+  reason: string;
+} {
+  const configured = config.savedCardChargeMode;
+  if (configured === 'off') {
+    return { enabled: false, mode: null, reason: 'charge_mode_off' };
+  }
+  if (configured === 'ecom_cvv_redirect') {
+    return { enabled: true, mode: 'ecom_cvv_redirect', reason: 'ecom_cvv_redirect' };
+  }
+  // recurring_direct
+  if (!config.recurringEnabled) {
+    return {
+      enabled: false,
+      mode: null,
+      reason: 'recurring_direct_requires_PAYTABS_RECURRING_ENABLED',
+    };
+  }
+  if (getAppEnv() === 'production' && config.profileMode === 'live' && !config.recurringEnabled) {
+    return { enabled: false, mode: null, reason: 'production_recurring_blocked' };
+  }
+  return { enabled: true, mode: 'recurring_direct', reason: 'recurring_direct' };
+}
+
+/** Official Managed Form script path relative to the configured regional base URL. */
+export function paytabsPaylibScriptUrl(baseUrl: string = loadPaytabsConfig().baseUrl): string {
+  return `${baseUrl.replace(/\/$/, '')}/payment/js/paylib.js`;
+}
+
 export function loadPaytabsConfig(): PaytabsConfig {
   const profileId = process.env.PAYTABS_PROFILE_ID?.trim() ?? '';
   const serverKey = process.env.PAYTABS_SERVER_KEY?.trim() ?? '';
+  const clientKey = process.env.PAYTABS_CLIENT_KEY?.trim() ?? '';
   const region = (process.env.PAYTABS_REGION?.trim() || 'JOR').toUpperCase();
   const currency = (process.env.PAYTABS_CURRENCY?.trim() || 'JOD').toUpperCase();
   const baseUrl = (process.env.PAYTABS_BASE_URL?.trim() || DEFAULT_JOR_BASE_URL).replace(
@@ -78,6 +166,7 @@ export function loadPaytabsConfig(): PaytabsConfig {
   return {
     profileId,
     serverKey,
+    clientKey,
     region,
     currency,
     baseUrl,
@@ -86,6 +175,9 @@ export function loadPaytabsConfig(): PaytabsConfig {
     profileMode: parsed.mode,
     profileModeValid: parsed.valid,
     configured: isPaytabsConfigured(),
+    checkoutMode: parsePaytabsCheckoutMode(),
+    savedCardChargeMode: parsePaytabsSavedCardChargeMode(),
+    recurringEnabled: isPaytabsRecurringEnabled(),
   };
 }
 
@@ -196,6 +288,12 @@ export function collectPaytabsSafetyErrors(
     );
   }
 
+  if (config.checkoutMode === 'managed_form' && !isNonEmpty(config.clientKey)) {
+    errors.push(
+      'PAYTABS_CHECKOUT_MODE=managed_form requires PAYTABS_CLIENT_KEY (browser Client Key). Server Key must remain server-only.',
+    );
+  }
+
   if (config.region !== 'JOR') {
     errors.push('PAYTABS_REGION must be JOR for Mazare3 Jordan.');
   }
@@ -253,13 +351,37 @@ export function assertPaytabsRuntimeSafety(config: PaytabsConfig = loadPaytabsCo
   }
 }
 
-export function redactPaytabsSecrets(text: string, serverKey?: string): string {
+export function redactPaytabsSecrets(
+  text: string,
+  serverKey?: string,
+  paymentToken?: string,
+): string {
   let out = text;
   const key = serverKey?.trim();
   if (key) out = out.split(key).join('[redacted]');
+  const token = paymentToken?.trim();
+  if (token && token.length >= 8) out = out.split(token).join('[redacted_payment_token]');
   out = out.replace(/authorization\s*[:=]\s*["']?[^"'\s]+/gi, 'Authorization:[redacted]');
+  out = out.replace(/"payment_token"\s*:\s*"[^"]*"/gi, '"payment_token":"[redacted_payment_token]"');
   out = out.replace(/\b\d{13,19}\b/g, '[redacted]');
   return out;
+}
+
+/** True when redirect_url host matches the configured PayTabs regional base (3DS-safe). */
+export function isTrustedPaytabsRedirectUrl(
+  redirectUrl: string,
+  config: PaytabsConfig = loadPaytabsConfig(),
+): boolean {
+  const target = parseHttpUrl(redirectUrl);
+  const base = parseHttpUrl(config.baseUrl);
+  if (!target || !base) return false;
+  if (target.protocol !== 'https:') return false;
+  const host = target.hostname.toLowerCase();
+  const baseHost = base.hostname.toLowerCase();
+  if (host === baseHost) return true;
+  // Issuer 3DS pages are often on the same PayTabs secure host under /payment/
+  if (host.endsWith('.paytabs.com') || host.endsWith('.paytabs.sa')) return true;
+  return false;
 }
 
 /** Operator-safe diagnostics — never includes server key, auth headers, or full secret env values. */

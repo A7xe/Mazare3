@@ -59,6 +59,7 @@ export function mapTermsRow(row: PartnerCommercialTerms) {
 export async function resolveCommercialTerms(params: {
   ownerProfileId: string;
   propertyId?: string | null;
+  verificationStatus?: string | null;
   at?: Date;
 }): Promise<ResolvedCommercialTerms> {
   const at = params.at ?? new Date();
@@ -76,7 +77,22 @@ export async function resolveCommercialTerms(params: {
     orderBy: { effectiveFrom: 'desc' },
   });
 
-  return pickResolvedTerms(active, params.propertyId ?? null, config);
+  return pickResolvedTerms(
+    active,
+    params.propertyId ?? null,
+    config,
+    at,
+    params.verificationStatus ?? null,
+  );
+}
+
+function resolvePlatformDefaultCommission(
+  verificationStatus: string | null,
+  config = loadPaymentPolicyConfig(),
+): number {
+  return verificationStatus === 'platform_verified'
+    ? config.platformVerifiedCommissionPercent
+    : config.platformCommissionPercent;
 }
 
 export function pickResolvedTerms(
@@ -84,8 +100,10 @@ export function pickResolvedTerms(
   propertyId: string | null,
   config = loadPaymentPolicyConfig(),
   at = new Date(),
+  verificationStatus: string | null = null,
 ): ResolvedCommercialTerms {
-  const defaultBps = percentToBps(config.platformCommissionPercent);
+  const platformPercent = resolvePlatformDefaultCommission(verificationStatus, config);
+  const defaultBps = percentToBps(platformPercent);
   const live = rows.filter(
     (t) =>
       t.status === PartnerCommercialTermsStatus.active &&
@@ -122,7 +140,7 @@ export function pickResolvedTerms(
   return {
     source: 'platform_default',
     commissionBps: defaultBps,
-    commissionPercent: config.platformCommissionPercent,
+    commissionPercent: platformPercent,
     termsId: null,
     version: null,
     payoutDelayHours: config.ownerPayoutDelayHours,

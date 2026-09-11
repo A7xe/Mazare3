@@ -433,7 +433,16 @@ export type AdminPartnerCommercialTermsRow = {
   activatedAt: string | null;
 };
 
-export type AdminPartnerDetail = PartnerOnboardingView & {
+export type AdminPartnerDetail = Omit<
+  PartnerOnboardingView,
+  'started' | 'ownerProfileId' | 'ownerStatus' | 'verificationStatus' | 'createdAt' | 'updatedAt'
+> & {
+  started: true;
+  ownerProfileId: string;
+  ownerStatus: string;
+  verificationStatus: PartnerVerificationStatus;
+  createdAt: string;
+  updatedAt: string;
   email: string | null;
   userRole: string;
   userStatus: string;

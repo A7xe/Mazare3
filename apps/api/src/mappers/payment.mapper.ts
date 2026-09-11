@@ -50,7 +50,11 @@ export function toPaymentFinancialBreakdown(p: PaymentRow): PaymentFinancialBrea
 
 export function toPaymentSummary(
   p: PaymentRow,
-  extras?: { redirectUrl?: string | null },
+  extras?: {
+    redirectUrl?: string | null;
+    managedFormOutcome?: PaymentSummary['managedFormOutcome'];
+    savedCardOutcome?: PaymentSummary['savedCardOutcome'];
+  },
 ): PaymentSummary {
   return {
     id: p.id,
@@ -62,6 +66,8 @@ export function toPaymentSummary(
     provider: p.provider,
     status: p.status,
     redirectUrl: extras?.redirectUrl ?? null,
+    managedFormOutcome: extras?.managedFormOutcome ?? null,
+    savedCardOutcome: extras?.savedCardOutcome ?? null,
     financial: toPaymentFinancialBreakdown(p),
     payoutStatus: p.payoutStatus,
     payoutAvailableAt: p.payoutAvailableAt?.toISOString() ?? null,

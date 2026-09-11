@@ -3,15 +3,24 @@ import {
   BookingPaymentState,
   BookingStatus,
   PaymentStatus,
+  PayoutStatus,
   Prisma,
+  RefundStatus,
 } from '@mazare3/db';
 import { releaseSlotIfUnheld } from '../lib/slot-release.js';
-import { assertPaymentStateTransition } from '@mazare3/shared';
+import {
+  BOOKING_CANCELLATION_REASON,
+  distributeRetainedAmount,
+  filsToJod,
+} from '@mazare3/shared';
 import { createAuditLog } from './audit.service.js';
 import { notifyBalanceOverdue } from './notification.service.js';
 import { expireOwnerApprovalIfNeeded } from './owner-approval-expiry.service.js';
 import { releaseCouponReservationInTx } from './coupon.service.js';
 import { releasePlatformCouponReservationInTx } from './platform-coupon.service.js';
+import { refundableCapturedFils } from '../lib/booking-ledger.js';
+import { computePayoutAvailableAt } from './payment-policy.service.js';
+import { syncPayoutStatusForPayment } from './payment-payout.service.js';
 
 export { releaseSlotIfUnheld } from '../lib/slot-release.js';
 
@@ -91,11 +100,12 @@ export async function expireStaleBookingHolds(): Promise<{ processed: number; ex
   return { processed: candidates.length, expired };
 }
 
-export async function markBalanceOverdueIfNeeded(bookingId: string): Promise<boolean> {
+export async function autoCancelUnpaidBalanceIfNeeded(bookingId: string): Promise<boolean> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
       property: { select: { titleAr: true, titleEn: true } },
+      payments: { select: { id: true, status: true, amount: true } },
     },
   });
   if (!booking) return false;
@@ -104,30 +114,102 @@ export async function markBalanceOverdueIfNeeded(bookingId: string): Promise<boo
   if (booking.paymentState === BookingPaymentState.refunded) return false;
   if (
     booking.paymentState !== BookingPaymentState.deposit_paid &&
-    booking.paymentState !== BookingPaymentState.balance_pending
+    booking.paymentState !== BookingPaymentState.balance_pending &&
+    booking.paymentState !== BookingPaymentState.balance_overdue
   ) {
     return false;
   }
   if (!booking.balanceDueAt || booking.balanceDueAt > new Date()) return false;
 
-  assertPaymentStateTransition(booking.paymentState, BookingPaymentState.balance_overdue);
-  const marked = await prisma.booking.updateMany({
-    where: {
-      id: bookingId,
-      status: BookingStatus.confirmed,
-      paymentState: {
-        in: [BookingPaymentState.deposit_paid, BookingPaymentState.balance_pending],
+  const cancelled = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM "Booking" WHERE id = ${bookingId} FOR UPDATE`);
+    const current = await tx.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        payments: true,
+        refundRequests: true,
+        slot: { select: { date: true } },
       },
-    },
-    data: { paymentState: BookingPaymentState.balance_overdue },
+    });
+    if (!current) return false;
+    if (current.status !== BookingStatus.confirmed) return false;
+    if (current.paymentState === BookingPaymentState.fully_paid) return false;
+    if (!current.balanceDueAt || current.balanceDueAt > new Date()) return false;
+
+    const funds = refundableCapturedFils(current.payments, current.refundRequests);
+    const retainedAmount = filsToJod(funds.captured);
+    const commissionPercent = Number(current.platformCommissionPercent);
+    const { platformRetained, ownerRetained } = distributeRetainedAmount(
+      retainedAmount,
+      commissionPercent,
+    );
+
+    const updated = await tx.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: BookingStatus.confirmed,
+        paymentState: {
+          in: [
+            BookingPaymentState.deposit_paid,
+            BookingPaymentState.balance_pending,
+            BookingPaymentState.balance_overdue,
+          ],
+        },
+      },
+      data: {
+        status: BookingStatus.cancelled,
+        cancelledAt: new Date(),
+        cancellationReasonCode: BOOKING_CANCELLATION_REASON.BALANCE_NOT_PAID,
+        paymentState: BookingPaymentState.deposit_paid,
+        platformCommissionAmount: platformRetained,
+        ownerNetPayoutAmount: ownerRetained,
+      },
+    });
+    if (updated.count !== 1) return false;
+
+    // Unpaid-balance termination: retain captured deposit only; never refund or charge more.
+    const payoutAvailableAt = computePayoutAvailableAt(current.slot.date);
+    await tx.payment.updateMany({
+      where: { bookingId, status: PaymentStatus.succeeded },
+      data: {
+        refundStatus: RefundStatus.none,
+        payoutStatus: PayoutStatus.blocked,
+        cancellationRefundAmount: 0,
+        cancellationPenaltyAmount: retainedAmount,
+        platformCommissionAmount: platformRetained,
+        ownerNetPayoutAmount: ownerRetained,
+        ownerGrossAmount: retainedAmount,
+        payoutAvailableAt,
+      },
+    });
+    await tx.payment.updateMany({
+      where: {
+        bookingId,
+        status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+      },
+      data: { status: PaymentStatus.cancelled },
+    });
+
+    await releaseSlotIfUnheld(tx, current.availabilitySlotId, bookingId);
+    await releaseCouponReservationInTx(tx, bookingId);
+    await releasePlatformCouponReservationInTx(tx, bookingId);
+    return { retainedAmount, platformRetained, ownerRetained };
   });
-  if (marked.count !== 1) return false;
+
+  if (!cancelled) return false;
 
   await createAuditLog({
-    action: 'booking.balance_overdue',
+    action: 'booking.auto_cancelled',
     entityType: 'booking',
     entityId: bookingId,
-    metadata: { publicCode: booking.publicCode, balanceDueAt: booking.balanceDueAt.toISOString() },
+    metadata: {
+      publicCode: booking.publicCode,
+      reason: BOOKING_CANCELLATION_REASON.BALANCE_NOT_PAID,
+      balanceDueAt: booking.balanceDueAt.toISOString(),
+      retainedAmount: cancelled.retainedAmount,
+      platformRetained: cancelled.platformRetained,
+      ownerRetained: cancelled.ownerRetained,
+    },
   });
 
   await notifyBalanceOverdue({
@@ -136,9 +218,22 @@ export async function markBalanceOverdueIfNeeded(bookingId: string): Promise<boo
     publicCode: booking.publicCode,
     propertyTitleAr: booking.property.titleAr,
     propertyTitleEn: booking.property.titleEn ?? booking.property.titleAr,
-  }).catch((err) => console.error('[notifications] balance_overdue', err));
+  }).catch((err) => console.error('[notifications] balance_overdue_cancel', err));
+
+  const succeeded = await prisma.payment.findMany({
+    where: { bookingId, status: PaymentStatus.succeeded },
+    select: { id: true },
+  });
+  for (const p of succeeded) {
+    await syncPayoutStatusForPayment(p.id);
+  }
 
   return true;
+}
+
+/** @deprecated Phase 1 auto-cancels unpaid balances at due time — kept as alias. */
+export async function markBalanceOverdueIfNeeded(bookingId: string): Promise<boolean> {
+  return autoCancelUnpaidBalanceIfNeeded(bookingId);
 }
 
 export async function markStaleBalanceOverdue(): Promise<{ processed: number; marked: number }> {
@@ -146,7 +241,11 @@ export async function markStaleBalanceOverdue(): Promise<{ processed: number; ma
     where: {
       status: BookingStatus.confirmed,
       paymentState: {
-        in: [BookingPaymentState.deposit_paid, BookingPaymentState.balance_pending],
+        in: [
+          BookingPaymentState.deposit_paid,
+          BookingPaymentState.balance_pending,
+          BookingPaymentState.balance_overdue,
+        ],
       },
       balanceDueAt: { lt: new Date() },
     },
@@ -154,7 +253,7 @@ export async function markStaleBalanceOverdue(): Promise<{ processed: number; ma
   });
   let marked = 0;
   for (const { id } of candidates) {
-    if (await markBalanceOverdueIfNeeded(id)) marked++;
+    if (await autoCancelUnpaidBalanceIfNeeded(id)) marked++;
   }
   return { processed: candidates.length, marked };
 }
@@ -162,7 +261,7 @@ export async function markStaleBalanceOverdue(): Promise<{ processed: number; ma
 export async function refreshBookingPaymentLifecycle(bookingId: string): Promise<void> {
   await expireOwnerApprovalIfNeeded(bookingId);
   await expireUnpaidBookingHoldIfNeeded(bookingId);
-  await markBalanceOverdueIfNeeded(bookingId);
+  await autoCancelUnpaidBalanceIfNeeded(bookingId);
 }
 
 /** Bookings whose hold, owner-approval, or balance-due clock may have elapsed. */
@@ -181,7 +280,11 @@ export function bookingsNeedingLifecycleRefreshWhere(userId: string, now = new D
       {
         status: BookingStatus.confirmed,
         paymentState: {
-          in: [BookingPaymentState.deposit_paid, BookingPaymentState.balance_pending],
+          in: [
+            BookingPaymentState.deposit_paid,
+            BookingPaymentState.balance_pending,
+            BookingPaymentState.balance_overdue,
+          ],
         },
         balanceDueAt: { lte: now },
       },

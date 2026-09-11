@@ -39,6 +39,11 @@ import {
   listFavoritePropertyIds,
   removeFavorite,
 } from '../services/favorite.service.js';
+import {
+  listSavedPaymentMethodsForUser,
+  revokeSavedPaymentMethod,
+  setDefaultSavedPaymentMethod,
+} from '../services/saved-payment-method.service.js';
 import { getCustomerHomePersonalization } from '../services/home-personalization.service.js';
 
 export const meRouter = Router();
@@ -313,6 +318,44 @@ meRouter.post(
       return;
     }
     const data = await cancelMyBooking(req.session!.userId, id, req);
+    res.json({ data });
+  }),
+);
+
+/** CB-5A — list saved payment methods (masked metadata only; never providerToken). */
+meRouter.get(
+  '/payment-methods',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listSavedPaymentMethodsForUser(req.session!.userId);
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/payment-methods/:id/default',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'Payment method id is required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const data = await setDefaultSavedPaymentMethod(req.session!.userId, id, req);
+    res.json({ data });
+  }),
+);
+
+meRouter.delete(
+  '/payment-methods/:id',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'Payment method id is required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const data = await revokeSavedPaymentMethod(req.session!.userId, id, req);
     res.json({ data });
   }),
 );

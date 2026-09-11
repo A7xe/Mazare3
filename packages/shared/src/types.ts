@@ -247,6 +247,47 @@ export interface PublicAvailabilitySlot {
   promotionTitleEn?: string | null;
 }
 
+/** CB-2 — customer-safe authoritative quote (read-only). */
+export interface BookingQuote {
+  propertyId: string;
+  propertySlug: string;
+  date: string;
+  period: AvailabilityPeriod;
+  guestsCount: number;
+  currency: string;
+  /** Pre-discount list amount shown as booking price line. */
+  baseAmount: number;
+  discountAmount: number;
+  /**
+   * Pre-fee total that `createBooking.expectedTotalAmount` must match.
+   * Does not include customer service fee.
+   */
+  expectedTotalAmount: number;
+  /** Same as expectedTotalAmount (post-discount booking amount before fee). */
+  bookingAmount: number;
+  customerServiceFeeAmount: number;
+  customerPayableTotal: number;
+  depositPercent: number;
+  depositAmount: number;
+  remainingAmount: number;
+  /** Deposit + customer service fee (first installment). */
+  depositDueAmount: number;
+  startAtLocal: string | null;
+  endAtLocal: string | null;
+  instantBookingEnabled: boolean;
+  paymentCollectionMode: 'deposit_balance';
+  appliedPromotion: { id: string } | null;
+  appliedCoupon: { code: string; fundedBy: 'property' | 'platform' } | null;
+}
+
+export type BookingQuoteInput = {
+  propertySlug: string;
+  date: string;
+  period: AvailabilityPeriod;
+  guestsCount: number;
+  couponCode?: string;
+};
+
 export interface OwnerDashboardSummary {
   propertiesCount: number;
   upcomingBookingsCount: number;
@@ -742,6 +783,8 @@ export interface CancellationPolicyView {
   refundableAmount?: number;
   cancellationPenaltyAmount?: number;
   hoursUntilBookingStart?: number;
+  chargePercent?: number;
+  retainedAmount?: number;
   reason?: string;
 }
 
@@ -756,6 +799,22 @@ export interface PaymentSummary {
   status: string;
   /** Hosted PSP checkout URL (e.g. PayTabs). Never includes secrets. */
   redirectUrl?: string | null;
+  /**
+   * CB-4 Managed Form normalized outcome for the latest attempt.
+   * Frontend must not invent success from provider JSON.
+   */
+  managedFormOutcome?: 'redirect_3ds' | 'authorised' | 'declined' | 'pending' | null;
+  /**
+   * CB-5B saved-card charge outcome.
+   * ecom_redirect → customer completes CVV/3DS on provider page.
+   */
+  savedCardOutcome?:
+    | 'ecom_redirect'
+    | 'authorised'
+    | 'declined'
+    | 'pending'
+    | 'invalid_token'
+    | null;
   financial?: PaymentFinancialBreakdown;
   payoutStatus?: PayoutStatus;
   payoutAvailableAt?: string | null;
@@ -1097,20 +1156,68 @@ export interface CheckoutBookingView extends PublicBookingSummary {
   pricing: PaymentFinancialBreakdown;
   dueNowAmount: number;
   duePurpose: PaymentPurpose | null;
+  /** Public cover/thumbnail for checkout destination summary (optional). */
+  propertyCoverUrl?: string | null;
+  /**
+   * CB-6 — Deposit vs Full options for the FIRST payment only.
+   * Null/absent when choice is unavailable (balance due, approval, expiry, 100% deposit, etc.).
+   */
+  initialPaymentOptions?: InitialPaymentOption[] | null;
+  /** Server default when options exist: always deposit when available. */
+  defaultInitialPaymentChoice?: InitialPaymentChoice | null;
+  /** True when an in-flight provider attempt locks Deposit↔Full switching. */
+  initialPaymentChoiceLocked?: boolean;
+  lockedInitialPaymentChoice?: InitialPaymentChoice | null;
 }
+
+/** CB-6 — customer-facing initial payment amount choice (not PaymentPurpose). */
+export type InitialPaymentChoice = 'deposit' | 'full';
+
+export type InitialPaymentOption = {
+  choice: InitialPaymentChoice;
+  dueNowAmount: number;
+  remainingAfterPayment: number;
+};
 
 export interface PaymentPolicyPublicSummary {
   mode: string;
   currency: string;
   platformCommissionPercent: number;
+  platformVerifiedCommissionPercent: number;
   customerServiceFeePercent: number;
   defaultDepositPercent: number;
+  fullPaymentWithinHours: number;
   balanceDueHoursBeforeStart: number;
   cancellationFreeUntilHours: number;
-  cancellationPartialUntilHours: number;
-  cancellationPartialRefundPercent: number;
-  lateCancellationRefundPercent: number;
+  cancellationCharge30UntilHours: number;
+  cancellationCharge50UntilHours: number;
+  cancellationChargePercents: {
+    free: number;
+    tier30: number;
+    tier50: number;
+    tier100: number;
+  };
 }
+
+export type SavedPaymentMethodPublic = {
+  id: string;
+  provider: string;
+  brand: string | null;
+  maskedDisplay: string | null;
+  last4: string | null;
+  expiryMonth: number | null;
+  expiryYear: number | null;
+  isDefault: boolean;
+  createdAt: string;
+  /** Account UI hint when expiry metadata conclusively shows expired. */
+  expired?: boolean;
+};
+
+/** CB-4 checkout UI mode — server-authoritative. */
+export type PaymentUiMode = 'hosted_redirect' | 'managed_form';
+
+/** CB-5B — how Checkout charges vaulted cards (server-authoritative). */
+export type SavedCardChargeMode = 'ecom_cvv_redirect' | 'recurring_direct';
 
 export interface PaymentPublicConfig {
   provider: string;
@@ -1118,6 +1225,33 @@ export interface PaymentPublicConfig {
   simulateEnabled: boolean;
   livePaymentsEnabled: boolean;
   policy?: PaymentPolicyPublicSummary;
+  /**
+   * CB-4: how Checkout renders card payment.
+   * Default hosted_redirect (HPP). managed_form only when explicitly configured.
+   */
+  paymentUiMode?: PaymentUiMode;
+  /**
+   * PayTabs Client Key — intentionally browser-side for Managed Form only.
+   * Never confuse with Server Key. Omitted when mode is hosted_redirect.
+   */
+  paytabsClientKey?: string | null;
+  /** Region-derived paylib.js URL (e.g. Jordan secure endpoint). */
+  paylibScriptUrl?: string | null;
+  /** When true, Checkout uses the deterministic Managed Form mock seam (no real PayTabs). */
+  managedFormMock?: boolean;
+  /**
+   * CB-5A — when true, Checkout may show save-card opt-in.
+   * Requires PAYTABS_TOKENIZATION_ENABLED (+ vault encryption for non-mock).
+   * Does NOT enable charging saved cards (CB-5B).
+   */
+  savedCardsEnabled?: boolean;
+  /**
+   * CB-5B — when true, Checkout may select an existing vaulted card to pay.
+   * Independent of PAYTABS_TOKENIZATION_ENABLED (saving new cards).
+   */
+  savedCardChargeEnabled?: boolean;
+  /** CB-5B — active charge mode when savedCardChargeEnabled. */
+  savedCardChargeMode?: SavedCardChargeMode | null;
 }
 
 export interface AdminPaymentRow {

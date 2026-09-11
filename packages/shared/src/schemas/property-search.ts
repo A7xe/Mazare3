@@ -95,6 +95,16 @@ export const createBookingSchema = z.object({
 
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 
+/** CB-2 — read-only authoritative quote (no Booking / hold / Payment). */
+export const bookingQuoteSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  period: z.enum(AVAILABILITY_PERIODS),
+  guestsCount: z.coerce.number().int().min(1).max(100),
+  couponCode: z.string().trim().min(1).max(24).optional(),
+});
+
+export type BookingQuoteBody = z.infer<typeof bookingQuoteSchema>;
+
 export const discoveryQuerySchema = z.object({
   city: z.preprocess(emptyToUndef, z.string().max(80).optional()),
   area: z.preprocess(emptyToUndef, z.string().max(80).optional()),

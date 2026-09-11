@@ -82,16 +82,16 @@ console.log('\n— Status machine —');
 
 console.log('\n— Submitted / under review UX —');
 {
-  expect('6 submitted status panel title key', statusPanel.includes('statusUx.submittedTitle'));
-  expect('7 under_review status panel', statusPanel.includes('statusUx.underReviewTitle'));
-  expect('8 EN submitted truthful', /submitted/i.test(en.becomeOwner.statusUx.submittedTitle));
-  expect('9 AR submitted', ar.becomeOwner.statusUx.submittedTitle === 'تم إرسال طلب الشراكة بنجاح');
-  expect('9b tracking status card', statusPanel.includes('partner-application-status-card'));
+  expect('6 submitted status panel title key', statusPanel.includes('tracking.submittedTitle'));
+  expect('7 under_review status panel', statusPanel.includes('tracking.underReviewTitle'));
+  expect('8 EN submitted truthful', /received|submitted/i.test(en.becomeOwner.tracking.submittedTitle));
+  expect('9 AR submitted', ar.becomeOwner.tracking.submittedTitle === 'تم استلام طلبك');
+  expect('9b tracking timeline', statusPanel.includes('partner-tracking-timeline'));
   expect('9c return later hint', statusPanel.includes('statusUx.returnLaterHint'));
   expect('9d awaiting review label for submitted card', statusPanel.includes('statusUx.awaitingReview'));
-  expect('10 AR under review', ar.becomeOwner.statusUx.underReviewTitle === 'طلبك قيد المراجعة');
-  expect('11 EN under review', /under review/i.test(en.becomeOwner.statusUx.underReviewTitle));
-  expect('12 no fake SLA 24h', !JSON.stringify(en.becomeOwner.statusUx).includes('24') && !JSON.stringify(ar.becomeOwner.statusUx).includes('24 ساعة'));
+  expect('10 AR under review', ar.becomeOwner.tracking.underReviewTitle === 'طلبك قيد المراجعة');
+  expect('11 EN under review', /under review/i.test(en.becomeOwner.tracking.underReviewTitle));
+  expect('12 no fake SLA 24h', !JSON.stringify(en.becomeOwner.tracking).includes('24 hours') && !JSON.stringify(ar.becomeOwner.tracking).includes('24 ساعة'));
   expect('13 pending hides wizard', becomeOwner.includes('showStatusOnly') && becomeOwner.includes('PENDING_PARTNER_STATUSES'));
   expect(
     '14 submitted not editable statuses',
@@ -105,7 +105,7 @@ console.log('\n— Changes requested —');
   expect('15 request-changes route', routesAdmin.includes('/partners/:id/request-changes'));
   expect('16 requestPartnerChanges service', admin.includes('requestPartnerChanges'));
   expect('17 sets changes_requested', admin.includes('PartnerVerificationStatus.changes_requested'));
-  expect('18 applicant sees changeRequestReason', statusPanel.includes('partner-change-reason') && onboarding.includes('changeRequestReason: v.changeRequestReason'));
+  expect('18 applicant sees change reasons', statusPanel.includes('partner-correction-list') && onboarding.includes('changeRequestReason: v.changeRequestReason') && onboarding.includes('openChangeRequests'));
   expect(
     '19 applicant DTO has no audit/admin notes dump',
     !onboarding.includes('auditRows') &&
@@ -128,10 +128,9 @@ console.log('\n— Corrections / resubmit —');
 console.log('\n— Admin approval gates —');
 {
   expect(
-    '28 canApprove needs docs approved + payout reviewed + commercial',
-    /canApprove =[\s\S]*requiredDocumentsApproved[\s\S]*payoutProfileApproved[\s\S]*commercialTermsReady/.test(
-      onboarding,
-    ),
+    '28 canApprove needs docs approved + commercial (payout post-approval)',
+    /canApprove =[\s\S]*requiredDocumentsApproved[\s\S]*commercialTermsReady/.test(onboarding) &&
+      !/canApprove =[\s\S]*?payoutProfileApproved\s*&&/.test(onboarding),
   );
   expect('29 approvePartner uses canApprove', admin.includes('readiness.canApprove'));
   expect('30 approve route', routesAdmin.includes('/partners/:id/approve'));
@@ -149,7 +148,12 @@ console.log('\n— Admin approval gates —');
 console.log('\n— Session / Add Farm handoff —');
 {
   expect('35 become-owner refreshSession on approved', becomeOwner.includes('refreshSession'));
-  expect('36 approved redirects Add Farm', becomeOwner.includes("router.replace('/owner/properties/new')"));
+  expect(
+    '36 approved shows tracking success then Add Farm CTA (no forced redirect)',
+    !becomeOwner.includes("router.replace('/owner/properties/new')") &&
+      statusPanel.includes('partner-go-add-farm') &&
+      statusPanel.includes('tracking.approvedTitle'),
+  );
   expect('37 isApprovedOwnerForAddFarm', entry.includes('isApprovedOwnerForAddFarm'));
   expect('38 resolveAddFarmHref approved → wizard', entry.includes("'/owner/properties/new'"));
   expect('39 partner go add farm CTA', statusPanel.includes('partner-go-add-farm'));

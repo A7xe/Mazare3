@@ -87,7 +87,17 @@ export function AccountIdentitiesCard() {
     );
   }
 
-  if (!status) return null;
+  if (!status) {
+    return (
+      <section
+        data-testid="account-identities-error"
+        className="rounded-3xl border border-danger/20 bg-danger/10 p-5 text-sm text-danger sm:p-6"
+        role="alert"
+      >
+        {error ?? t('errorGeneric')}
+      </section>
+    );
+  }
 
   const canAddPhone = caps?.phone.available && !status.phone.linked;
   const canAddGoogle = caps?.google.available && !status.google.linked;

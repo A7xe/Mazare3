@@ -4,6 +4,7 @@ import { getTranslations } from 'next-intl/server';
 import { Heart, CalendarCheck, UserRound } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { LocaleSwitcher } from '@/components/layout/locale-switcher';
+import { AuthLocaleChip } from '@/components/auth/auth-locale-chip';
 
 export type AuthShellMode = 'unified' | 'login' | 'signup' | 'forgot' | 'reset';
 
@@ -12,18 +13,94 @@ interface AuthShellProps {
   mode: AuthShellMode;
 }
 
-export async function AuthShell({ children, mode }: AuthShellProps) {
+/** Immersive welcome shell for `/auth` — brand-first hero + curve + actions. */
+async function ImmersiveAuthShell({ children }: { children: ReactNode }) {
+  const tAuth = await getTranslations('auth');
+
+  return (
+    <div
+      data-testid="auth-shell"
+      data-auth-shell="immersive"
+      className="relative flex min-h-[100dvh] flex-col bg-white pb-[calc(5.5rem+env(safe-area-inset-bottom))]"
+    >
+      <section className="relative">
+        <div className="relative min-h-[46vh] overflow-hidden sm:min-h-[50vh]">
+          <Image
+            src="/home/hero-banner.png"
+            alt=""
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover object-[center_40%]"
+          />
+          <div
+            className="absolute inset-0 bg-gradient-to-b from-[#001c55]/55 via-[#001c55]/25 to-[#001c55]/50"
+            aria-hidden
+          />
+
+          <div className="relative z-10 flex items-center justify-end px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6">
+            <AuthLocaleChip />
+          </div>
+
+          <div className="relative z-10 flex h-[min(28vh,220px)] flex-col items-center justify-end px-6 pb-10 pt-8 sm:h-[min(32vh,260px)] sm:pb-12">
+            <p
+              className="text-center text-[1.65rem] font-heading font-bold tracking-tight text-white drop-shadow-sm sm:text-3xl"
+              data-testid="auth-welcome-to"
+            >
+              {tAuth('welcomeTo')}
+            </p>
+          </div>
+
+          {/* Curve into white panel — Mazare3 navy edge. */}
+          <svg
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-14 w-full sm:h-16"
+            viewBox="0 0 1440 96"
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <path
+              d="M0 0 C360 72 1080 72 1440 0 L1440 96 L0 96 Z"
+              fill="#ffffff"
+            />
+            <path
+              d="M0 0 C360 72 1080 72 1440 0"
+              fill="none"
+              stroke="#0a2472"
+              strokeWidth="10"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+        </div>
+      </section>
+
+      <section className="relative z-10 flex flex-1 flex-col bg-white px-5 pb-6 pt-3 sm:px-8 sm:pt-4">
+        <div className="mx-auto w-full max-w-[400px] flex-1">{children}</div>
+      </section>
+    </div>
+  );
+}
+
+/** Classic shell for forgot/reset and legacy login/signup redirects. */
+async function ClassicAuthShell({
+  children,
+  mode,
+}: {
+  children: ReactNode;
+  mode: Exclude<AuthShellMode, 'unified'>;
+}) {
   const t = await getTranslations('common');
   const tAuth = await getTranslations('auth');
 
   const showModeSwitch = mode === 'login' || mode === 'signup';
-  const switchHref = mode === 'login' ? '/auth?mode=email&emailMode=signup' : '/auth?mode=email&emailMode=login';
+  const switchHref =
+    mode === 'login' ? '/auth?mode=email&emailMode=signup' : '/auth?mode=email&emailMode=login';
   const switchLabel = mode === 'login' ? tAuth('signupCtaLink') : tAuth('loginCtaLink');
 
   return (
     <div
       data-testid="auth-shell"
-      className="relative flex min-h-[100dvh] flex-col bg-[#F5F8FC]"
+      data-auth-shell="classic"
+      className="relative flex min-h-[100dvh] flex-col bg-[#F5F8FC] pb-[calc(5.5rem+env(safe-area-inset-bottom))]"
     >
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
         <div className="absolute -end-24 -top-16 h-72 w-72 rounded-full bg-primary/8 blur-3xl" />
@@ -93,4 +170,11 @@ export async function AuthShell({ children, mode }: AuthShellProps) {
       </div>
     </div>
   );
+}
+
+export async function AuthShell({ children, mode }: AuthShellProps) {
+  if (mode === 'unified') {
+    return <ImmersiveAuthShell>{children}</ImmersiveAuthShell>;
+  }
+  return <ClassicAuthShell mode={mode}>{children}</ClassicAuthShell>;
 }

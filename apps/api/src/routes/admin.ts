@@ -4,6 +4,7 @@ import {
   patchAdminAvailabilitySchema,
   patchAdminOwnerStatusSchema,
   patchAdminPropertyStatusSchema,
+  patchAdminPropertyVerificationSchema,
   patchAdminUserStatusSchema,
   approvePartnerSchema,
   createPartnerCommercialTermsSchema,
@@ -30,6 +31,7 @@ import {
   listAdminUsers,
   patchAdminAvailabilitySlot,
   patchAdminPropertyStatus,
+  patchAdminPropertyVerification,
   patchAdminUserStatus,
 } from '../services/admin.service.js';
 import {
@@ -716,6 +718,28 @@ adminRouter.get(
       return;
     }
     const data = await getAdminAvailabilityHealth(id);
+    res.json({ data });
+  }),
+);
+
+adminRouter.patch(
+  '/properties/:id/verification',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'Property id is required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const parsed = patchAdminPropertyVerificationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await patchAdminPropertyVerification(
+      req.session!.userId,
+      id,
+      parsed.data,
+      req,
+    );
     res.json({ data });
   }),
 );

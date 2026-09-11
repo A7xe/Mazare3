@@ -8,8 +8,10 @@ export default async function AccountHomePage({ params }: Props) {
   const { locale } = await params;
   setRequestLocale(locale);
   return (
-    <MarketplacePageShell className="py-10">
-      <AccountHomeView />
+    <MarketplacePageShell className="py-8 sm:py-10">
+      <div className="px-4 sm:px-5 lg:px-6">
+        <AccountHomeView />
+      </div>
     </MarketplacePageShell>
   );
 }

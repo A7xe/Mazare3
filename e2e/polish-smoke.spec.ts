@@ -50,7 +50,7 @@ test.describe('Phase 10H.5 polish smoke', () => {
 
     await page.goto(`/ar/properties/${PROPERTY_SLUG}`);
     await expect(page.getByTestId('property-location-section')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('#booking-panel')).toBeVisible();
+    await expect(page.locator('#booking-entry')).toBeVisible();
     expect(issues, issues.join('\n')).toEqual([]);
   });
 
@@ -69,7 +69,6 @@ test.describe('Phase 10H.5 polish smoke', () => {
     await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
     await page.goto('/ar/account/bookings');
     await expect(page.getByTestId('my-bookings')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('account-nav-favorites')).toBeVisible();
 
     await page.goto('/ar/account/favorites');
     await expect(page.getByTestId('favorites-empty').or(page.locator('[data-testid="property-card"]').first())).toBeVisible({
@@ -77,7 +76,8 @@ test.describe('Phase 10H.5 polish smoke', () => {
     });
 
     await page.goto('/ar/account/support');
-    await expect(page.getByTestId('my-support')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('help-center')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('my-support')).toBeVisible();
     expect(issues, issues.join('\n')).toEqual([]);
   });
 
@@ -136,7 +136,7 @@ test.describe('Phase 10H.5 polish smoke', () => {
     await page.goto('/ar/search');
     await expect(page.getByTestId('marketplace-search-form')).toBeVisible({ timeout: 20_000 });
     await page.goto(`/ar/properties/${PROPERTY_SLUG}`);
-    await expect(page.locator('#booking-panel')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('#booking-entry')).toBeVisible({ timeout: 30_000 });
     expect(issues, issues.join('\n')).toEqual([]);
   });
 

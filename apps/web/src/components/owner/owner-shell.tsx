@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Building2,
   Banknote,
+  Wallet,
   Star,
   LifeBuoy,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ const navItems = [
   { href: '/owner', icon: LayoutDashboard, labelKey: 'nav.dashboard' as const },
   { href: '/owner/properties', icon: Building2, labelKey: 'nav.properties' as const },
   { href: '/owner/bookings', icon: CalendarDays, labelKey: 'nav.bookings' as const },
+  { href: '/owner/payout', icon: Wallet, labelKey: 'nav.payoutSetup' as const },
   { href: '/owner/payouts', icon: Banknote, labelKey: 'nav.payouts' as const },
   { href: '/owner/reviews', icon: Star, labelKey: 'nav.reviews' as const },
   { href: '/owner/availability', icon: CalendarRange, labelKey: 'nav.availability' as const },
@@ -59,7 +61,9 @@ export function OwnerShell({ children }: { children: React.ReactNode }) {
                       ? pathname === '/owner'
                       : href === '/contact'
                         ? pathname.startsWith('/contact')
-                        : pathname.startsWith(href);
+                        : href === '/owner/payout'
+                          ? pathname === '/owner/payout' || pathname.startsWith('/owner/payout/')
+                          : pathname.startsWith(href);
                   return (
                     <Link
                       key={href}

@@ -94,3 +94,19 @@ export function requirementsForEntity(
     .filter((r) => r.entityType == null || (entityType != null && r.entityType === entityType))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
+
+/** Partner KYC checklist — excludes payout proof (post-approval financial setup). */
+export function partnerKycRequirementsForEntity(
+  all: PartnerRequirementDef[],
+  entityType: PartnerEntityType | null,
+): PartnerRequirementDef[] {
+  return requirementsForEntity(all, entityType).filter((r) => r.documentType !== 'payout_proof');
+}
+
+/** Payout-readiness document requirements (e.g. payout_proof). */
+export function payoutRequirementsForEntity(
+  all: PartnerRequirementDef[],
+  entityType: PartnerEntityType | null,
+): PartnerRequirementDef[] {
+  return requirementsForEntity(all, entityType).filter((r) => r.documentType === 'payout_proof');
+}

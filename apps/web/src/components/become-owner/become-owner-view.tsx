@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Link, usePathname, useRouter } from '@/i18n/navigation';
+import { usePathname, useRouter } from '@/i18n/navigation';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { getMe, refreshSession } from '@/lib/api-auth';
 import {
@@ -10,14 +10,14 @@ import {
   fetchPartnerOnboarding,
   fetchPartnerRequirements,
   patchPartnerOnboarding,
-  putPartnerPayoutProfile,
   submitPartnerOnboarding,
   uploadPartnerDocument,
   PartnerApiError,
   type PartnerOnboardingView,
   type PartnerRequirementRow,
 } from '@/lib/api-partner';
-import { isApprovedOwnerForAddFarm, rememberPartnerVerificationStatus } from '@/lib/add-farm-entry';
+import { fetchOwnerProperties } from '@/lib/api-owner';
+import { rememberPartnerVerificationStatus } from '@/lib/add-farm-entry';
 import { Button } from '@/components/ui/button';
 import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 import { PartnerEntryLanding } from './partner-onboarding/partner-entry-landing';
@@ -30,20 +30,20 @@ import {
 import {
   APPROVED_PARTNER_STATUSES,
   EDITABLE_PARTNER_STATUSES,
+  OWNER_PAYOUT_SETUP_HREF,
   PARTNER_ONBOARDING_STEPS,
   PENDING_PARTNER_STATUSES,
   PLACEHOLDER_PARTNER_NAME,
   PLACEHOLDER_PARTNER_PHONE,
   derivePartnerSectionCompletion,
+  derivePartnerResumeStep,
   emptyIfPartnerPlaceholder,
   hasMeaningfulPartnerProgress,
-  looksLikeMaskedPayoutValue,
   missingRequiredPartnerDocuments,
   hasAcceptedCurrentPartnerAgreement,
-  hasDistinctOperatingLocation,
+  preferCorrectionStep,
   resolvePartnerOnboardingStepId,
   validatePartnerDocumentFile,
-  validatePartnerPayoutForm,
   type PartnerOnboardingStepId,
 } from './partner-onboarding/partner-onboarding-model';
 
@@ -61,10 +61,6 @@ const INITIAL_FORM: PartnerWizardFormState = {
   operatingCity: '',
   operatingArea: '',
   contactEmail: '',
-  beneficiaryName: '',
-  bankName: '',
-  iban: '',
-  optionalNotes: '',
 };
 
 export function BecomeOwnerView() {
@@ -87,17 +83,22 @@ export function BecomeOwnerView() {
   const [form, setForm] = useState<PartnerWizardFormState>(INITIAL_FORM);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
-  const [payoutEditing, setPayoutEditing] = useState(false);
-  const [differentOperatingLocation, setDifferentOperatingLocation] = useState(false);
+  const [hasExistingFarms, setHasExistingFarms] = useState(false);
 
-  const editable = onboarding
+  const editable = onboarding?.verificationStatus
     ? EDITABLE_PARTNER_STATUSES.includes(onboarding.verificationStatus)
     : true;
   const currentStep = PARTNER_ONBOARDING_STEPS[step] ?? 'entity';
 
   const hydrate = useCallback((view: PartnerOnboardingView) => {
-    setOnboarding(view);
+    setOnboarding({
+      ...view,
+      openChangeRequests: view.openChangeRequests ?? [],
+    });
     rememberPartnerVerificationStatus(view.verificationStatus);
+    if (!view.started || !view.ownerProfileId) {
+      return;
+    }
     setForm((prev) => ({
       ...prev,
       entityType: view.entityType ?? prev.entityType,
@@ -116,14 +117,6 @@ export function BecomeOwnerView() {
       operatingArea: view.operatingArea ?? prev.operatingArea,
       contactEmail: view.contactEmail ?? prev.contactEmail,
     }));
-    setDifferentOperatingLocation(
-      hasDistinctOperatingLocation({
-        city: view.city,
-        area: view.area,
-        operatingCity: view.operatingCity,
-        operatingArea: view.operatingArea,
-      }),
-    );
     if (view.acceptedAgreement && view.currentAgreement && view.acceptedAgreement.agreementId === view.currentAgreement.id) {
       setAcceptedTerms(true);
     } else if (view.readiness?.agreementAccepted) {
@@ -145,10 +138,6 @@ export function BecomeOwnerView() {
         setLoggedIn(true);
         setRole(res.data.user.role);
         setAccountEmail(res.data.user.email ?? null);
-        if (isApprovedOwnerForAddFarm(res.data.user)) {
-          router.replace('/owner/properties/new');
-          return;
-        }
         if (res.data.user.role === 'admin') {
           setAuthLoading(false);
           return;
@@ -161,24 +150,73 @@ export function BecomeOwnerView() {
         ) {
           const refreshed = await refreshSession();
           setRole(refreshed.data.user.role);
-          if (isApprovedOwnerForAddFarm(refreshed.data.user)) {
-            router.replace('/owner/properties/new');
-            return;
+          // PF-4: stay on tracking success — do not auto-redirect to Add Farm.
+          try {
+            const props = await fetchOwnerProperties();
+            setHasExistingFarms((props.data?.length ?? 0) > 0);
+          } catch {
+            setHasExistingFarms(false);
           }
         }
         if (hasMeaningfulPartnerProgress(onboardRes.data)) {
-          setWizardOpen(true);
+          const pending =
+            onboardRes.data.verificationStatus &&
+            PENDING_PARTNER_STATUSES.includes(onboardRes.data.verificationStatus);
+          const approved =
+            onboardRes.data.verificationStatus === 'approved' ||
+            onboardRes.data.verificationStatus === 'legacy_approved';
+          const terminal =
+            onboardRes.data.verificationStatus === 'rejected' ||
+            onboardRes.data.verificationStatus === 'suspended';
+          // Tracking statuses stay on status panel; draft opens wizard; changes_requested starts on tracking.
+          if (
+            onboardRes.data.verificationStatus === 'draft' &&
+            !pending &&
+            !approved &&
+            !terminal
+          ) {
+            setWizardOpen(true);
+          } else {
+            setWizardOpen(false);
+          }
+          const sectionCompletion = derivePartnerSectionCompletion(onboardRes.data, []);
+          const resume = derivePartnerResumeStep(sectionCompletion, {
+            status: onboardRes.data.verificationStatus,
+          });
+          const resumeIdx = PARTNER_ONBOARDING_STEPS.indexOf(resume);
+          if (resumeIdx >= 0) setStep(resumeIdx);
         }
-        if (PENDING_PARTNER_STATUSES.includes(onboardRes.data.verificationStatus)) {
+        if (
+          onboardRes.data.verificationStatus &&
+          PENDING_PARTNER_STATUSES.includes(onboardRes.data.verificationStatus)
+        ) {
           setStep(PARTNER_ONBOARDING_STEPS.length - 1);
           setWizardOpen(false);
-        }
-        if (onboardRes.data.verificationStatus === 'changes_requested') {
-          setWizardOpen(true);
         }
         try {
           const reqs = await fetchPartnerRequirements();
           setRequirements(reqs.data);
+          if (
+            hasMeaningfulPartnerProgress(onboardRes.data) &&
+            onboardRes.data.verificationStatus === 'draft'
+          ) {
+            const sectionCompletion = derivePartnerSectionCompletion(onboardRes.data, reqs.data);
+            const resume = derivePartnerResumeStep(sectionCompletion, {
+              status: onboardRes.data.verificationStatus,
+            });
+            const resumeIdx = PARTNER_ONBOARDING_STEPS.indexOf(resume);
+            if (resumeIdx >= 0) setStep(resumeIdx);
+          }
+          if (onboardRes.data.verificationStatus === 'changes_requested') {
+            const sectionCompletion = derivePartnerSectionCompletion(onboardRes.data, reqs.data);
+            const prefer = preferCorrectionStep(onboardRes.data, reqs.data);
+            const resume = derivePartnerResumeStep(sectionCompletion, {
+              status: onboardRes.data.verificationStatus,
+              preferStep: prefer,
+            });
+            const resumeIdx = PARTNER_ONBOARDING_STEPS.indexOf(resume);
+            if (resumeIdx >= 0) setStep(resumeIdx);
+          }
         } catch {
           /* requirements load after profile exists */
         }
@@ -188,7 +226,7 @@ export function BecomeOwnerView() {
         setAuthLoading(false);
       }
     })();
-  }, [hydrate, router]);
+  }, [hydrate]);
 
   const completion = useMemo(
     () => derivePartnerSectionCompletion(onboarding, requirements),
@@ -198,48 +236,36 @@ export function BecomeOwnerView() {
   const stepValid = useMemo(() => {
     if (currentStep === 'entity') {
       return (
-        Boolean(form.entityType) &&
         form.displayName.trim().length >= 2 &&
         form.city.trim().length >= 2 &&
-        form.area.trim().length >= 2 &&
-        form.bio.trim().length >= 20
+        form.area.trim().length >= 2
       );
     }
     if (currentStep === 'contact') {
       const email = form.contactEmail.trim();
       const emailOk = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-      return form.phone.trim().length >= 8 && emailOk;
+      return (
+        Boolean(form.entityType) &&
+        form.bio.trim().length >= 20 &&
+        form.phone.trim().length >= 8 &&
+        emailOk
+      );
     }
     if (currentStep === 'documents') {
       return requirements.filter((r) => r.required).every((r) => Boolean(r.currentDocument));
     }
-    if (currentStep === 'payout') {
-      if (onboarding?.payout.complete && !payoutEditing) return true;
-      return (
-        form.beneficiaryName.trim().length >= 2 &&
-        form.bankName.trim().length >= 2 &&
-        form.iban.trim().length >= 8 &&
-        form.iban.trim().length <= 40 &&
-        !looksLikeMaskedPayoutValue(form.iban) &&
-        !looksLikeMaskedPayoutValue(form.beneficiaryName) &&
-        !looksLikeMaskedPayoutValue(form.bankName)
-      );
-    }
-    if (currentStep === 'agreement') {
-      return hasAcceptedCurrentPartnerAgreement(onboarding) || acceptedTerms;
-    }
     return true;
-  }, [currentStep, form, onboarding, requirements, payoutEditing, acceptedTerms]);
+  }, [currentStep, form, requirements]);
 
   function validateCurrentStep(): boolean {
     const errors: Record<string, string> = {};
     if (currentStep === 'entity') {
-      if (!form.entityType) errors.entityType = t('info.errors.entityType');
       if (form.displayName.trim().length < 2) errors.displayName = t('info.errors.displayName');
       if (form.city.trim().length < 2) errors.city = t('info.errors.city');
       if (form.area.trim().length < 2) errors.area = t('info.errors.area');
-      if (form.bio.trim().length < 20) errors.bio = t('info.errors.bio');
     } else if (currentStep === 'contact') {
+      if (!form.entityType) errors.entityType = t('info.errors.entityType');
+      if (form.bio.trim().length < 20) errors.bio = t('info.errors.bio');
       if (form.phone.trim().length < 8) errors.phone = t('contact.errors.phone');
       const email = form.contactEmail.trim();
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -277,111 +303,33 @@ export function BecomeOwnerView() {
       setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
       return;
     }
-    if (currentStep === 'payout') {
-      if (onboarding?.payout.complete && !payoutEditing) {
-        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
-        return;
-      }
-      const invalid = validatePartnerPayoutForm(form);
-      if (invalid) {
-        const mapped: Record<string, string> = {};
-        if (invalid.beneficiaryName) mapped.beneficiaryName = t('transfer.errors.beneficiaryName');
-        if (invalid.bankName) mapped.bankName = t('transfer.errors.bankName');
-        if (invalid.iban === 'ibanMasked' || invalid.beneficiaryName === 'masked') {
-          mapped.iban = t('transfer.errors.ibanMasked');
-        } else if (invalid.iban) {
-          mapped.iban = t('transfer.errors.iban');
-        }
-        setFieldErrors(mapped);
-        setError(t('transfer.errors.incomplete'));
-        return;
-      }
-      setSaving(true);
-      try {
-        await putPartnerPayoutProfile({
-          beneficiaryName: form.beneficiaryName.trim(),
-          bankName: form.bankName.trim(),
-          iban: form.iban.trim(),
-          optionalNotes: form.optionalNotes.trim() || undefined,
-        });
-        const res = await fetchPartnerOnboarding();
-        hydrate(res.data);
-        setForm((f) => ({
-          ...f,
-          beneficiaryName: '',
-          bankName: '',
-          iban: '',
-          optionalNotes: '',
-        }));
-        setPayoutEditing(false);
-        setFieldErrors({});
-        setSaveOk(true);
-        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('submitError'));
-        setSaveOk(false);
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-    if (currentStep === 'agreement') {
-      if (hasAcceptedCurrentPartnerAgreement(onboarding)) {
-        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
-        return;
-      }
-      if (!acceptedTerms || !onboarding?.currentAgreement) {
-        setError(t('agreementUx.mustAccept'));
-        return;
-      }
-      setSaving(true);
-      try {
-        await acceptPartnerAgreement({
-          agreementId: onboarding.currentAgreement.id,
-          acceptedLocale: locale,
-        });
-        const res = await fetchPartnerOnboarding();
-        hydrate(res.data);
-        setAcceptedTerms(true);
-        setSaveOk(true);
-        setStep((s) => Math.min(s + 1, PARTNER_ONBOARDING_STEPS.length - 1));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('submitError'));
-        setSaveOk(false);
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
     setSaving(true);
     try {
       if (currentStep === 'entity') {
         await saveProfile({
-          entityType: form.entityType || undefined,
           displayName: form.displayName.trim(),
-          businessName: form.businessName.trim() || null,
           city: form.city.trim(),
           area: form.area.trim(),
-          bio: form.bio.trim(),
           approximateFarmCount: form.approximateFarmCount
             ? Number(form.approximateFarmCount)
             : null,
         });
       } else if (currentStep === 'contact') {
         const contactPayload: Parameters<typeof saveProfile>[0] = {
+          entityType: form.entityType || undefined,
+          bio: form.bio.trim(),
           phone: form.phone.trim(),
           legalName: (form.legalName || form.displayName).trim(),
           operatingPhone: (form.operatingPhone || form.phone).trim(),
           contactEmail: form.contactEmail.trim() || undefined,
         };
-        // Only persist operating location when the applicant opted into a distinct management location.
-        // Omitting these fields preserves backend fallback to Step 1 city/area.
-        if (differentOperatingLocation) {
-          const opCity = form.operatingCity.trim();
-          const opArea = form.operatingArea.trim();
-          if (opCity.length >= 2) contactPayload.operatingCity = opCity;
-          if (opArea.length >= 2) contactPayload.operatingArea = opArea;
+        // Business name is only relevant for Business entity type. Omit for Individual so
+        // legacy stored values are not wiped when the field is hidden.
+        if (form.entityType === 'business') {
+          contactPayload.businessName = form.businessName.trim() || null;
         }
+        // Operating city/area are no longer collected in onboarding UI. Omit from PATCH so
+        // any legacy OwnerVerificationProfile.operating* values remain intact.
         await saveProfile(contactPayload);
       } else {
         setSaveOk(false);
@@ -432,48 +380,6 @@ export function BecomeOwnerView() {
     }
   }
 
-  async function handleSavePayout() {
-    setError(null);
-    const invalid = validatePartnerPayoutForm(form);
-    if (invalid) {
-      const mapped: Record<string, string> = {};
-      if (invalid.beneficiaryName) mapped.beneficiaryName = t('transfer.errors.beneficiaryName');
-      if (invalid.bankName) mapped.bankName = t('transfer.errors.bankName');
-      if (invalid.iban === 'ibanMasked' || invalid.beneficiaryName === 'masked') {
-        mapped.iban = t('transfer.errors.ibanMasked');
-      } else if (invalid.iban) {
-        mapped.iban = t('transfer.errors.iban');
-      }
-      setFieldErrors(mapped);
-      return;
-    }
-    setSaveOk(false);
-    setSaving(true);
-    try {
-      const res = await putPartnerPayoutProfile({
-        beneficiaryName: form.beneficiaryName.trim(),
-        bankName: form.bankName.trim(),
-        iban: form.iban.trim(),
-        optionalNotes: form.optionalNotes.trim() || undefined,
-      });
-      hydrate(res.data);
-      setForm((f) => ({
-        ...f,
-        beneficiaryName: '',
-        bankName: '',
-        iban: '',
-        optionalNotes: '',
-      }));
-      setPayoutEditing(false);
-      setFieldErrors({});
-      setSaveOk(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('submitError'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function handleAcceptAgreement() {
     if (!onboarding?.currentAgreement || !acceptedTerms) {
       setError(t('agreementUx.mustAccept'));
@@ -502,8 +408,36 @@ export function BecomeOwnerView() {
   async function handleSubmit() {
     setError(null);
     setSaveOk(false);
+    if (!onboarding?.readiness.canSubmit) {
+      if (!hasAcceptedCurrentPartnerAgreement(onboarding)) {
+        if (!acceptedTerms || !onboarding?.currentAgreement) {
+          setError(t('agreementUx.mustAccept'));
+          return;
+        }
+      } else {
+        setError(t('missingHint'));
+        return;
+      }
+    }
     setSaving(true);
     try {
+      // Persist agreement before submit when the checkbox is checked but not yet saved.
+      if (
+        !hasAcceptedCurrentPartnerAgreement(onboarding) &&
+        acceptedTerms &&
+        onboarding?.currentAgreement
+      ) {
+        await acceptPartnerAgreement({
+          agreementId: onboarding.currentAgreement.id,
+          acceptedLocale: locale,
+        });
+        const view = await fetchPartnerOnboarding();
+        hydrate(view.data);
+        if (!hasAcceptedCurrentPartnerAgreement(view.data)) {
+          setError(t('agreementUx.mustAccept'));
+          return;
+        }
+      }
       const res = await submitPartnerOnboarding();
       hydrate(res.data);
       setWizardOpen(false);
@@ -525,16 +459,27 @@ export function BecomeOwnerView() {
     if (idx >= 0) setStep(idx);
   }
 
-  // Legacy/bookmark `?step=requirements|documents|…` — apply once when wizard opens (no URL write).
+  // Legacy/bookmark `?step=requirements|documents|agreement|payout|…` — apply once when wizard opens (no URL write).
+  // Runs after resume so bookmarks win over domain-derived landing.
+  // PF-5: approved owners with ?step=payout|transfer go to post-approval payout setup.
   useEffect(() => {
-    if (!wizardOpen) return;
     if (typeof window === 'undefined') return;
     const raw = new URLSearchParams(window.location.search).get('step');
+    if (!raw) return;
+    const isLegacyPayout = raw === 'payout' || raw === 'transfer';
+    const status = onboarding?.verificationStatus;
+    const approved =
+      status === 'approved' || status === 'legacy_approved';
+    if (isLegacyPayout && approved) {
+      router.replace(OWNER_PAYOUT_SETUP_HREF);
+      return;
+    }
+    if (!wizardOpen) return;
     const resolved = resolvePartnerOnboardingStepId(raw);
     if (!resolved) return;
     const idx = PARTNER_ONBOARDING_STEPS.indexOf(resolved);
     if (idx >= 0) setStep(idx);
-  }, [wizardOpen]);
+  }, [wizardOpen, onboarding?.ownerProfileId, onboarding?.verificationStatus, requirements.length, router]);
 
   if (authLoading) {
     return (
@@ -544,12 +489,15 @@ export function BecomeOwnerView() {
     );
   }
 
-  const status = onboarding?.verificationStatus;
+  const status = onboarding?.verificationStatus ?? null;
   const isApproved = status ? APPROVED_PARTNER_STATUSES.includes(status) : false;
   const isPending = status ? PENDING_PARTNER_STATUSES.includes(status) : false;
   const isTerminalLocked = status === 'rejected' || status === 'suspended';
+  const isChangesRequested = status === 'changes_requested';
   const meaningful = hasMeaningfulPartnerProgress(onboarding);
-  const showStatusOnly = isPending || isTerminalLocked || isApproved;
+  const showStatusOnly =
+    Boolean(status) &&
+    (isPending || isTerminalLocked || isApproved || (isChangesRequested && !wizardOpen));
   const showWizard =
     loggedIn &&
     role !== 'admin' &&
@@ -557,6 +505,18 @@ export function BecomeOwnerView() {
     !isPending &&
     !isTerminalLocked &&
     !isApproved;
+
+  function openCorrection(step?: PartnerOnboardingStepId) {
+    setWizardOpen(true);
+    if (step) {
+      const idx = PARTNER_ONBOARDING_STEPS.indexOf(step);
+      if (idx >= 0) setStep(idx);
+    }
+  }
+
+  async function handleResubmit() {
+    await handleSubmit();
+  }
 
   return (
     <MarketplacePageShell data-testid="become-owner-page" className="py-6 sm:py-10">
@@ -573,12 +533,12 @@ export function BecomeOwnerView() {
       {loggedIn && role !== 'admin' && showStatusOnly && onboarding ? (
         <PartnerStatusPanel
           onboarding={onboarding}
+          requirements={requirements}
+          hasExistingFarms={hasExistingFarms}
+          resubmitting={saving}
+          onResubmit={isChangesRequested ? () => void handleResubmit() : undefined}
           onContinueCorrection={
-            status === 'changes_requested'
-              ? () => {
-                  setWizardOpen(true);
-                }
-              : undefined
+            isChangesRequested ? (step) => openCorrection(step) : undefined
           }
         />
       ) : null}
@@ -615,12 +575,26 @@ export function BecomeOwnerView() {
         )
       ) : null}
 
-      {status === 'changes_requested' && onboarding && showWizard ? (
-        <div className="mb-5">
+      {isChangesRequested && onboarding && showWizard ? (
+        <div className="mb-5 space-y-3">
           <PartnerStatusPanel
             onboarding={onboarding}
-            onContinueCorrection={() => setWizardOpen(true)}
+            requirements={requirements}
+            compact
+            onContinueCorrection={(step) => openCorrection(step)}
+            onResubmit={() => void handleResubmit()}
+            resubmitting={saving}
           />
+          <div className="flex justify-center">
+            <Button
+              type="button"
+              variant="ghost"
+              data-testid="partner-back-to-tracking"
+              onClick={() => setWizardOpen(false)}
+            >
+              {t('tracking.backToTracking')}
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -700,27 +674,14 @@ export function BecomeOwnerView() {
               acceptedTerms={acceptedTerms}
               setAcceptedTerms={setAcceptedTerms}
               handleUpload={(id, file) => void handleUpload(id, file)}
-              handleSavePayout={() => void handleSavePayout()}
               handleAcceptAgreement={() => void handleAcceptAgreement()}
               handleSubmit={() => void handleSubmit()}
               fieldErrors={fieldErrors}
               accountEmail={accountEmail}
-              payoutEditing={payoutEditing}
-              setPayoutEditing={setPayoutEditing}
-              differentOperatingLocation={differentOperatingLocation}
-              setDifferentOperatingLocation={setDifferentOperatingLocation}
-              onGoToDocuments={() => selectStep('documents')}
               completion={completion}
               onEditStep={selectStep}
             />
         </PartnerOnboardingShell>
-      ) : null}
-
-      {/* Keep legacy testid available on page for approved redirect fallback */}
-      {isApproved && onboarding ? (
-        <div className="sr-only">
-          <Link href="/owner/properties/new">{t('goToAddFarm')}</Link>
-        </div>
       ) : null}
     </MarketplacePageShell>
   );

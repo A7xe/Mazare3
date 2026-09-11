@@ -24,7 +24,7 @@ const E2E_SLOT_WINDOWS = {
 } as const;
 
 test.describe('Booking E2E — Arabic', () => {
-  test('guest book redirects to login with returnUrl, then completes booking with draft restore', async ({
+  test('guest book redirects to auth with returnUrl, then completes booking with draft restore', async ({
     page,
   }) => {
     const slot = await findAvailableSlot(E2E_SLOT_WINDOWS.fullFlow);
@@ -34,7 +34,7 @@ test.describe('Booking E2E — Arabic', () => {
     await selectBookingSlot(page, slot, guests);
     await clickBookNow(page);
 
-    await page.waitForURL(/\/ar\/login\?returnUrl=/);
+    await page.waitForURL(/\/ar\/auth\?returnUrl=/);
     expect(page.url()).toContain(encodeURIComponent('/properties/chalet-emerald-dead-sea'));
 
     await loginOnPage(page);
@@ -170,11 +170,11 @@ test.describe('Booking conflict', () => {
 });
 
 test.describe('Auth guards', () => {
-  test('account bookings requires login when logged out', async ({ browser }) => {
+  test('account bookings requires auth when logged out', async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.goto('/ar/account/bookings');
-    await page.waitForURL(/\/ar\/login/);
+    await page.waitForURL(/\/ar\/auth/);
     expect(page.url()).toContain('returnUrl');
     await context.close();
   });
@@ -197,7 +197,9 @@ test.describe('English smoke', () => {
   test('property and bookings pages render LTR', async ({ page }) => {
     await ensureCustomerLoggedIn(page, 'en');
 
-    await page.goto('/en/properties/chalet-emerald-dead-sea', { waitUntil: 'domcontentloaded' });
+    await page.goto('/en/properties/chalet-emerald-dead-sea/book', {
+      waitUntil: 'domcontentloaded',
+    });
     await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
     await expect(page.getByTestId('booking-panel')).toBeVisible({ timeout: 20_000 });
 

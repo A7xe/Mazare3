@@ -8,8 +8,8 @@ export default async function NotificationsPage({ params }: Props) {
   const { locale } = await params;
   setRequestLocale(locale);
   return (
-    <MarketplacePageShell className="py-10">
-      <div className="mx-auto w-full max-w-2xl">
+    <MarketplacePageShell className="py-8 sm:py-10">
+      <div className="px-4 sm:px-5 lg:px-6">
         <NotificationsView />
       </div>
     </MarketplacePageShell>

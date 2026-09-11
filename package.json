@@ -16,6 +16,10 @@
     "db:push": "pnpm --filter @mazare3/db push",
     "db:migrate": "pnpm --filter @mazare3/db migrate",
     "db:seed": "pnpm --filter @mazare3/db seed",
+    "db:seed:showcase": "pnpm --filter @mazare3/db seed:showcase",
+    "db:cleanup:showcase": "pnpm --filter @mazare3/db cleanup:showcase",
+    "db:cleanup:presentation-hygiene": "pnpm --filter @mazare3/db cleanup:presentation-hygiene",
+    "db:migrate:showcase-media": "pnpm --filter @mazare3/api exec dotenv -e ../../.env -- tsx scripts/migrate-showcase-media-to-r2.ts",
     "db:studio": "pnpm --filter @mazare3/db studio",
     "postinstall": "pnpm db:generate",
     "test:e2e": "playwright test",
@@ -46,6 +50,7 @@
     "qa:home-personalization": "node scripts/qa-run-home-personalization.mjs",
     "qa:payment-gateway": "node scripts/qa-run-payment-gateway.mjs",
     "qa:paytabs": "node scripts/qa-run-paytabs.mjs",
+    "qa:phase1-financial-policy": "pnpm --filter @mazare3/api exec tsx ../../packages/shared/scripts/qa-phase1-financial-policy.ts",
     "env:check": "node scripts/env-check.mjs"
   },
   "devDependencies": {

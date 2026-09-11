@@ -62,17 +62,17 @@ test.describe('Partner onboarding E2E', () => {
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
     await waitWizardStep(page, 'entity');
-    await page.getByTestId('partner-entity-individual').click();
     await page.getByTestId('owner-apply-displayName').fill('شريك تجريبي');
-    await page.getByTestId('owner-apply-phone').fill('0791234500');
     await page.getByTestId('owner-apply-city').fill('عمان');
     await page.getByTestId('owner-apply-area').fill('دابوق');
-    await page.getByTestId('owner-apply-bio').fill(
-      'نبذة واضحة عن تشغيل المزرعة العائلية وإدارة الحجوزات عبر المنصة بشكل مهني.',
-    );
     await clickWizardNext(page);
 
     await waitWizardStep(page, 'contact');
+    await page.getByTestId('partner-entity-individual').click();
+    await page.getByTestId('owner-apply-phone').fill('0791234500');
+    await page.getByTestId('owner-apply-bio').fill(
+      'نبذة واضحة عن تشغيل المزرعة العائلية وإدارة الحجوزات عبر المنصة بشكل مهني.',
+    );
     await clickWizardNext(page);
 
     await waitWizardStep(page, 'documents');
@@ -102,13 +102,13 @@ test.describe('Partner onboarding E2E', () => {
     );
     await clickWizardNext(page);
 
-    await waitWizardStep(page, 'agreement');
+    await waitWizardStep(page, 'review');
+    await expect(page.getByTestId('partner-wizard-step-agreement')).toHaveCount(0);
+    await expect(page.getByTestId('partner-review-section-agreement')).toBeVisible();
     await page.getByTestId('owner-apply-terms').check();
     await page.getByTestId('partner-agreement-accept').click();
-    await expect(page.getByTestId('partner-agreement-accept')).toHaveCount(0, { timeout: 20_000 });
-    await clickWizardNext(page);
+    await expect(page.getByTestId('partner-agreement-accepted')).toBeVisible({ timeout: 20_000 });
 
-    await waitWizardStep(page, 'review');
     await expect(page.getByTestId('partner-submit')).toBeEnabled({ timeout: 20_000 });
     await page.getByTestId('partner-submit').click();
     await expect(page.getByTestId('partner-status-chip')).not.toHaveText('مسودة', { timeout: 20_000 });

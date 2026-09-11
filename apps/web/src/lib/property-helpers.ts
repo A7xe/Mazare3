@@ -34,5 +34,5 @@ export function formatPrice(amount: number, currency: string, locale: Locale): s
 }
 
 export function shouldShowVerificationBadge(status: VerificationStatus): boolean {
-  return status === 'platform_verified' || status === 'platform_reviewed';
+  return status === 'platform_verified';
 }

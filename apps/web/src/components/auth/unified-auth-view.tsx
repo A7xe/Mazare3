@@ -465,7 +465,7 @@ export function UnifiedAuthView() {
     return (
       <div
         data-testid="auth-redirecting"
-        className="flex min-h-[240px] items-center justify-center rounded-3xl bg-white p-8 shadow-[0_12px_40px_rgba(13,32,70,0.08)]"
+        className="flex min-h-[200px] items-center justify-center py-10"
       >
         <Loader2 className="h-7 w-7 animate-spin text-primary" aria-hidden />
         <span className="sr-only">{t('loading')}</span>
@@ -479,12 +479,20 @@ export function UnifiedAuthView() {
     !privilegedAdminReturn && capabilities?.google.available === true;
   /** Admin return context stays on Email Login — no chooser back-step. */
   const showBack = step !== 'chooser' && !(privilegedAdminReturn && step === 'email');
+  const isChooser = step === 'chooser';
+
+  const pillBtn =
+    'h-14 w-full rounded-full border-2 border-[#C9D6E8] bg-white text-[15px] font-semibold text-[#0D2046] shadow-none transition hover:border-primary/50 hover:bg-[#F5F8FC]';
 
   return (
     <div
       data-testid="auth-card"
       data-auth-step={step}
-      className="rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(13,32,70,0.08)] sm:p-8"
+      className={
+        isChooser
+          ? 'max-w-[400px]'
+          : 'max-w-[400px] rounded-3xl border border-[#E4ECF5] bg-white p-5 shadow-[0_8px_28px_rgba(13,32,70,0.06)] sm:p-6'
+      }
     >
       {showBack && (
         <button
@@ -512,12 +520,9 @@ export function UnifiedAuthView() {
 
       {step === 'chooser' && (
         <div className="space-y-5" data-testid="auth-chooser">
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-[#0D2046] sm:text-[1.65rem]">
-              {t('unifiedTitle')}
-            </h1>
-            <p className="mt-2 text-sm leading-relaxed text-[#5B6B7F]">{t('unifiedSubtitle')}</p>
-          </div>
+          <p className="text-center text-[15px] leading-relaxed text-[#445468]">
+            {t('unifiedSubtitle')}
+          </p>
 
           {capsLoading ? (
             <div className="flex justify-center py-8">
@@ -528,14 +533,15 @@ export function UnifiedAuthView() {
               {phoneAvailable && (
                 <Button
                   type="button"
+                  variant="outline"
                   data-testid="auth-continue-phone"
-                  className="h-12 w-full text-base shadow-soft"
+                  className={pillBtn}
                   onClick={() => {
                     setError(null);
                     setStep('phone');
                   }}
                 >
-                  <Phone className="h-4 w-4" aria-hidden />
+                  <Phone className="h-5 w-5 text-primary" aria-hidden />
                   {t('continuePhone')}
                 </Button>
               )}
@@ -544,37 +550,25 @@ export function UnifiedAuthView() {
                   type="button"
                   variant="outline"
                   data-testid="auth-continue-google"
-                  className="h-12 w-full border-[#D8E3F0] bg-white text-base text-[#0D2046] hover:bg-[#F5F8FC]"
+                  className={pillBtn}
                   onClick={startGoogle}
                 >
                   <GoogleMark />
                   {t('continueGoogle')}
                 </Button>
               )}
-              {(phoneAvailable || googleAvailable) && (
-                <div className="relative py-1 text-center" data-testid="auth-separator">
-                  <span className="relative z-10 bg-white px-3 text-xs font-medium text-[#8A97A8]">
-                    {t('orSeparator')}
-                  </span>
-                  <span className="absolute inset-x-0 top-1/2 h-px bg-[#E4ECF5]" aria-hidden />
-                </div>
-              )}
               <Button
                 type="button"
-                variant={phoneAvailable || googleAvailable ? 'outline' : 'default'}
+                variant="outline"
                 data-testid="auth-continue-email"
-                className={
-                  phoneAvailable || googleAvailable
-                    ? 'h-12 w-full border-[#D8E3F0] bg-white text-base text-[#0D2046] hover:bg-[#F5F8FC]'
-                    : 'h-12 w-full text-base shadow-soft'
-                }
+                className={pillBtn}
                 onClick={() => {
                   setError(null);
                   setEmailMode('login');
                   setStep('email');
                 }}
               >
-                <Mail className="h-4 w-4" aria-hidden />
+                <Mail className="h-5 w-5 text-primary" aria-hidden />
                 {t('continueEmail')}
               </Button>
             </div>

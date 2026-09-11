@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import type { AvailabilityPeriod, PublicPropertyDetail, RebookIntent } from '@mazare3/shared';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
-import { BookingPanel } from './booking-panel';
+import { PropertyBookingEntryCard } from './property-booking-entry-card';
 import { BookingApiError, fetchRebookIntent } from '@/lib/api-bookings';
 
 type Props = {
@@ -17,6 +17,10 @@ type Props = {
   rebookId?: string;
 };
 
+/**
+ * Property Detail sidebar: informational entry only (CB-UX-1).
+ * Configuration moved to `/properties/[slug]/book`.
+ */
 export function PropertyBookingAside({
   property,
   locale,
@@ -37,7 +41,11 @@ export function PropertyBookingAside({
     void (async () => {
       try {
         const res = await fetchRebookIntent(rebookId);
-        if (!cancelled) setIntent(res.data);
+        if (cancelled) return;
+        setIntent(res.data);
+        if (res.data.bookable) {
+          router.replace(`/properties/${property.slug}/book?rebook=${rebookId}`);
+        }
       } catch (err) {
         if (err instanceof BookingApiError && err.status === 401) {
           router.push(`/auth?returnUrl=${encodeURIComponent(pathname)}`);
@@ -49,7 +57,7 @@ export function PropertyBookingAside({
     return () => {
       cancelled = true;
     };
-  }, [rebookId, pathname, router]);
+  }, [rebookId, pathname, router, property.slug]);
 
   const unavailable =
     property.bookingDisabled ||
@@ -75,24 +83,19 @@ export function PropertyBookingAside({
     );
   }
 
-  const guests = intent?.guestsToApply ?? initialGuests;
-  const guestsCapped = Boolean(intent?.guestsCapped);
+  if (rebookId && !intentError && (!intent || intent.bookable)) {
+    return (
+      <div
+        className="rounded-[22px] border border-[#E0E8F3] bg-white px-4 py-5 text-center"
+        data-testid="rebook-redirecting"
+      >
+        <p className="text-sm text-[#53637A]">{t('rebookRedirecting')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
-      {rebookId && intent && (
-        <div
-          className="rounded-2xl border border-primary/20 bg-primary-soft/50 px-4 py-3 text-sm text-navy"
-          data-testid="rebook-banner"
-        >
-          <p>{t('rebookWelcome')}</p>
-          {guestsCapped && (
-            <p className="mt-2 text-muted" data-testid="rebook-capacity-note">
-              {t('rebookGuestsCapped', { capacity: intent.propertyCapacity })}
-            </p>
-          )}
-        </div>
-      )}
       {property.activeOffers && property.activeOffers.length > 0 ? (
         <div
           className="rounded-2xl border border-primary/20 bg-primary-soft/40 px-4 py-3 text-sm text-navy"
@@ -112,14 +115,14 @@ export function PropertyBookingAside({
           </ul>
         </div>
       ) : null}
-      <BookingPanel
+      <PropertyBookingEntryCard
         property={property}
         locale={locale}
-        initialDate={rebookId ? '' : initialDate}
-        initialPeriod={rebookId ? '' : initialPeriod}
-        initialGuests={guests}
-        preferredPeriod={intent?.preferredPeriod}
-        rebookMode={Boolean(rebookId)}
+        query={{
+          date: initialDate,
+          period: initialPeriod,
+          guests: initialGuests,
+        }}
       />
     </div>
   );

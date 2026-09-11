@@ -6,6 +6,7 @@ import {
   PropertyStatus,
   UserRole,
   UserStatus,
+  VerificationStatus,
 } from '@mazare3/db';
 import type {
   AdminAuditLogRow,
@@ -21,6 +22,7 @@ import type {
   PatchAdminAvailabilityInput,
   PatchAdminOwnerStatusInput,
   PatchAdminPropertyStatusInput,
+  PatchAdminPropertyVerificationInput,
   PatchAdminUserStatusInput,
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
@@ -586,6 +588,41 @@ export async function patchAdminPropertyStatus(
       titleEn: property.titleEn ?? property.titleAr,
     }).catch((err) => console.error('[notifications] admin.property_rejected', err));
   }
+
+  const detail = await getAdminPropertyById(propertyId);
+  return detail!;
+}
+
+export async function patchAdminPropertyVerification(
+  actorUserId: string,
+  propertyId: string,
+  input: PatchAdminPropertyVerificationInput,
+  req?: AuthenticatedRequest,
+): Promise<AdminPropertyDetail> {
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
+  if (!property) {
+    throw new AppError(404, 'NOT_FOUND', 'Property not found');
+  }
+
+  const nextStatus = input.verificationStatus as VerificationStatus;
+  const previousStatus = property.verificationStatus;
+
+  await prisma.property.update({
+    where: { id: propertyId },
+    data: { verificationStatus: nextStatus },
+  });
+
+  await createAuditLog({
+    actorUserId,
+    action: 'admin.property_verification_updated',
+    entityType: 'property',
+    entityId: propertyId,
+    metadata: {
+      previousVerificationStatus: previousStatus,
+      verificationStatus: nextStatus,
+    },
+    req,
+  });
 
   const detail = await getAdminPropertyById(propertyId);
   return detail!;

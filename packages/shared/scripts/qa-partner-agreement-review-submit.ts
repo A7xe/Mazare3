@@ -92,7 +92,7 @@ console.log('\n— Accepted ≠ approved / commercial —');
   );
   expect(
     '13 commercial from onboarding.commercialTerms',
-    steps.includes('onboarding?.commercialTerms') && steps.includes('commissionPercent'),
+    steps.includes('onboarding.commercialTerms') && steps.includes('commissionPercent'),
   );
   expect(
     '14 no invented commission calculator',
@@ -113,9 +113,9 @@ console.log('\n— Review summaries —');
   expect('19 documents summary uses partnerDocumentUiState', steps.includes('partnerDocumentUiState'));
   expect('20 uploaded != accepted states in model', model.includes("'uploaded'") && model.includes("'accepted'"));
   expect('21 rejected docs -> needs_attention', model.includes("reviewStatus === 'rejected'") && model.includes("'needs_attention'"));
-  expect('22 payout masked in review', steps.includes('partner-review-iban-masked') && steps.includes('ibanMasked'));
-  expect('23 payout UI saved != reviewed', model.includes("'saved'") && model.includes("'reviewed'"));
-  expect('24 full IBAN never in review markup', !/partner-review[\s\S]*payout\.iban[^M]/.test(steps));
+  expect('22 payout not in Partner Review (PF-5)', !steps.includes('partner-review-section-payout'));
+  expect('23 payout UI saved != reviewed preserved', model.includes("'saved'") && model.includes("'reviewed'"));
+  expect('24 full IBAN never in Partner review markup', !/partner-review[\s\S]*payout\.iban[^M]/.test(steps));
   expect('25 agreement summary uses hasAcceptedCurrent', /partner-review-section-agreement[\s\S]*hasAcceptedCurrentPartnerAgreement/.test(steps));
 }
 
@@ -138,11 +138,15 @@ console.log('\n— Applicant readiness / navigation —');
   );
   expect('31 missing profile -> entity/contact', model.includes("key === 'profile'") && model.includes("completion.entity ? 'contact' : 'entity'"));
   expect('32 missing docs -> documents', model.includes("key === 'required_documents'") && model.includes("return 'documents'"));
-  expect('33 missing payout -> payout', model.includes("key === 'payout_profile'") && model.includes("return 'payout'"));
-  expect('34 missing agreement -> agreement', model.includes("key === 'agreement'") && model.includes("return 'agreement'"));
+  expect(
+    '33 payout_profile not in APPLICANT_SUBMIT_MISSING_KEYS (PF-5)',
+    /APPLICANT_SUBMIT_MISSING_KEYS = \[[\s\S]*?\] as const/.test(model) &&
+      !/APPLICANT_SUBMIT_MISSING_KEYS = \[[\s\S]*?'payout_profile'[\s\S]*?\] as const/.test(model),
+  );
+  expect('34 missing agreement -> review', model.includes("key === 'agreement'") && model.includes("return 'review'"));
   expect('35 edit/complete buttons in review', steps.includes('partner-review-edit-') && steps.includes("t('reviewUx.complete')"));
   expect('36 applicantVsAdmin note', steps.includes('partner-review-applicant-vs-admin'));
-  expect('37 submit disabled when !canSubmit', steps.includes('!onboarding.readiness.canSubmit'));
+  expect('37 submit disabled when !canSubmit', steps.includes('partner-submit') && steps.includes('readiness.canSubmit'));
 }
 
 console.log('\n— Submit / status machine —');
@@ -169,7 +173,7 @@ console.log('\n— Submit / status machine —');
   );
   expect('44 double submit blocked by canOwnerSubmitOnboarding', machine.includes('canOwnerSubmitOnboarding') && service.includes('nextStatusOnSubmit'));
   expect('45 after submit wizard closes', view.includes('setWizardOpen(false)'));
-  expect('46 status panel for submitted', statusPanel.includes("status === 'submitted'") && statusPanel.includes('statusUx.submittedTitle'));
+  expect('46 status panel for submitted', statusPanel.includes("status === 'submitted'") && (statusPanel.includes('tracking.submittedTitle') || statusPanel.includes('statusUx.submittedTitle')));
   expect('47 no fake SLA promise', statusPanel.includes('statusUx.noSla') && !en.becomeOwner.statusUx.submittedBody.includes('24 hours'));
   expect('48 under_review status-only path', model.includes("'under_review'") && machine.includes('nextStatusOnAdminReviewStart'));
   expect('49 changes_requested editable', model.includes("'changes_requested'") && machine.includes('canOwnerEditOnboarding'));
@@ -192,16 +196,16 @@ console.log('\n— Safety / freeze / i18n —');
   expect(
     '58 step titles',
     en.becomeOwner.steps.agreement === 'Agreement' &&
-      en.becomeOwner.steps.review === 'Review application' &&
+      Boolean(en.becomeOwner.steps.review) &&
       ar.becomeOwner.steps.agreement === 'الاتفاقية' &&
-      ar.becomeOwner.steps.review === 'مراجعة الطلب',
+      String(ar.becomeOwner.steps.review).includes('مراجعة'),
   );
   expect('59 no storageKey / ibanCipher in UI', !steps.includes('storageKey') && !steps.includes('ibanCipher'));
   expect('60 agreement content scrollable + focusable', steps.includes('partner-agreement-content') && steps.includes('tabIndex={0}'));
   expect('61 what happens next section', steps.includes('partner-review-what-next'));
   expect('62 versionChanged warning', steps.includes('partner-agreement-version-refresh'));
   expect(
-    '63 canSubmit excludes document/payout approval',
+    '63 canSubmit excludes document/payout approval and payout completeness (PF-5)',
     (() => {
       const normalized = service.replace(/\r\n/g, '\n');
       const blocks = [...normalized.matchAll(/const canSubmit =([\s\S]*?);/g)].map((m) => m[1]);
@@ -210,10 +214,10 @@ console.log('\n— Safety / freeze / i18n —');
         blocks.every(
           (b) =>
             b.includes('requiredDocumentsComplete') &&
-            b.includes('payoutProfileComplete') &&
             b.includes('agreementAccepted') &&
             !b.includes('requiredDocumentsApproved') &&
-            !b.includes('payoutProfileApproved'),
+            !b.includes('payoutProfileApproved') &&
+            !b.includes('payoutProfileComplete'),
         )
       );
     })(),

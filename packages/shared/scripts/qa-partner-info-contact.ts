@@ -65,18 +65,21 @@ console.log('\n— Step 1 UX / validation —');
 {
   expect('13 entity panel testid', steps.includes('partner-step-entity-panel'));
   expect('14 Step1 title uses steps.entity', steps.includes("t('steps.entity')"));
-  expect('15 Step1 hint info.stepHint', steps.includes("t('info.stepHint')"));
+  expect('15 Step1 hint about.stepHint', steps.includes("t('about.stepHint')") || steps.includes("t('info.stepHint')"));
   expect('16 farmCount optional label', steps.includes("t('optional')") && steps.includes('farmCount'));
-  expect('17 Step1 Next omits phone from entity save', /currentStep === 'entity'[\s\S]*saveProfile\(\{[\s\S]*displayName[\s\S]*bio[\s\S]*\}\)/.test(view) && /currentStep === 'entity'[\s\S]*saveProfile\(\{[\s\S]*?\}\)/.test(view));
+  expect('17 Step1 Next omits phone from entity save', /currentStep === 'entity'[\s\S]*saveProfile\(\{[\s\S]*displayName[\s\S]*city[\s\S]*area/.test(view));
   const entitySave = view.match(/if \(currentStep === 'entity'\) \{[\s\S]*?\} else if \(currentStep === 'contact'\)/);
   expect('18 entity save has no phone field', Boolean(entitySave && !entitySave[0].includes('phone:')));
   expect(
-    '19 entity save has displayName city area bio',
+    '19 entity save has displayName city area (About You)',
     view.includes("if (currentStep === 'entity')") &&
-      /await saveProfile\(\{\s*entityType:[\s\S]*displayName:[\s\S]*city:[\s\S]*area:[\s\S]*bio:/.test(view),
+      /await saveProfile\(\{\s*displayName:[\s\S]*city:[\s\S]*area:/.test(view),
   );
   expect('20 validateCurrentStep for entity', view.includes('validateCurrentStep'));
-  expect('21 entity completion without phone', /const entity =[\s\S]*entityType[\s\S]*bio[\s\S]*;/.test(model) && !/const entity =[\s\S]*phone\.length[\s\S]*bio/.test(model));
+  expect(
+    '21 entity completion is About You (name/city/area)',
+    /const entity =[\s\S]*name\.length >= 2[\s\S]*city[\s\S]*area/.test(model),
+  );
   const entityOk = patchPartnerOnboardingProfileSchema.safeParse({
     entityType: 'individual',
     displayName: 'Test Partner',
@@ -111,7 +114,7 @@ console.log('\n— Privacy / public / hydration —');
   expect('36 public mapper has no owner phone', !publicMapper.includes('phone') && !publicMapper.includes('contactEmail'));
   expect('37 single onboarding fetch on mount', (view.match(/fetchPartnerOnboarding\(/g) || []).length >= 1);
   expect('38 no stepParam hydration dep race like Add Farm', !view.includes('stepParam') || !view.includes('[draftParam'));
-  expect('39 approved redirect intact', view.includes("router.replace('/owner/properties/new')"));
+  expect('39 approved Add Farm CTA intact', entry.includes('isApprovedOwnerForAddFarm'));
   expect('40 Add Farm wizard untouched marker', addFarmWizard.includes('hydratedDraftRef'));
   expect('41 Add Farm entry routing intact', entry.includes('resolveAddFarmHref'));
 }
@@ -121,8 +124,8 @@ console.log('\n— Status / docs / payout freeze —');
   expect('42 changes_requested editable', model.includes("'changes_requested'"));
   expect('43 submitted/under_review pending', model.includes("'submitted'") && model.includes("'under_review'"));
   expect('44 documents step still present', steps.includes("currentStep === 'documents'"));
-  expect('45 payout step still present', steps.includes("currentStep === 'payout'"));
-  expect('46 agreement step still present', steps.includes("currentStep === 'agreement'"));
+  expect('45 no Partner payout wizard step (PF-5)', !steps.includes("currentStep === 'payout'"));
+  expect('46 agreement lives in Review (PF-3)', steps.includes('partner-review-section-agreement') && !steps.includes("currentStep === 'agreement'"));
   expect('47 submit still uses readiness.canSubmit', steps.includes('readiness.canSubmit'));
   expect('48 profileComplete still includes phone+entity', service.includes('profile.phone.trim().length >= 8') && service.includes('v.entityType'));
 }
@@ -133,10 +136,10 @@ console.log('\n— i18n / schema freeze —');
   expect('50 AR info.stepHint', Boolean(ar.becomeOwner.info?.stepHint));
   expect('51 EN contact.privacyNote', Boolean(en.becomeOwner.contact?.privacyNote));
   expect('52 AR contact.privacyNote', String(ar.becomeOwner.contact?.privacyNote ?? '').includes('زوار'));
-  expect('53 EN steps.entity Partner information', en.becomeOwner.steps.entity === 'Partner information');
-  expect('54 AR steps.entity معلومات الشريك', ar.becomeOwner.steps.entity === 'معلومات الشريك');
-  expect('55 EN steps.contact Contact details', en.becomeOwner.steps.contact === 'Contact details');
-  expect('56 AR steps.contact بيانات التواصل', ar.becomeOwner.steps.contact === 'بيانات التواصل');
+  expect('53 EN steps.entity About you', en.becomeOwner.steps.entity === 'About you');
+  expect('54 AR steps.entity عنك', ar.becomeOwner.steps.entity === 'عنك');
+  expect('55 EN steps.contact Partner details', en.becomeOwner.steps.contact === 'Partner details');
+  expect('56 AR steps.contact بيانات الشريك', ar.becomeOwner.steps.contact === 'بيانات الشريك');
   expect('57 no PO-2 migration invent', !existsSync(join(migrationsDir, '20260831140000_po2')));
   expect('58 no phoneVerified field', !prisma.includes('phoneVerified'));
 }

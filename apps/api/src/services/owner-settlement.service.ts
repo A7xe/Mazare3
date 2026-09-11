@@ -1,11 +1,13 @@
 import {
   prisma,
+  BookingStatus,
   OwnerPayoutRecordStatus,
   OwnerSettlementStatus,
   OwnerStatus,
   PaymentStatus,
   PayoutStatus,
   Prisma,
+  RefundStatus,
 } from '@mazare3/db';
 import type {
   CreateOwnerSettlementInput,
@@ -19,6 +21,7 @@ import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
 import { getBookingOperationsBlocks } from '../lib/operations-blocking.js';
 import { classifyPayoutEligibility } from '../lib/payout-eligibility.js';
+import { assertOwnerHasReviewedPayoutDestination } from '../lib/owner-payout-readiness.js';
 import { computePayoutAvailableAt } from './payment-policy.service.js';
 import { notifySettlementPaid, notifySettlementReady } from './notification.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
@@ -59,7 +62,11 @@ function parseThrough(through: string): Date {
 
 const paymentInclude = {
   booking: {
-    include: {
+    select: {
+      status: true,
+      paymentState: true,
+      bookingStartAt: true,
+      publicCode: true,
       property: { select: { ownerId: true, slug: true } },
       slot: { select: { date: true } },
     },
@@ -94,14 +101,28 @@ function snapshotAmounts(p: PaymentRow) {
 }
 
 async function loadOwnerPayments(ownerId: string, through: Date, from?: Date) {
+  const slotFilter = { date: { lte: through, ...(from ? { gte: from } : {}) } };
   return prisma.payment.findMany({
     where: {
       status: PaymentStatus.succeeded,
-      purpose: { not: 'deposit' },
       booking: {
         property: { ownerId },
-        slot: { date: { lte: through, ...(from ? { gte: from } : {}) } },
+        slot: slotFilter,
       },
+      OR: [
+        // Normal completed bookings: balance / full only
+        {
+          purpose: { not: 'deposit' },
+          booking: { status: { not: BookingStatus.cancelled } },
+        },
+        // Phase 1: cancelled bookings with retained owner compensation (incl. deposit-only)
+        {
+          booking: { status: BookingStatus.cancelled },
+          cancellationPenaltyAmount: { gt: 0 },
+          ownerNetPayoutAmount: { gt: 0 },
+          refundStatus: { in: [RefundStatus.none, RefundStatus.processed, RefundStatus.rejected] },
+        },
+      ],
     },
     include: paymentInclude,
   });
@@ -114,7 +135,13 @@ function classifyRow(
   through: Date,
 ) {
   const slotDate = p.booking.slot.date;
-  if (slotDate > through) {
+  const retained =
+    p.cancellationPenaltyAmount != null ? decimalToNumber(p.cancellationPenaltyAmount) : 0;
+  const ownerNet = decimalToNumber(p.ownerNetPayoutAmount);
+  const isCancellationRetention =
+    p.booking.status === BookingStatus.cancelled && retained > 0 && ownerNet > 0;
+
+  if (!isCancellationRetention && slotDate > through) {
     return {
       eligible: false as const,
       reason: 'visit_not_passed',
@@ -128,8 +155,11 @@ function classifyRow(
     paymentState: p.booking.paymentState,
     refundStatus: p.refundStatus,
     slotDate,
+    bookingStartAt: p.booking.bookingStartAt ?? null,
     payoutAvailableAt: p.payoutAvailableAt ?? computePayoutAvailableAt(slotDate),
     ownerPayoutRecordStatus: p.payoutRecord?.status ?? null,
+    ownerNetPayoutAmount: ownerNet,
+    cancellationPenaltyAmount: retained > 0 ? retained : null,
     operationsBlock: block,
     reservedInOtherSettlement: reserved,
   });
@@ -513,6 +543,8 @@ export async function markOwnerSettlementPaid(
   if (row.status !== OwnerSettlementStatus.ready) {
     throw new AppError(409, 'INVALID_STATUS', 'Only ready settlements can be marked paid');
   }
+
+  await assertOwnerHasReviewedPayoutDestination(row.ownerId);
 
   await revalidateSettlementItems(row.id, row.ownerId, row.periodEnd);
   const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();

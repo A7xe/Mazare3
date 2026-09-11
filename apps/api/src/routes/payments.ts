@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { createPaymentIntentSchema } from '@mazare3/shared';
+import {
+  createManagedFormPaymentSchema,
+  createPaymentIntentSchema,
+  createSavedCardPaymentSchema,
+} from '@mazare3/shared';
 import { asyncHandler } from '../middleware/error-handler.js';
 import {
   attachUser,
@@ -10,7 +14,9 @@ import {
 import { AppError, formatZodErrors } from '../lib/errors.js';
 import {
   acknowledgeBrowserPaymentReturn,
+  createManagedFormPayment,
   createPaymentIntent,
+  createSavedCardPayment,
   getPaymentForUser,
   simulatePaymentFailure,
   simulatePaymentSuccess,
@@ -29,6 +35,38 @@ paymentsRouter.post(
     }
     // Amount is never accepted from the client — only bookingId/method/purpose/idempotencyKey.
     const data = await createPaymentIntent(req.session!.userId, parsed.data, req);
+    res.status(201).json({ data });
+  }),
+);
+
+/**
+ * CB-4 Managed Form — temporary payment_token from paylib only.
+ * Never accepts PAN/CVV/amount/purpose from the client.
+ */
+paymentsRouter.post(
+  '/managed-form',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = createManagedFormPaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await createManagedFormPayment(req.session!.userId, parsed.data, req);
+    res.status(201).json({ data });
+  }),
+);
+
+/**
+ * CB-5B — pay with a vaulted saved card.
+ * Body: bookingId + savedPaymentMethodId only (no token/CVV/amount/purpose).
+ */
+paymentsRouter.post(
+  '/saved-card',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = createSavedCardPaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await createSavedCardPayment(req.session!.userId, parsed.data, req);
     res.status(201).json({ data });
   }),
 );

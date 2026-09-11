@@ -59,6 +59,7 @@ import {
 import {
   acceptPartnerAgreement,
   getOwnerAccessibleDocument,
+  getOwnerPayoutRequirements,
   getPartnerAgreement,
   getPartnerOnboarding,
   getPartnerRequirements,
@@ -232,6 +233,15 @@ ownerRouter.get(
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const view = await getPartnerOnboarding(req.session!.userId);
     res.json({ data: view.payout });
+  }),
+);
+
+ownerRouter.get(
+  '/payout-requirements',
+  ...ownerOnboardingAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await getOwnerPayoutRequirements(req.session!.userId);
+    res.json({ data });
   }),
 );
 

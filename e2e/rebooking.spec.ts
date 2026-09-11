@@ -7,6 +7,7 @@ import {
 } from './constants.js';
 import { applySessionToPage } from './helpers/session.js';
 import { loginViaApi } from './helpers/api.js';
+import { selectCalendarDate } from './helpers/booking-ui.js';
 
 async function payFully(cookie: string, bookingId: string) {
   const base = getApiBase();
@@ -68,8 +69,9 @@ test.describe('Fast rebooking (10E.3)', () => {
     await page.goto('/ar/account/bookings');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await page.getByTestId(`book-again-${oldId}`).click();
-    await expect(page).toHaveURL(new RegExp(`/ar/properties/${PROPERTY_SLUG}`));
-    await expect(page.getByTestId('rebook-banner')).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(new RegExp(`/ar/properties/${PROPERTY_SLUG}/book`));
+    await expect(page).toHaveURL(/rebook=/);
+    await expect(page.getByTestId('rebook-banner')).toBeVisible({ timeout: 25_000 });
     await expect(page.getByTestId('booking-guests')).toHaveValue('4');
     await expect(page.getByTestId('booking-date')).toHaveValue('');
 
@@ -80,7 +82,8 @@ test.describe('Fast rebooking (10E.3)', () => {
     });
     const nextBody = (await nextEnsure.json()) as { data?: { date: string; period: string } };
     const next = nextBody.data!;
-    await page.getByTestId('booking-date').fill(next.date);
+    await selectCalendarDate(page, next.date);
+    await expect(page.getByTestId(`booking-period-${next.period}`)).toBeVisible({ timeout: 25_000 });
     await page.getByTestId(`booking-period-${next.period}`).click();
     await expect(page.getByTestId('booking-summary-deposit')).toBeVisible();
     const createdRes = page.waitForResponse(

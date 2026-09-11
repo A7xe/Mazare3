@@ -107,9 +107,14 @@ console.log('\n— Destinations —');
 
 console.log('\n— Account UI wiring —');
 {
-  expect('20 AccountPartnerSection used', home.includes('AccountPartnerSection'));
-  expect('21 fetches onboarding when needed', home.includes('shouldFetchPartnerStatusForAccount') && home.includes('fetchPartnerOnboarding'));
-  expect('22 remembers status for nav CTAs', home.includes('rememberPartnerVerificationStatus'));
+  expect('20 AccountPartnerSection component retained', existsSync(join(root, 'apps/web/src/components/account/account-partner-section.tsx')));
+  expect('21 account home hub-first (no giant partner section)', !home.includes('AccountPartnerSection'));
+  expect('22 account home omits identities card', !home.includes('AccountIdentitiesCard'));
+  expect('22b partner status fetch restored', home.includes('shouldFetchPartnerStatusForAccount') && home.includes('fetchPartnerOnboarding'));
+  expect('22c join partner hub row', home.includes('account-home-partner-join') && home.includes('becomePartner'));
+  expect('22d become-owner route wired', home.includes('ADD_FARM_PARTNER_HREF'));
+  expect('22e payment methods once', (home.match(/account-home-payment-methods/g) || []).length === 1);
+  expect('22f no duplicate payment href cluster', (home.match(/href: '\/account\/payment-methods'/g) || []).length === 1);
   expect('23 no localStorage status cache', !home.includes('localStorage') && !section.includes('localStorage'));
   expect('24 partner section testid', section.includes('account-partner-section'));
   expect('25 partner card testid', section.includes('account-partner-card'));

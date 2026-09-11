@@ -116,7 +116,15 @@ export async function createRefundRequest(
 
   const capturedJod = filsToJod(funds.captured);
   const refundableJod = filsToJod(funds.refundable);
-  const policy = evaluateCancellationPolicy(capturedJod, booking.slot.date);
+  const merchantValue = decimalToNumber(booking.merchantBookingValue ?? booking.totalAmount);
+  const commissionPercent = decimalToNumber(booking.platformCommissionPercent);
+  const policy = evaluateCancellationPolicy(
+    merchantValue,
+    capturedJod,
+    booking.bookingStartAt,
+    booking.slot.date,
+    commissionPercent,
+  );
   const policyRefundAmount = Math.min(policy.refundableAmount, refundableJod);
   const requestedAmount =
     input.requestedAmount != null
@@ -427,4 +435,130 @@ export async function getActiveRefundRequestForBooking(
     orderBy: { createdAt: 'desc' },
   });
   return row ? toRefundRequestSummary(row) : null;
+}
+
+const SYSTEM_CANCEL_REFUND_REASON = 'Customer cancellation — policy refund';
+
+/**
+ * Phase 1 — idempotent refund obligation after a paid customer cancellation.
+ * Does not require booking.status === confirmed. Attempts PSP refund when safe.
+ */
+export async function ensureSystemCancellationRefund(params: {
+  bookingId: string;
+  customerId: string;
+  customerRefund: number;
+  retainedAmount: number;
+  tier?: string;
+  req?: AuthenticatedRequest;
+}): Promise<RefundRequestSummary | null> {
+  if (params.customerRefund <= 0) return null;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id: params.bookingId, userId: params.customerId },
+    include: { payments: true, refundRequests: true },
+  });
+  if (!booking) return null;
+
+  const existing = booking.refundRequests.find(
+    (r) =>
+      r.reason === SYSTEM_CANCEL_REFUND_REASON &&
+      (BLOCKING_REFUND_REQUEST_STATUSES as readonly string[]).includes(r.status),
+  );
+  if (existing) return toRefundRequestSummary(existing);
+
+  const processed = booking.refundRequests.find(
+    (r) => r.reason === SYSTEM_CANCEL_REFUND_REASON && r.status === RefundRequestStatus.processed,
+  );
+  if (processed) return toRefundRequestSummary(processed);
+
+  const funds = refundableCapturedFils(booking.payments, booking.refundRequests);
+  const refundableJod = filsToJod(funds.refundable);
+  const policyRefundAmount = Math.min(params.customerRefund, refundableJod);
+  if (policyRefundAmount <= 0) return null;
+
+  const capturedPayments = booking.payments.filter((p) => p.status === PaymentStatus.succeeded);
+  const payment = capturedPayments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  if (!payment) return null;
+
+  const row = await prisma.refundRequest.create({
+    data: {
+      bookingId: booking.id,
+      paymentId: payment.id,
+      customerId: params.customerId,
+      reason: SYSTEM_CANCEL_REFUND_REASON,
+      policyRefundAmount,
+      requestedAmount: policyRefundAmount,
+      status: RefundRequestStatus.pending,
+    },
+  });
+
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      payoutStatus: PayoutStatus.blocked,
+      refundStatus: RefundStatus.pending,
+      cancellationRefundAmount: policyRefundAmount,
+      cancellationPenaltyAmount: params.retainedAmount,
+    },
+  });
+  await syncPayoutStatusForPayment(payment.id);
+
+  await createAuditLog({
+    actorUserId: params.customerId,
+    action: 'refund.system_obligation_created',
+    entityType: 'refund_request',
+    entityId: row.id,
+    metadata: {
+      bookingId: params.bookingId,
+      publicCode: booking.publicCode,
+      policyRefundAmount,
+      retainedAmount: params.retainedAmount,
+      tier: params.tier ?? null,
+    },
+    req: params.req,
+  });
+
+  try {
+    const gateway = getPaymentGateway(payment.provider);
+    const result = await gateway.refundPayment({
+      paymentId: payment.id,
+      providerRef: payment.providerRef,
+      amount: policyRefundAmount,
+      currency: payment.currency,
+      refundRequestId: row.id,
+      idempotencyKey: providerRefundIdempotencyKey(row.id),
+    });
+    if (result.status === 'succeeded') {
+      await prisma.refundRequest.update({
+        where: { id: row.id },
+        data: {
+          status: RefundRequestStatus.processed,
+          approvedAmount: policyRefundAmount,
+          adminNote: 'Auto-processed on customer cancellation',
+        },
+      });
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { refundStatus: RefundStatus.processed },
+      });
+      await syncPayoutStatusForPayment(payment.id);
+    } else if (result.status === 'failed') {
+      await prisma.refundRequest.update({
+        where: { id: row.id },
+        data: {
+          adminNote: `PSP refund failed (${result.providerStatus ?? result.status}) — admin retry required`,
+        },
+      });
+    }
+  } catch (err) {
+    await prisma.refundRequest.update({
+      where: { id: row.id },
+      data: {
+        adminNote: `PSP refund attempt failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+      },
+    });
+  }
+
+  const refreshed = await prisma.refundRequest.findUniqueOrThrow({ where: { id: row.id } });
+  return toRefundRequestSummary(refreshed);
 }

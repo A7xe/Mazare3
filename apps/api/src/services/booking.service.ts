@@ -15,7 +15,12 @@ import {
 } from '@mazare3/db';
 import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
 import type { CreateBookingInput, RebookIntent } from '@mazare3/shared';
-import { filsToJod, jodToFils } from '@mazare3/shared';
+import {
+  BOOKING_CANCELLATION_REASON,
+  filsToJod,
+  jodToFils,
+  resolvePaymentPlan,
+} from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
 import {
@@ -35,14 +40,17 @@ import type { CheckoutBookingView } from '@mazare3/shared';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { randomBytes } from 'node:crypto';
 import { PAYMENT_HOLD_MINUTES } from '@mazare3/shared';
+import { buildInitialPaymentOptions } from '../lib/initial-payment-choice.js';
 import {
-  evaluateCancellationPolicy,
   buildBookingFinancialSnapshot,
   buildPlatformFundedSnapshot,
+  evaluateCancellationPolicy,
+  hoursUntilBookingStart,
   snapshotToBreakdown,
+  computePayoutAvailableAt,
 } from './payment-policy.service.js';
+import { ensureSystemCancellationRefund } from './refund-request.service.js';
 import { checkoutDueNow } from '../mappers/public-booking.mapper.js';
-import { resolveCommercialTerms } from './commercial-terms.service.js';
 import {
   bookingsNeedingLifecycleRefreshWhere,
   refreshBookingPaymentLifecycle,
@@ -59,30 +67,89 @@ import {
 import { computeOwnerApprovalExpiresAt } from '../config/owner-approval-config.js';
 import { expireOwnerApprovalIfNeeded } from './owner-approval-expiry.service.js';
 import { resolveOwnerScope } from './owner-access.js';
-import { resolvePriceForSlot } from './promotion.service.js';
 import {
-  evaluateCouponForCustomer,
-  couponIsCurrentlyApplicable,
-  loadCouponForProperty,
   releaseCouponReservationInTx,
   reserveCouponInTx,
 } from './coupon.service.js';
 import {
-  evaluatePlatformCouponForCustomer,
   releasePlatformCouponReservationInTx,
   reservePlatformCouponInTx,
 } from './platform-coupon.service.js';
+import { resolveBookingPricing } from './booking-quote.service.js';
+import { resolvePropertyMediaPublicUrl } from '../lib/property-media-public-url.js';
 function decimalToNumber(value: { toNumber(): number } | number): number {
   return typeof value === 'number' ? value : value.toNumber();
 }
 
-function parseDateOnly(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d));
-}
-
 function generatePublicCode(): string {
   return `MZ-${randomBytes(4).toString('hex').toUpperCase()}`;
+}
+
+async function syncLivePaymentPlanForBooking(bookingId: string): Promise<boolean> {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      slot: true,
+      property: { select: { depositPercent: true } },
+      payments: { select: { status: true } },
+    },
+  });
+  if (!booking) return false;
+  if (
+    booking.status !== BookingStatus.pending_payment &&
+    booking.status !== BookingStatus.pending_owner_approval
+  ) {
+    return false;
+  }
+  if (booking.payments.some((p) => p.status === PaymentStatus.succeeded)) return false;
+
+  const propertyDeposit =
+    booking.property.depositPercent != null
+      ? decimalToNumber(booking.property.depositPercent)
+      : null;
+  const hoursUntilStart = hoursUntilBookingStart(booking.bookingStartAt, booking.slot.date);
+
+  const snap = booking.platformCouponId
+    ? buildPlatformFundedSnapshot({
+        merchantBookingValue: decimalToNumber(
+          booking.merchantBookingValue ?? booking.totalAmount,
+        ),
+        platformDiscountAmount: decimalToNumber(booking.platformDiscountAmount),
+        propertyDepositPercent: propertyDeposit,
+        slotDate: booking.slot.date,
+        bookingStartAt: booking.bookingStartAt,
+        platformCommissionPercent: decimalToNumber(booking.platformCommissionPercent),
+        hoursUntilStart,
+      })
+    : buildBookingFinancialSnapshot({
+        bookingTotalAmount: decimalToNumber(booking.totalAmount),
+        propertyDepositPercent: propertyDeposit,
+        slotDate: booking.slot.date,
+        bookingStartAt: booking.bookingStartAt,
+        platformCommissionPercent: decimalToNumber(booking.platformCommissionPercent),
+        hoursUntilStart,
+      });
+
+  const changed =
+    jodToFils(decimalToNumber(booking.depositPercent)) !== jodToFils(snap.depositPercent) ||
+    jodToFils(decimalToNumber(booking.remainingAmount)) !== jodToFils(snap.remainingAmount);
+
+  if (!changed) return false;
+
+  await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      depositPercent: snap.depositPercent,
+      depositAmount: snap.depositAmount,
+      remainingAmount: snap.remainingAmount,
+      customerPayableTotal: snap.customerPayableTotal,
+      customerServiceFeeAmount: snap.customerServiceFeeAmount,
+      platformCommissionAmount: snap.platformCommissionAmount,
+      ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
+      balanceDueAt: snap.balanceDueAt,
+    },
+  });
+  return true;
 }
 
 const bookingInclude = {
@@ -111,136 +178,38 @@ export async function createBooking(
   input: CreateBookingInput,
   req?: AuthenticatedRequest,
 ) {
-  const property = await prisma.property.findFirst({
-    where: { slug: input.propertySlug, status: PropertyStatus.published },
-    select: {
-      id: true,
-      capacity: true,
-      depositPercent: true,
-      ownerId: true,
-      instantBookingEnabled: true,
-      owner: { select: { status: true, userId: true } },
-    },
+  const resolved = await resolveBookingPricing({
+    propertySlug: input.propertySlug,
+    date: input.date,
+    period: input.period,
+    guestsCount: input.guestsCount,
+    couponCode: input.couponCode,
+    userId,
   });
 
-  if (!property) {
-    throw new AppError(404, 'NOT_FOUND', 'Property not found');
-  }
-
-  if (property.owner.status !== OwnerStatus.approved) {
-    throw new AppError(
-      409,
-      'PARTNER_NOT_BOOKABLE',
-      'This property is not accepting new bookings',
-    );
-  }
-
-  if (input.guestsCount > property.capacity) {
-    throw new AppError(400, 'VALIDATION_ERROR', 'Guest count exceeds property capacity');
-  }
-
-  const date = parseDateOnly(input.date);
-
-  const slot = await prisma.availabilitySlot.findUnique({
-    where: {
-      propertyId_date_period: {
-        propertyId: property.id,
-        date,
-        period: input.period,
-      },
-    },
-  });
-
-  if (!slot || slot.status !== AvailabilitySlotStatus.available) {
-    await createAuditLog({
-      actorUserId: userId,
-      action: 'booking.conflict_rejected',
-      entityType: 'availability_slot',
-      entityId: slot?.id,
-      metadata: {
-        propertySlug: input.propertySlug,
-        date: input.date,
-        period: input.period,
-        reason: slot ? 'slot_not_available' : 'slot_missing',
-      },
-      req,
-    });
-    throw new AppError(409, 'SLOT_UNAVAILABLE', 'This time slot is not available for booking');
-  }
-
-  const instant = property.instantBookingEnabled;
-  const slotPrice = decimalToNumber(slot.price);
-  const timed = Boolean(slot.startAt && slot.endAt);
-  const priced = await resolvePriceForSlot({
-    propertyId: property.id,
-    period: slot.period,
+  const {
+    propertyId,
+    ownerUserId,
+    instantBookingEnabled: instant,
+    slot,
     slotPrice,
-  });
+    timed,
+    priced,
+    terms,
+    payable,
+    usePlatformCoupon,
+    couponId,
+    couponCodeSnapshot,
+    couponDiscountAmount,
+    priceBeforeCoupon,
+    platformCouponId,
+    platformCouponCodeSnapshot,
+    platformDiscountAmount,
+    snap,
+  } = resolved;
+
   const promotionApplies = Boolean(priced.promotionId && priced.discountAmount > 0);
-  const terms = await resolveCommercialTerms({
-    ownerProfileId: property.ownerId,
-    propertyId: property.id,
-  });
-  let couponId: string | null = null;
-  let couponCodeSnapshot: string | null = null;
-  let couponDiscountAmount = 0;
-  let priceBeforeCoupon: number | null = null;
-  let platformCouponId: string | null = null;
-  let platformCouponCodeSnapshot: string | null = null;
-  let platformDiscountAmount = 0;
-  let payable = priced.finalPrice;
-  let usePlatformCoupon = false;
-  if (input.couponCode) {
-    const ownerRow = await loadCouponForProperty(property.id, input.couponCode);
-    const ownerLive = ownerRow ? couponIsCurrentlyApplicable(slotPrice, ownerRow) : false;
-    if (ownerLive) {
-      const preview = await evaluateCouponForCustomer({
-        propertyId: property.id,
-        userId,
-        code: input.couponCode,
-        slotPrice,
-        promotionApplies,
-        propertyDepositPercent:
-          property.depositPercent != null ? decimalToNumber(property.depositPercent) : null,
-      });
-      payable = preview.priced.finalPrice;
-      couponId = preview.coupon.id;
-      couponCodeSnapshot = preview.coupon.normalizedCode;
-      couponDiscountAmount = preview.priced.discountAmount;
-      priceBeforeCoupon = preview.priced.originalPrice;
-    } else {
-      try {
-        const preview = await evaluatePlatformCouponForCustomer({
-          propertyId: property.id,
-          userId,
-          code: input.couponCode,
-          slotPrice,
-          promotionApplies,
-          propertyDepositPercent:
-            property.depositPercent != null ? decimalToNumber(property.depositPercent) : null,
-          platformCommissionPercent: terms.commissionPercent,
-        });
-        usePlatformCoupon = true;
-        payable = preview.money.customerPayableBeforeFee;
-        platformCouponId = preview.coupon.id;
-        platformCouponCodeSnapshot = preview.coupon.normalizedCode;
-        platformDiscountAmount = preview.priced.discountAmount;
-      } catch (err) {
-        if (ownerRow) {
-          await evaluateCouponForCustomer({
-            propertyId: property.id,
-            userId,
-            code: input.couponCode,
-            slotPrice,
-            promotionApplies,
-            propertyDepositPercent:
-              property.depositPercent != null ? decimalToNumber(property.depositPercent) : null,
-          });
-        }
-        throw err;
-      }
-    }
-  }
+
   if (
     input.expectedTotalAmount != null &&
     jodToFils(input.expectedTotalAmount) !== jodToFils(payable)
@@ -263,7 +232,7 @@ export async function createBooking(
   try {
     const booking = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM "Property" WHERE id = ${property.id} FOR UPDATE`,
+        Prisma.sql`SELECT id FROM "Property" WHERE id = ${propertyId} FOR UPDATE`,
       );
 
       const activeOnSlot = await tx.booking.findFirst({
@@ -282,7 +251,7 @@ export async function createBooking(
           SELECT b.id
           FROM "Booking" b
           INNER JOIN "AvailabilitySlot" s ON s.id = b."availabilitySlotId"
-          WHERE b."propertyId" = ${property.id}
+          WHERE b."propertyId" = ${propertyId}
             AND b.status IN ('pending_owner_approval', 'pending_payment', 'pending', 'confirmed')
             AND (
               (b."bookingStartAt" IS NOT NULL AND b."bookingEndAt" IS NOT NULL
@@ -316,30 +285,12 @@ export async function createBooking(
         holdExpiresAt.setMinutes(holdExpiresAt.getMinutes() + PAYMENT_HOLD_MINUTES);
       }
       const ownerApprovalExpiresAt = instant ? null : computeOwnerApprovalExpiresAt();
-      const snap = usePlatformCoupon
-        ? buildPlatformFundedSnapshot({
-            merchantBookingValue: slotPrice,
-            platformDiscountAmount,
-            propertyDepositPercent:
-              property.depositPercent != null ? decimalToNumber(property.depositPercent) : null,
-            slotDate: slot.date,
-            bookingStartAt: timed ? slot.startAt : null,
-            platformCommissionPercent: terms.commissionPercent,
-          })
-        : buildBookingFinancialSnapshot({
-            bookingTotalAmount: payable,
-            propertyDepositPercent:
-              property.depositPercent != null ? decimalToNumber(property.depositPercent) : null,
-            slotDate: slot.date,
-            bookingStartAt: timed ? slot.startAt : null,
-            platformCommissionPercent: terms.commissionPercent,
-          });
 
       const created = await tx.booking.create({
         data: {
           publicCode: generatePublicCode(),
           userId,
-          propertyId: property.id,
+          propertyId,
           availabilitySlotId: slot.id,
           guestsCount: input.guestsCount,
           totalAmount: snap.bookingTotalAmount,
@@ -388,7 +339,7 @@ export async function createBooking(
       });
       if (input.couponCode && usePlatformCoupon) {
         await reservePlatformCouponInTx(tx, {
-          propertyId: property.id,
+          propertyId,
           userId,
           bookingId: created.id,
           code: input.couponCode,
@@ -397,7 +348,7 @@ export async function createBooking(
         });
       } else if (input.couponCode) {
         await reserveCouponInTx(tx, {
-          propertyId: property.id,
+          propertyId,
           userId,
           bookingId: created.id,
           code: input.couponCode,
@@ -431,7 +382,7 @@ export async function createBooking(
       }).catch((err) => console.error('[notifications] booking.created', err));
     } else {
       void notifyBookingRequestCreated({
-        ownerUserId: property.owner.userId,
+        ownerUserId,
         bookingId: booking.id,
         publicCode: booking.publicCode,
         propertyTitleAr: booking.property.titleAr,
@@ -652,6 +603,7 @@ export async function getCheckoutBooking(
   bookingId: string,
 ): Promise<CheckoutBookingView | null> {
   await refreshBookingPaymentLifecycle(bookingId);
+  await syncLivePaymentPlanForBooking(bookingId);
   const row = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
     include: bookingInclude,
@@ -693,12 +645,64 @@ export async function getCheckoutBooking(
     currency: row.currency,
   });
 
+  const cover = await prisma.propertyMedia.findFirst({
+    where: { propertyId: row.propertyId, type: 'image' },
+    orderBy: { sortOrder: 'asc' },
+    select: { url: true, storageKey: true, thumbnailUrl: true },
+  });
+  const propertyCoverUrl = cover
+    ? resolvePropertyMediaPublicUrl({
+        url: cover.thumbnailUrl || cover.url,
+        storageKey: cover.storageKey,
+      })
+    : null;
+
+  const hoursUntilStart = hoursUntilBookingStart(row.bookingStartAt, row.slot.date);
+  const paymentPlan = resolvePaymentPlan({
+    hoursUntilStart,
+    customerPayable: decimalToNumber(row.customerPayableTotal),
+    depositPercent: decimalToNumber(row.depositPercent),
+  });
+
+  const choiceBuilt = buildInitialPaymentOptions({
+    status: row.status,
+    paymentCollectionMode: row.paymentCollectionMode,
+    paymentState: row.paymentState,
+    holdExpiresAt: row.holdExpiresAt,
+    depositAmount: decimalToNumber(row.depositAmount),
+    remainingAmount: decimalToNumber(row.remainingAmount),
+    customerServiceFeeAmount: decimalToNumber(row.customerServiceFeeAmount),
+    customerPayableTotal: decimalToNumber(row.customerPayableTotal),
+    fullPaymentRequired: paymentPlan.fullPaymentRequired,
+    payments: row.payments.map((p) => ({
+      status: p.status,
+      purpose: p.purpose,
+      providerRef: p.providerRef,
+    })),
+  });
+
+  // When Deposit/Full choice is available, surface deposit due by default for CTA consistency.
+  let dueNowAmount = due.dueNowAmount;
+  let duePurpose = due.duePurpose;
+  if (choiceBuilt.options && choiceBuilt.defaultChoice) {
+    const selected =
+      choiceBuilt.options.find((o) => o.choice === choiceBuilt.defaultChoice) ??
+      choiceBuilt.options[0]!;
+    dueNowAmount = selected.dueNowAmount;
+    duePurpose = selected.choice === 'full' ? 'full' : 'deposit';
+  }
+
   return {
     ...summary,
     payment: paymentSummary,
     pricing,
-    dueNowAmount: due.dueNowAmount,
-    duePurpose: due.duePurpose,
+    dueNowAmount,
+    duePurpose,
+    propertyCoverUrl,
+    initialPaymentOptions: choiceBuilt.options,
+    defaultInitialPaymentChoice: choiceBuilt.defaultChoice,
+    initialPaymentChoiceLocked: choiceBuilt.choiceLocked,
+    lockedInitialPaymentChoice: choiceBuilt.lockedChoice,
   };
 }
 
@@ -709,7 +713,7 @@ export async function cancelMyBooking(
 ) {
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
-    include: { slot: true },
+    include: { slot: true, payments: true, refundRequests: true },
   });
 
   if (!booking) {
@@ -734,18 +738,20 @@ export async function cancelMyBooking(
   let cancellationMeta: Record<string, unknown> | undefined;
 
   if (booking.status === BookingStatus.confirmed) {
-    const payments = await prisma.payment.findMany({
-      where: { bookingId: booking.id },
-    });
-    const refunds = await prisma.refundRequest.findMany({
-      where: { bookingId: booking.id },
-    });
-    const funds = refundableCapturedFils(payments, refunds);
+    const funds = refundableCapturedFils(booking.payments, booking.refundRequests);
     if (funds.captured <= 0) {
       throw new AppError(400, 'INVALID_STATUS', 'Booking cannot be cancelled');
     }
     const capturedJod = filsToJod(funds.captured);
-    const policy = evaluateCancellationPolicy(capturedJod, booking.slot.date);
+    const merchantValue = decimalToNumber(booking.merchantBookingValue ?? booking.totalAmount);
+    const commissionPercent = decimalToNumber(booking.platformCommissionPercent);
+    const policy = evaluateCancellationPolicy(
+      merchantValue,
+      capturedJod,
+      booking.bookingStartAt,
+      booking.slot.date,
+      commissionPercent,
+    );
     if (!policy.canCancel) {
       throw new AppError(
         400,
@@ -756,7 +762,11 @@ export async function cancelMyBooking(
     const refundableAmount = Math.min(policy.refundableAmount, filsToJod(funds.refundable));
     cancellationMeta = {
       refundableAmount,
-      cancellationPenaltyAmount: Math.max(0, capturedJod - refundableAmount),
+      cancellationPenaltyAmount: policy.retainedAmount,
+      retainedAmount: policy.retainedAmount,
+      platformRetained: policy.platformRetained,
+      ownerRetained: policy.ownerRetained,
+      chargePercent: policy.chargePercent,
       refundPercent: policy.refundPercent,
       tier: policy.tier,
     };
@@ -768,18 +778,35 @@ export async function cancelMyBooking(
       data: {
         status: BookingStatus.cancelled,
         cancelledAt: new Date(),
+        ...(booking.status === BookingStatus.confirmed
+          ? { cancellationReasonCode: BOOKING_CANCELLATION_REASON.CUSTOMER_CANCEL }
+          : {}),
       },
       include: bookingInclude,
     });
 
     if (booking.status === BookingStatus.confirmed && cancellationMeta) {
+      const refundAmt = cancellationMeta.refundableAmount as number;
+      const retainedAmt = cancellationMeta.retainedAmount as number;
+      const payoutAvailableAt = computePayoutAvailableAt(booking.slot.date);
       await tx.payment.updateMany({
         where: { bookingId: booking.id, status: PaymentStatus.succeeded },
         data: {
-          refundStatus: RefundStatus.pending,
-          cancellationRefundAmount: cancellationMeta.refundableAmount as number,
-          cancellationPenaltyAmount: cancellationMeta.cancellationPenaltyAmount as number,
+          refundStatus: refundAmt > 0 ? RefundStatus.pending : RefundStatus.none,
+          cancellationRefundAmount: refundAmt,
+          cancellationPenaltyAmount: retainedAmt,
+          platformCommissionAmount: cancellationMeta.platformRetained as number,
+          ownerNetPayoutAmount: cancellationMeta.ownerRetained as number,
+          ownerGrossAmount: retainedAmt,
           payoutStatus: PayoutStatus.blocked,
+          payoutAvailableAt,
+        },
+      });
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          platformCommissionAmount: cancellationMeta.platformRetained as number,
+          ownerNetPayoutAmount: cancellationMeta.ownerRetained as number,
         },
       });
     } else {
@@ -815,6 +842,24 @@ export async function cancelMyBooking(
     metadata: { publicCode: booking.publicCode, ...cancellationMeta },
     req,
   });
+
+  if (booking.status === BookingStatus.confirmed && cancellationMeta) {
+    await ensureSystemCancellationRefund({
+      bookingId: booking.id,
+      customerId: userId,
+      customerRefund: cancellationMeta.refundableAmount as number,
+      retainedAmount: cancellationMeta.retainedAmount as number,
+      tier: cancellationMeta.tier as string | undefined,
+      req,
+    });
+    const succeeded = await prisma.payment.findMany({
+      where: { bookingId: booking.id, status: PaymentStatus.succeeded },
+      select: { id: true },
+    });
+    for (const p of succeeded) {
+      await syncPayoutStatusForPayment(p.id);
+    }
+  }
 
   return toPublicBookingSummary(updated);
 }
@@ -897,6 +942,54 @@ export async function acceptOwnerBooking(
     if (result.count !== 1) {
       throw new AppError(409, 'OWNER_DECISION_ALREADY_MADE', 'This request is no longer awaiting approval');
     }
+
+    const current = await tx.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      include: {
+        slot: true,
+        property: { select: { depositPercent: true } },
+      },
+    });
+    const propertyDeposit =
+      current.property.depositPercent != null
+        ? decimalToNumber(current.property.depositPercent)
+        : null;
+    const hoursUntilStart = hoursUntilBookingStart(current.bookingStartAt, current.slot.date);
+    const snap = current.platformCouponId
+      ? buildPlatformFundedSnapshot({
+          merchantBookingValue: decimalToNumber(
+            current.merchantBookingValue ?? current.totalAmount,
+          ),
+          platformDiscountAmount: decimalToNumber(current.platformDiscountAmount),
+          propertyDepositPercent: propertyDeposit,
+          slotDate: current.slot.date,
+          bookingStartAt: current.bookingStartAt,
+          platformCommissionPercent: decimalToNumber(current.platformCommissionPercent),
+          hoursUntilStart,
+        })
+      : buildBookingFinancialSnapshot({
+          bookingTotalAmount: decimalToNumber(current.totalAmount),
+          propertyDepositPercent: propertyDeposit,
+          slotDate: current.slot.date,
+          bookingStartAt: current.bookingStartAt,
+          platformCommissionPercent: decimalToNumber(current.platformCommissionPercent),
+          hoursUntilStart,
+        });
+
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        depositPercent: snap.depositPercent,
+        depositAmount: snap.depositAmount,
+        remainingAmount: snap.remainingAmount,
+        customerPayableTotal: snap.customerPayableTotal,
+        customerServiceFeeAmount: snap.customerServiceFeeAmount,
+        platformCommissionAmount: snap.platformCommissionAmount,
+        ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
+        balanceDueAt: snap.balanceDueAt,
+      },
+    });
+
     return tx.booking.findUniqueOrThrow({
       where: { id: bookingId },
       include: bookingInclude,

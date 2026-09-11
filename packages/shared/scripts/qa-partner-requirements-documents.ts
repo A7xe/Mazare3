@@ -2,7 +2,7 @@
  * Phase PO-3 — Requirements + Documents.
  * Run: pnpm --filter @mazare3/api exec tsx ../../packages/shared/scripts/qa-partner-requirements-documents.ts
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { partnerDocumentTypeSchema } from '../src/schemas/partner.ts';
@@ -152,8 +152,8 @@ console.log('\n— Entity change / freeze / i18n —');
 {
   expect('35 entity change no silent delete in patch', !/entityType[\s\S]*deleteMany.*documents/.test(service));
   expect('36 no OTP', !steps.toLowerCase().includes('otp') && !view.toLowerCase().includes('otp'));
-  expect('37 payout step untouched marker', steps.includes("currentStep === 'payout'") && steps.includes('partner-payout-beneficiary'));
-  expect('38 agreement step untouched marker', steps.includes("currentStep === 'agreement'"));
+  expect('37 payout setup lives on owner route (PF-5)', existsSync(join(root, 'apps/web/src/app/[locale]/owner/payout/page.tsx')));
+  expect('38 agreement lives in Review (PF-3)', steps.includes('partner-review-section-agreement') && !steps.includes("currentStep === 'agreement'"));
   expect('39 Add Farm wizard untouched', addFarmWizard.includes('add-farm-wizard'));
   expect('40 approved redirect helper intact', entry.includes('isApprovedOwnerForAddFarm'));
   expect('41 EN docs.stepHint mentions partner type', String(en.becomeOwner.docs?.stepHint ?? '').includes('partner type'));
@@ -168,7 +168,7 @@ console.log('\n— Entity change / freeze / i18n —');
   expect('50 rail docs progress', rail.includes('shell.docsProgress') && rail.includes('countRequiredPartnerDocuments'));
   expect('51 editable statuses draft|changes_requested', model.includes("'draft'") && model.includes("'changes_requested'"));
   expect('52 pending submitted|under_review', model.includes("'submitted'") && model.includes("'under_review'"));
-  expect('53 stepper uses 6 columns', stepper.includes('md:grid-cols-6') && !stepper.includes('md:grid-cols-7'));
+  expect('53 stepper uses 4 columns', stepper.includes('md:grid-cols-4') && !stepper.includes('md:grid-cols-5'));
   expect('54 rail progress uses PARTNER_ONBOARDING_STEPS.length', rail.includes('PARTNER_ONBOARDING_STEPS.length'));
 }
 

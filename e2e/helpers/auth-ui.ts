@@ -13,7 +13,18 @@ export async function loginOnPage(
     password: CUSTOMER_PASSWORD,
   },
 ) {
-  await page.getByTestId('auth-email').fill(creds.email);
+  const email = page.getByTestId('auth-email');
+  const emailContinue = page.getByTestId('auth-continue-email');
+  // Unified `/auth` may land on the method chooser (guest book) or email form (`/login` redirect).
+  await Promise.race([
+    email.waitFor({ state: 'visible', timeout: 30_000 }),
+    emailContinue.waitFor({ state: 'visible', timeout: 30_000 }),
+  ]);
+  if (await emailContinue.isVisible().catch(() => false)) {
+    await emailContinue.click();
+    await email.waitFor({ state: 'visible', timeout: 15_000 });
+  }
+  await email.fill(creds.email);
   await page.getByTestId('auth-password').fill(creds.password);
   await page.getByTestId('auth-submit').click();
   await page.waitForResponse(

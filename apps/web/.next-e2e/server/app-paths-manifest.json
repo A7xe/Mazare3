@@ -1,8 +1,0 @@
-{
-  "/[locale]/auth/page": "app/[locale]/auth/page.js",
-  "/[locale]/page": "app/[locale]/page.js",
-  "/[locale]/admin/users/page": "app/[locale]/admin/users/page.js",
-  "/[locale]/owner/page": "app/[locale]/owner/page.js",
-  "/[locale]/admin/page": "app/[locale]/admin/page.js",
-  "/[locale]/account/page": "app/[locale]/account/page.js"
-}

@@ -7,6 +7,11 @@ import {
 } from './payment-policy.service.js';
 import { OwnerPayoutRecordStatus } from '@mazare3/db';
 
+function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
+  if (value == null) return 0;
+  return typeof value === 'number' ? value : value.toNumber();
+}
+
 /** Recompute and persist payoutStatus when booking period / cancellation state changes. */
 export async function syncPayoutStatusForPayment(paymentId: string): Promise<PayoutStatus> {
   const payment = await prisma.payment.findUnique({
@@ -19,7 +24,20 @@ export async function syncPayoutStatusForPayment(paymentId: string): Promise<Pay
     return PayoutStatus.not_ready;
   }
 
-  if (payment.purpose === 'deposit' || payment.booking.paymentState !== 'fully_paid') {
+  const retained = decimalToNumber(payment.cancellationPenaltyAmount);
+  const ownerNet = decimalToNumber(payment.ownerNetPayoutAmount);
+  const isCancellationRetention =
+    payment.booking.status === BookingStatus.cancelled &&
+    retained > 0 &&
+    ownerNet > 0 &&
+    (payment.refundStatus === 'none' ||
+      payment.refundStatus === 'processed' ||
+      payment.refundStatus === 'rejected');
+
+  if (
+    !isCancellationRetention &&
+    (payment.purpose === 'deposit' || payment.booking.paymentState !== 'fully_paid')
+  ) {
     if (payment.payoutStatus !== PayoutStatus.not_ready || payment.payoutAvailableAt) {
       await prisma.payment.update({
         where: { id: paymentId },
@@ -42,7 +60,9 @@ export async function syncPayoutStatusForPayment(paymentId: string): Promise<Pay
 
   let next = resolvePayoutStatus({
     paymentSucceeded: payment.status === PaymentStatus.succeeded,
-    bookingFullyPaid: payment.booking.paymentState === 'fully_paid',
+    bookingFullyPaid: isCancellationRetention
+      ? true
+      : payment.booking.paymentState === 'fully_paid',
     bookingCancelled: payment.booking.status === BookingStatus.cancelled,
     refundStatus: payment.refundStatus,
     payoutAvailableAt,

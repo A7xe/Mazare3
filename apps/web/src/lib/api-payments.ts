@@ -44,6 +44,63 @@ export async function createPaymentIntent(input: CreatePaymentIntentInput) {
   });
 }
 
+export type CreateManagedFormPaymentClientInput = {
+  bookingId: string;
+  paymentToken: string;
+  idempotencyKey?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  /** CB-5A — opt-in only; server ignores when tokenization capability is off. */
+  saveCard?: boolean;
+  /** CB-6 — Deposit vs Full; server validates. Never send amount/purpose. */
+  initialPaymentChoice?: 'deposit' | 'full';
+};
+
+/** CB-4 — temporary Managed Form token only. Never send PAN/CVV. */
+export async function createManagedFormPayment(input: CreateManagedFormPaymentClientInput) {
+  return paymentFetch<{ data: PaymentSummary }>('/payments/managed-form', {
+    method: 'POST',
+    body: JSON.stringify({
+      bookingId: input.bookingId,
+      paymentToken: input.paymentToken,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      ...(input.contactEmail ? { contactEmail: input.contactEmail } : {}),
+      ...(input.contactPhone ? { contactPhone: input.contactPhone } : {}),
+      ...(input.saveCard === true ? { saveCard: true } : {}),
+      ...(input.initialPaymentChoice
+        ? { initialPaymentChoice: input.initialPaymentChoice }
+        : {}),
+    }),
+  });
+}
+
+export type CreateSavedCardPaymentClientInput = {
+  bookingId: string;
+  savedPaymentMethodId: string;
+  idempotencyKey?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  /** CB-6 — Deposit vs Full; server validates. Never send amount/purpose. */
+  initialPaymentChoice?: 'deposit' | 'full';
+};
+
+/** CB-5B — opaque savedPaymentMethodId only. Never send vault token/CVV/amount. */
+export async function createSavedCardPayment(input: CreateSavedCardPaymentClientInput) {
+  return paymentFetch<{ data: PaymentSummary }>('/payments/saved-card', {
+    method: 'POST',
+    body: JSON.stringify({
+      bookingId: input.bookingId,
+      savedPaymentMethodId: input.savedPaymentMethodId,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      ...(input.contactEmail ? { contactEmail: input.contactEmail } : {}),
+      ...(input.contactPhone ? { contactPhone: input.contactPhone } : {}),
+      ...(input.initialPaymentChoice
+        ? { initialPaymentChoice: input.initialPaymentChoice }
+        : {}),
+    }),
+  });
+}
+
 export async function fetchPayment(id: string) {
   return paymentFetch<{ data: PaymentSummary }>(`/payments/${id}`);
 }

@@ -1,5 +1,4 @@
 node_modules
-.next
 dist
 build
 coverage
@@ -17,7 +16,53 @@ packages/db/.env.local
 .turbo
 packages/db/generated
 uploads/
+
+# Next.js build / cache (never commit)
+.next/
+apps/web/.next/
+apps/web/.next-*/
+**/.next/
+**/.next-*/
+
+# Playwright generated output
 test-results/
 playwright-report/
 blob-report/
 e2e/.auth/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+apps/web/tsconfig.tsbuildinfo
+
+# Disposable local temp / status dumps
+tmp-*.txt
+tmp-check.txt
+tmp-git-status-full.txt
+
+# Local showcase / media helpers
+packages/db/prisma/showcase-image-sources.local.json
+
+# Disposable visual QA screenshot dumps (regenerable)
+_demo1_visual/
+_demo2_visual/
+_auth_header_screenshots/
+_auth_immersive/
+_auth_reset_screenshots/
+_auth_ux_screenshots/
+_cb7_final_acceptance/
+_cb_ux1_final_acceptance/
+_cb_ux1_visual/
+_google_oauth_final/
+_google_oauth_smoke/
+_home_bundle_extract/
+_home_rebuild_screenshots/
+_merch2_visual/
+_partner_ux_entity_location/
+_pf1_visual/
+_pf2_visual/
+_pf3_visual/
+_pf4_visual/
+_pf5_visual/
+_pf6_visual/
+_ua6_acceptance_visual/
+apps/api/_auth_immersive/

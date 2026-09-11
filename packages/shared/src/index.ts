@@ -4,6 +4,7 @@ export * from './money';
 export * from './timezone';
 export * from './availability-schedule';
 export * from './booking-financials';
+export * from './marketplace-financial-policy';
 export * from './promotion-pricing';
 export * from './payment-state-machine';
 export * from './location-privacy';

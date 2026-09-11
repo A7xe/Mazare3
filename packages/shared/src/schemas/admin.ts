@@ -71,5 +71,17 @@ export const patchAdminAvailabilitySchema = z
 export type AdminAvailabilityQuery = z.infer<typeof adminAvailabilityQuerySchema>;
 export type PatchAdminUserStatusInput = z.infer<typeof patchAdminUserStatusSchema>;
 export type PatchAdminOwnerStatusInput = z.infer<typeof patchAdminOwnerStatusSchema>;
+export const patchAdminPropertyVerificationSchema = z.object({
+  verificationStatus: z.enum([
+    'unverified',
+    'owner_uploaded',
+    'platform_reviewed',
+    'platform_verified',
+  ]),
+});
+
 export type PatchAdminPropertyStatusInput = z.infer<typeof patchAdminPropertyStatusSchema>;
 export type PatchAdminAvailabilityInput = z.infer<typeof patchAdminAvailabilitySchema>;
+export type PatchAdminPropertyVerificationInput = z.infer<
+  typeof patchAdminPropertyVerificationSchema
+>;

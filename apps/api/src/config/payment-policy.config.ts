@@ -1,22 +1,32 @@
 /**
  * Full snapshot + deposit policy. Amounts computed server-side only.
- * Single source for DEFAULT_DEPOSIT_PERCENT / commission / balance due hours.
+ * Env fallbacks align with @mazare3/shared marketplace-financial-policy SSOT.
  */
 
-import { TEST_DEFAULT_DEPOSIT_PERCENT } from '@mazare3/shared';
+import {
+  BALANCE_DUE_HOURS_BEFORE_START,
+  CANCELLATION_CHARGE_30_UNTIL_HOURS,
+  CANCELLATION_CHARGE_50_UNTIL_HOURS,
+  CANCELLATION_FREE_UNTIL_HOURS,
+  DEPOSIT_PERCENT,
+  FULL_PAYMENT_WITHIN_HOURS,
+  STANDARD_COMMISSION_PERCENT,
+  VERIFIED_COMMISSION_PERCENT,
+} from '@mazare3/shared';
 
 export type PaymentPolicyConfig = {
   mode: 'deposit_balance';
   currency: string;
   platformCommissionPercent: number;
+  platformVerifiedCommissionPercent: number;
   customerServiceFeePercent: number;
   defaultDepositPercent: number;
+  fullPaymentWithinHours: number;
   balanceDueHoursBeforeStart: number;
   ownerPayoutDelayHours: number;
   cancellationFreeUntilHours: number;
-  cancellationPartialUntilHours: number;
-  cancellationPartialRefundPercent: number;
-  lateCancellationRefundPercent: number;
+  cancellationCharge30UntilHours: number;
+  cancellationCharge50UntilHours: number;
 };
 
 function parsePercent(raw: string | undefined, fallback: number): number {
@@ -33,21 +43,37 @@ export function loadPaymentPolicyConfig(): PaymentPolicyConfig {
   return {
     mode: 'deposit_balance',
     currency: (process.env.PAYMENT_CURRENCY ?? 'JOD').trim().toUpperCase(),
-    platformCommissionPercent: parsePercent(process.env.PLATFORM_COMMISSION_PERCENT, 12),
+    platformCommissionPercent: parsePercent(
+      process.env.PLATFORM_COMMISSION_PERCENT,
+      STANDARD_COMMISSION_PERCENT,
+    ),
+    platformVerifiedCommissionPercent: parsePercent(
+      process.env.PLATFORM_VERIFIED_COMMISSION_PERCENT,
+      VERIFIED_COMMISSION_PERCENT,
+    ),
     customerServiceFeePercent: parsePercent(process.env.CUSTOMER_SERVICE_FEE_PERCENT, 0),
-    defaultDepositPercent: parsePercent(
-      process.env.DEFAULT_DEPOSIT_PERCENT,
-      TEST_DEFAULT_DEPOSIT_PERCENT,
+    defaultDepositPercent: parsePercent(process.env.DEFAULT_DEPOSIT_PERCENT, DEPOSIT_PERCENT),
+    fullPaymentWithinHours: parseHours(
+      process.env.FULL_PAYMENT_WITHIN_HOURS,
+      FULL_PAYMENT_WITHIN_HOURS,
     ),
-    balanceDueHoursBeforeStart: parseHours(process.env.BALANCE_DUE_HOURS_BEFORE_START, 24),
+    balanceDueHoursBeforeStart: parseHours(
+      process.env.BALANCE_DUE_HOURS_BEFORE_START,
+      BALANCE_DUE_HOURS_BEFORE_START,
+    ),
     ownerPayoutDelayHours: parseHours(process.env.OWNER_PAYOUT_DELAY_HOURS, 24),
-    cancellationFreeUntilHours: parseHours(process.env.CANCELLATION_FREE_UNTIL_HOURS, 72),
-    cancellationPartialUntilHours: parseHours(process.env.CANCELLATION_PARTIAL_UNTIL_HOURS, 24),
-    cancellationPartialRefundPercent: parsePercent(
-      process.env.CANCELLATION_PARTIAL_REFUND_PERCENT,
-      50,
+    cancellationFreeUntilHours: parseHours(
+      process.env.CANCELLATION_FREE_UNTIL_HOURS,
+      CANCELLATION_FREE_UNTIL_HOURS,
     ),
-    lateCancellationRefundPercent: parsePercent(process.env.LATE_CANCELLATION_REFUND_PERCENT, 0),
+    cancellationCharge30UntilHours: parseHours(
+      process.env.CANCELLATION_CHARGE_30_UNTIL_HOURS,
+      CANCELLATION_CHARGE_30_UNTIL_HOURS,
+    ),
+    cancellationCharge50UntilHours: parseHours(
+      process.env.CANCELLATION_CHARGE_50_UNTIL_HOURS,
+      CANCELLATION_CHARGE_50_UNTIL_HOURS,
+    ),
   };
 }
 

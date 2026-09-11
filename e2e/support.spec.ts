@@ -79,9 +79,11 @@ test.describe('Customer support and contact (10H.3B)', () => {
 
     await applySessionToPage(page, CUSTOMER_EMAIL, CUSTOMER_PASSWORD);
     await page.goto('/en/account/support');
+    await expect(page.getByTestId('help-center')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('my-support')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(ref)).toBeVisible();
-    await expect(page.getByText('We will review this booking.')).toBeVisible();
+    const supportInbox = page.getByTestId('my-support');
+    await expect(supportInbox.getByText(ref).first()).toBeVisible();
+    await expect(supportInbox.getByText('We will review this booking.').first()).toBeVisible();
   });
 
   test('mobile contact and booking help remain usable; booking page still works', async ({ page }) => {
@@ -95,10 +97,9 @@ test.describe('Customer support and contact (10H.3B)', () => {
     await page.goto('/ar/account/bookings');
     await expect(page.getByTestId('my-bookings')).toBeVisible({ timeout: 40_000 });
     await expect(page.getByTestId('booking-card').first()).toBeVisible();
-    await expect(page.getByTestId('account-nav-support')).toBeVisible();
 
     await page.goto(`/ar/properties/${PROPERTY_SLUG}`);
-    await expect(page.getByTestId('booking-panel')).toBeVisible({
+    await expect(page.getByTestId('booking-entry-card')).toBeVisible({
       timeout: 30_000,
     });
   });

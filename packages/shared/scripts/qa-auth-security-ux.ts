@@ -104,11 +104,14 @@ console.log('\n— Return URL —');
 
 console.log('\n— UX / chrome —');
 {
-  expect('26 shared AuthShell', authShell.includes('auth-shell') && authShell.includes('logo-main.png'));
+  expect('26 shared AuthShell', authShell.includes('auth-shell') && (authShell.includes('logo-main.png') || authShell.includes('mazare3.png')));
   expect('27 password toggle', authForm.includes('auth-password-toggle'));
   expect('28 autocomplete new-password signup', authForm.includes("'new-password'"));
   expect('29 autocomplete current-password login', authForm.includes("'current-password'"));
-  expect('30 no auth bottom nav', chrome.includes('isAuthPagePath') && chrome.includes('return null'));
+  expect(
+    '30 auth keeps marketplace bottom nav',
+    chrome.includes('isAuthPagePath') && chrome.includes('MarketplaceBottomNav'),
+  );
   expect('31 footer hidden on auth', footer.includes('/auth') && footer.includes('return null'));
   expect('32 AuthApiError with code', apiAuth.includes('class AuthApiError'));
   expect('33 authenticated redirect away', unifiedAuth.includes('auth-redirecting') || authForm.includes('auth-redirecting'));

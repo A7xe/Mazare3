@@ -320,7 +320,7 @@ export async function PropertyDetailView({
 
         {/* Sidebar — starts under the back button (same row as location/tags) */}
         <aside className="relative space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-2 lg:self-start">
-          <div id="booking-panel" className="scroll-mt-24 space-y-4">
+          <div id="booking-entry" className="scroll-mt-24 space-y-4">
             <PropertyBookingAside
               property={property}
               locale={locale}
@@ -343,6 +343,7 @@ export async function PropertyDetailView({
       </div>
 
       <MobileBookCta
+        propertySlug={property.slug}
         basePrice={property.basePrice}
         currency={property.currency}
         exact={Boolean(initialDate && initialPeriod)}

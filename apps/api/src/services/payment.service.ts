@@ -3,6 +3,7 @@ import {
   AvailabilitySlotStatus,
   BookingPaymentState,
   BookingStatus,
+  PaymentCollectionMode,
   PaymentPurpose,
   PaymentStatus,
   PayoutStatus,
@@ -10,7 +11,12 @@ import {
   type PaymentMethod,
   type PaymentProvider,
 } from '@mazare3/db';
-import type { CreatePaymentIntentInput, PaymentSummary } from '@mazare3/shared';
+import type {
+  CreateManagedFormPaymentInput,
+  CreatePaymentIntentInput,
+  CreateSavedCardPaymentInput,
+  PaymentSummary,
+} from '@mazare3/shared';
 import {
   PAYMENT_HOLD_MINUTES,
   assertPaymentStateTransition,
@@ -29,7 +35,18 @@ import {
 } from './notification.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { loadPaymentConfig, assertProviderCanCreateIntent } from '../config/payment-config.js';
-import { loadPaytabsConfig } from '../config/paytabs-config.js';
+import {
+  loadPaytabsConfig,
+  paytabsPaylibScriptUrl,
+  resolveSavedCardChargeMode,
+} from '../config/paytabs-config.js';
+import {
+  isSavedCardVaultCapabilityEnabled,
+  loadSavedPaymentMethodForCharge,
+  markSavedPaymentMethodInvalidToken,
+  maybeSavePaytabsCardAfterSuccess,
+  paymentRequestedSaveCard,
+} from './saved-payment-method.service.js';
 import {
   computePayoutAvailableAt,
   getPublicPolicySummary,
@@ -57,6 +74,13 @@ import {
   resolvePaymentCustomerContact,
   type PaymentCustomerContact,
 } from './payment-contact.service.js';
+import { redactPaymentVaultSecrets } from '../lib/payment-vault-crypto.js';
+import {
+  buildInitialPaymentOptions,
+  isInitialPaymentChoiceAllowed,
+  type BookingAmountsForChoice,
+} from '../lib/initial-payment-choice.js';
+import type { InitialPaymentChoice } from '@mazare3/shared';
 
 function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
   if (value == null) return 0;
@@ -250,7 +274,20 @@ export async function createPaymentIntent(
   userId: string,
   input: CreatePaymentIntentInput,
   req?: AuthenticatedRequest,
+  options?: {
+    paymentToken?: string;
+    saveCard?: boolean;
+    savedCardCharge?: {
+      savedPaymentMethodId: string;
+      providerToken: string;
+      providerOriginalTransactionRef: string | null;
+      mode: 'ecom_cvv_redirect' | 'recurring_direct';
+    };
+  },
 ): Promise<PaymentSummary> {
+  const paymentToken = options?.paymentToken?.trim() || undefined;
+  const savedCardCharge = options?.savedCardCharge;
+  const saveCardRequested = options?.saveCard === true && isSavedCardVaultCapabilityEnabled();
   await refreshBookingPaymentLifecycle(input.bookingId);
 
   const providerNameEarly = resolveProviderForMethod(input.method as PaymentMethod);
@@ -317,12 +354,81 @@ export async function createPaymentIntent(
       throw new AppError(400, 'HOLD_EXPIRED', 'Payment hold has expired');
     }
 
+    // CB-6 — apply Deposit vs Full at payment-initiation boundary (not on radio click).
+    let working = booking;
+    const choiceInput = input.initialPaymentChoice as InitialPaymentChoice | undefined;
+    const amountsForChoice: BookingAmountsForChoice = {
+      status: working.status,
+      paymentCollectionMode: working.paymentCollectionMode,
+      paymentState: working.paymentState,
+      holdExpiresAt: working.holdExpiresAt,
+      depositAmount: decimalToNumber(working.depositAmount),
+      remainingAmount: decimalToNumber(working.remainingAmount),
+      customerServiceFeeAmount: decimalToNumber(working.customerServiceFeeAmount),
+      customerPayableTotal: decimalToNumber(working.customerPayableTotal),
+      payments: working.payments.map((p) => ({
+        status: p.status,
+        purpose: p.purpose,
+        providerRef: p.providerRef,
+      })),
+    };
+    const choiceBuilt = buildInitialPaymentOptions(amountsForChoice);
+    const effectiveChoice: InitialPaymentChoice | null =
+      choiceInput ??
+      (choiceBuilt.options ? choiceBuilt.defaultChoice : null);
+
+    if (choiceInput || (choiceBuilt.options && effectiveChoice)) {
+      const choice = (choiceInput ?? effectiveChoice)!;
+      const allowed = isInitialPaymentChoiceAllowed(amountsForChoice, choice);
+      if (!allowed.ok) {
+        throw new AppError(400, allowed.code, allowed.message);
+      }
+
+      if (choice === 'full' && working.paymentCollectionMode !== PaymentCollectionMode.full) {
+        await tx.payment.updateMany({
+          where: {
+            bookingId: working.id,
+            purpose: PaymentPurpose.deposit,
+            status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+          },
+          data: { status: PaymentStatus.expired },
+        });
+        working = await tx.booking.update({
+          where: { id: working.id },
+          data: { paymentCollectionMode: PaymentCollectionMode.full },
+          include: { payments: true, slot: { select: { date: true } } },
+        });
+      } else if (
+        choice === 'deposit' &&
+        working.paymentCollectionMode === PaymentCollectionMode.full
+      ) {
+        // Safe switch-back only before any successful capture.
+        const anySucceeded = working.payments.some((p) => p.status === PaymentStatus.succeeded);
+        if (anySucceeded) {
+          throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Cannot switch to deposit after payment');
+        }
+        await tx.payment.updateMany({
+          where: {
+            bookingId: working.id,
+            purpose: PaymentPurpose.full,
+            status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+          },
+          data: { status: PaymentStatus.expired },
+        });
+        working = await tx.booking.update({
+          where: { id: working.id },
+          data: { paymentCollectionMode: PaymentCollectionMode.deposit_balance },
+          include: { payments: true, slot: { select: { date: true } } },
+        });
+      }
+    }
+
     const flags = derivePayFlags({
-      status: booking.status,
-      collectionMode: booking.paymentCollectionMode,
-      paymentState: booking.paymentState,
-      payments: booking.payments,
-      customerPayableTotal: booking.customerPayableTotal,
+      status: working.status,
+      collectionMode: working.paymentCollectionMode,
+      paymentState: working.paymentState,
+      payments: working.payments,
+      customerPayableTotal: working.customerPayableTotal,
       remainingSnapshotFils: 0,
     });
 
@@ -331,7 +437,12 @@ export async function createPaymentIntent(
     }
 
     let purpose: PaymentPurpose;
-    if (input.purpose) {
+    // initialPaymentChoice is authoritative over client purpose when present.
+    if (effectiveChoice === 'full') {
+      purpose = PaymentPurpose.full;
+    } else if (effectiveChoice === 'deposit' && choiceBuilt.options) {
+      purpose = PaymentPurpose.deposit;
+    } else if (input.purpose) {
       purpose = input.purpose as PaymentPurpose;
     } else if (flags.duePurpose) {
       purpose = flags.duePurpose as PaymentPurpose;
@@ -339,10 +450,10 @@ export async function createPaymentIntent(
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Booking is not awaiting payment');
     }
 
-    if (booking.paymentCollectionMode === 'full' && purpose !== PaymentPurpose.full) {
+    if (working.paymentCollectionMode === PaymentCollectionMode.full && purpose !== PaymentPurpose.full) {
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Full payment is not available for this booking');
     }
-    if (booking.paymentCollectionMode !== 'full' && purpose === PaymentPurpose.full) {
+    if (working.paymentCollectionMode !== PaymentCollectionMode.full && purpose === PaymentPurpose.full) {
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Full payment is not available for this booking');
     }
 
@@ -359,21 +470,21 @@ export async function createPaymentIntent(
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Full payment is not available for this booking');
     }
 
-    const installment = installmentForPurpose(purpose, booking);
-    const paid = succeededInstallmentFils(booking.payments);
-    const payableFils = jodToFils(decimalToNumber(booking.customerPayableTotal));
+    const installment = installmentForPurpose(purpose, working);
+    const paid = succeededInstallmentFils(working.payments);
+    const payableFils = jodToFils(decimalToNumber(working.customerPayableTotal));
     if (paid.total + jodToFils(installment) > payableFils) {
       throw new AppError(400, 'PAYMENT_EXCEEDS_BALANCE', 'Payment would exceed the amount due');
     }
 
-    const succeededSamePurpose = booking.payments.find(
+    const succeededSamePurpose = working.payments.find(
       (p) => p.status === PaymentStatus.succeeded && p.purpose === purpose,
     );
     if (succeededSamePurpose) {
       throw new AppError(400, 'ALREADY_PAID', 'This installment is already paid');
     }
 
-    const activePayment = booking.payments.find(
+    const activePayment = working.payments.find(
       (p) => ACTIVE_PAYMENT_STATUSES.includes(p.status) && p.purpose === purpose,
     );
     if (activePayment) {
@@ -390,7 +501,7 @@ export async function createPaymentIntent(
       const existing = await tx.payment.findUnique({
         where: { idempotencyKey: input.idempotencyKey },
       });
-      if (existing && existing.bookingId === booking.id) {
+      if (existing && existing.bookingId === working.id) {
         return { reusePaymentId: existing.id };
       }
     }
@@ -399,28 +510,28 @@ export async function createPaymentIntent(
 
     const serviceFee =
       purpose === PaymentPurpose.deposit || purpose === PaymentPurpose.full
-        ? decimalToNumber(booking.customerServiceFeeAmount)
+        ? decimalToNumber(working.customerServiceFeeAmount)
         : 0;
 
     const expiresAt =
       purpose === PaymentPurpose.deposit || purpose === PaymentPurpose.full
-        ? paymentHoldExpiry(booking.holdExpiresAt)
+        ? paymentHoldExpiry(working.holdExpiresAt)
         : paymentHoldExpiry();
 
     let payment;
     try {
       payment = await tx.payment.create({
         data: {
-          bookingId: booking.id,
+          bookingId: working.id,
           userId,
           amount: installment,
-          bookingTotalAmount: decimalToNumber(booking.totalAmount),
+          bookingTotalAmount: decimalToNumber(working.totalAmount),
           customerPayableAmount: installment,
-          platformCommissionAmount: decimalToNumber(booking.platformCommissionAmount),
+          platformCommissionAmount: decimalToNumber(working.platformCommissionAmount),
           customerServiceFeeAmount: serviceFee,
-          ownerGrossAmount: decimalToNumber(booking.totalAmount),
-          ownerNetPayoutAmount: decimalToNumber(booking.ownerNetPayoutAmount),
-          currency: booking.currency,
+          ownerGrossAmount: decimalToNumber(working.totalAmount),
+          ownerNetPayoutAmount: decimalToNumber(working.ownerNetPayoutAmount),
+          currency: working.currency,
           method: input.method as PaymentMethod,
           purpose,
           provider: providerName,
@@ -436,7 +547,7 @@ export async function createPaymentIntent(
         const existing = await tx.payment.findUnique({
           where: { idempotencyKey: input.idempotencyKey },
         });
-        if (existing && existing.bookingId === booking.id) {
+        if (existing && existing.bookingId === working.id) {
           return { reusePaymentId: existing.id };
         }
       }
@@ -444,15 +555,15 @@ export async function createPaymentIntent(
     }
 
     if (purpose === PaymentPurpose.deposit) {
-      assertPaymentStateTransition(booking.paymentState, BookingPaymentState.deposit_pending);
+      assertPaymentStateTransition(working.paymentState, BookingPaymentState.deposit_pending);
       await tx.booking.update({
-        where: { id: booking.id },
+        where: { id: working.id },
         data: { paymentState: BookingPaymentState.deposit_pending },
       });
     } else if (purpose === PaymentPurpose.balance) {
-      assertPaymentStateTransition(booking.paymentState, BookingPaymentState.balance_pending);
+      assertPaymentStateTransition(working.paymentState, BookingPaymentState.balance_pending);
       await tx.booking.update({
-        where: { id: booking.id },
+        where: { id: working.id },
         data: { paymentState: BookingPaymentState.balance_pending },
       });
     }
@@ -463,8 +574,8 @@ export async function createPaymentIntent(
       purpose,
       method: input.method as PaymentMethod,
       providerName,
-      currency: booking.currency,
-      bookingId: booking.id,
+      currency: working.currency,
+      bookingId: working.id,
     };
   });
 
@@ -472,6 +583,87 @@ export async function createPaymentIntent(
     const existing = await prisma.payment.findUniqueOrThrow({
       where: { id: prepared.reusePaymentId },
     });
+    // CB-5B saved-card: if provider transaction already started, do not re-charge.
+    if (savedCardCharge && existing.providerRef) {
+      const priorSaved = await loadStoredSavedCardOutcome(existing.id);
+      if (priorSaved) {
+        const redirectUrl = await loadStoredRedirectUrl(existing.id);
+        return toPaymentSummary(existing, {
+          redirectUrl,
+          savedCardOutcome: priorSaved,
+        });
+      }
+      await prisma.payment.update({
+        where: { id: existing.id },
+        data: { status: PaymentStatus.expired },
+      });
+      return createPaymentIntent(userId, input, req, options);
+    }
+    if (savedCardCharge && !existing.providerRef) {
+      const bookingMetaReuse = await prisma.booking.findUnique({
+        where: { id: existing.bookingId },
+        select: { publicCode: true },
+      });
+      return finalizeManagedOrHostedGatewayCall({
+        userId,
+        req,
+        paymentToken,
+        saveCardRequested,
+        savedCardCharge,
+        created: {
+          paymentId: existing.id,
+          installment: decimalToNumber(existing.customerPayableAmount),
+          purpose: existing.purpose as PaymentPurpose,
+          method: existing.method as PaymentMethod,
+          providerName: existing.provider as PaymentProvider,
+          currency: existing.currency,
+          bookingId: existing.bookingId,
+        },
+        bookingMeta: bookingMetaReuse,
+        paytabsCustomer,
+      });
+    }
+    // Managed Form: if a prior Managed Form provider transaction already started, do not resubmit token.
+    if (paymentToken && existing.providerRef) {
+      const priorManaged = await loadStoredManagedFormOutcome(existing.id);
+      if (priorManaged) {
+        const redirectUrl = await loadStoredRedirectUrl(existing.id);
+        return toPaymentSummary(existing, {
+          redirectUrl,
+          managedFormOutcome: priorManaged,
+        });
+      }
+      // Stale HPP / simulate intent without Managed Form — expire and create a fresh attempt.
+      await prisma.payment.update({
+        where: { id: existing.id },
+        data: { status: PaymentStatus.expired },
+      });
+      return createPaymentIntent(userId, input, req, options);
+    }
+    // Managed Form retry on initiated row without providerRef — fall through to gateway below.
+    if (paymentToken && !existing.providerRef) {
+      const bookingMetaReuse = await prisma.booking.findUnique({
+        where: { id: existing.bookingId },
+        select: { publicCode: true },
+      });
+      return finalizeManagedOrHostedGatewayCall({
+        userId,
+        req,
+        paymentToken,
+        saveCardRequested,
+        created: {
+          paymentId: existing.id,
+          installment: decimalToNumber(existing.customerPayableAmount),
+          purpose: existing.purpose as PaymentPurpose,
+          method: existing.method as PaymentMethod,
+          providerName: existing.provider as PaymentProvider,
+          currency: existing.currency,
+          bookingId: existing.bookingId,
+        },
+        bookingMeta: bookingMetaReuse,
+        paytabsCustomer,
+      });
+    }
     const redirectUrl = await loadStoredRedirectUrl(existing.id);
     return toPaymentSummary(existing, { redirectUrl });
   }
@@ -490,6 +682,63 @@ export async function createPaymentIntent(
     where: { id: created.bookingId },
     select: { publicCode: true },
   });
+
+  return finalizeManagedOrHostedGatewayCall({
+    userId,
+    req,
+    paymentToken,
+    saveCardRequested,
+    savedCardCharge,
+    created,
+    bookingMeta,
+    paytabsCustomer,
+  });
+}
+
+async function finalizeManagedOrHostedGatewayCall(args: {
+  userId: string;
+  req?: AuthenticatedRequest;
+  paymentToken?: string;
+  saveCardRequested?: boolean;
+  savedCardCharge?: {
+    savedPaymentMethodId: string;
+    providerToken: string;
+    providerOriginalTransactionRef: string | null;
+    mode: 'ecom_cvv_redirect' | 'recurring_direct';
+  };
+  created: {
+    paymentId: string;
+    installment: number;
+    purpose: PaymentPurpose;
+    method: PaymentMethod;
+    providerName: PaymentProvider;
+    currency: string;
+    bookingId: string;
+  };
+  bookingMeta: { publicCode: string } | null;
+  paytabsCustomer: PaymentCustomerContact | null;
+}): Promise<PaymentSummary> {
+  const {
+    userId,
+    req,
+    paymentToken,
+    saveCardRequested = false,
+    savedCardCharge,
+    created,
+    bookingMeta,
+    paytabsCustomer,
+  } = args;
+
+  if (savedCardCharge) {
+    return finalizeSavedCardGatewayCall({
+      userId,
+      req,
+      savedCardCharge,
+      created,
+      bookingMeta,
+      paytabsCustomer,
+    });
+  }
 
   let gateway;
   try {
@@ -523,6 +772,8 @@ export async function createPaymentIntent(
       idempotencyKey: providerIdempotencyKey(created.paymentId, created.purpose),
       description: `Mazare3 ${created.purpose} ${bookingMeta?.publicCode ?? created.bookingId}`,
       customer,
+      ...(paymentToken ? { paymentToken } : {}),
+      ...(saveCardRequested ? { tokenise: true } : {}),
     });
   } catch (err) {
     await prisma.payment.update({
@@ -530,7 +781,104 @@ export async function createPaymentIntent(
       data: { status: PaymentStatus.failed, failedAt: new Date() },
     });
     if (err instanceof AppError) throw err;
+    // Unknown network after provider request: leave failed + ask client to reconcile, never retry same token blindly.
+    if (err instanceof Error && err.message === 'MOCK_NETWORK_UNKNOWN') {
+      throw new AppError(
+        409,
+        'PAYMENT_STATUS_UNKNOWN',
+        'Payment status is uncertain; verify before retrying',
+      );
+    }
     throwPaymentProviderError(err);
+  }
+
+  // Immediate Managed Form authorisation — apply trusted success path (no fake HPP).
+  if (paymentToken && intent.status === 'succeeded') {
+    await prisma.payment.update({
+      where: { id: created.paymentId },
+      data: {
+        status: PaymentStatus.pending,
+        provider: intent.provider,
+        providerRef: intent.providerRef,
+      },
+    });
+    await appendPaymentEvent(created.paymentId, 'payment.intent_created', PaymentStatus.pending, {
+      method: created.method,
+      provider: intent.provider,
+      purpose: created.purpose,
+      amount: created.installment,
+      managedFormOutcome: intent.managedFormOutcome ?? 'authorised',
+      redirectUrl: null,
+      saveCardRequested,
+      // Never store payment_token or persistent provider token here in clear form.
+    });
+    await applyNormalizedGatewayEvent(
+      {
+        type: 'payment_succeeded',
+        paymentId: created.paymentId,
+        providerPaymentId: intent.providerRef,
+        providerEventId: `mf_immediate_${intent.providerRef}`,
+        raw: intent.providerRaw ?? {
+          source: 'managed_form_immediate',
+          managedFormOutcome: 'authorised',
+          ...(intent.persistentCard
+            ? {
+                token: intent.persistentCard.providerToken,
+                tran_ref: intent.providerRef,
+                payment_info: {
+                  payment_method: intent.persistentCard.brand,
+                  card_scheme: intent.persistentCard.brand,
+                  payment_description: intent.persistentCard.maskedDisplay,
+                  expiryMonth: intent.persistentCard.expiryMonth,
+                  expiryYear: intent.persistentCard.expiryYear,
+                },
+              }
+            : {}),
+        },
+      },
+      userId,
+      req,
+    );
+    const refreshed = await prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId } });
+    return toPaymentSummary(refreshed, {
+      redirectUrl: null,
+      managedFormOutcome: 'authorised',
+    });
+  }
+
+  if (paymentToken && intent.status === 'failed') {
+    await prisma.payment.update({
+      where: { id: created.paymentId },
+      data: {
+        status: PaymentStatus.pending,
+        provider: intent.provider,
+        providerRef: intent.providerRef,
+      },
+    });
+    await appendPaymentEvent(created.paymentId, 'payment.intent_created', PaymentStatus.pending, {
+      method: created.method,
+      provider: intent.provider,
+      purpose: created.purpose,
+      amount: created.installment,
+      managedFormOutcome: 'declined',
+      redirectUrl: null,
+    });
+    await applyNormalizedGatewayEvent(
+      {
+        type: 'payment_failed',
+        paymentId: created.paymentId,
+        providerPaymentId: intent.providerRef,
+        providerEventId: `mf_decline_${intent.providerRef}`,
+        raw: { source: 'managed_form_immediate', managedFormOutcome: 'declined' },
+      },
+      userId,
+      req,
+    );
+    const refreshed = await prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId } });
+    return toPaymentSummary(refreshed, {
+      redirectUrl: null,
+      managedFormOutcome: 'declined',
+    });
   }
 
   const updated = await prisma.payment.update({
@@ -548,6 +896,8 @@ export async function createPaymentIntent(
     purpose: created.purpose,
     amount: created.installment,
     redirectUrl: intent.redirectUrl ?? null,
+    managedFormOutcome: intent.managedFormOutcome ?? null,
+    saveCardRequested,
     ...(intent.provider === 'paytabs'
       ? {
           paytabsProfileMode: loadPaytabsConfig().profileMode,
@@ -561,7 +911,7 @@ export async function createPaymentIntent(
             : null,
         }
       : {}),
-    // Never store server keys here.
+    // Never store server keys or payment_token here.
   });
 
   await createAuditLog({
@@ -576,6 +926,8 @@ export async function createPaymentIntent(
       amount: created.installment,
       provider: intent.provider,
       hasRedirect: Boolean(intent.redirectUrl),
+      managedForm: Boolean(paymentToken),
+      managedFormOutcome: intent.managedFormOutcome ?? null,
       ...(intent.provider === 'paytabs'
         ? { paytabsProfileMode: loadPaytabsConfig().profileMode }
         : {}),
@@ -583,7 +935,404 @@ export async function createPaymentIntent(
     req,
   });
 
-  return toPaymentSummary(updated, { redirectUrl: intent.redirectUrl ?? null });
+  return toPaymentSummary(updated, {
+    redirectUrl: intent.redirectUrl ?? null,
+    managedFormOutcome: intent.managedFormOutcome ?? null,
+  });
+}
+
+async function finalizeSavedCardGatewayCall(args: {
+  userId: string;
+  req?: AuthenticatedRequest;
+  savedCardCharge: {
+    savedPaymentMethodId: string;
+    providerToken: string;
+    providerOriginalTransactionRef: string | null;
+    mode: 'ecom_cvv_redirect' | 'recurring_direct';
+  };
+  created: {
+    paymentId: string;
+    installment: number;
+    purpose: PaymentPurpose;
+    method: PaymentMethod;
+    providerName: PaymentProvider;
+    currency: string;
+    bookingId: string;
+  };
+  bookingMeta: { publicCode: string } | null;
+  paytabsCustomer: PaymentCustomerContact | null;
+}): Promise<PaymentSummary> {
+  const { userId, req, savedCardCharge, created, bookingMeta, paytabsCustomer } = args;
+  const token = savedCardCharge.providerToken;
+
+  let gateway;
+  try {
+    gateway = getPaymentGateway(created.providerName);
+  } catch (err) {
+    throwPaymentProviderError(err);
+  }
+
+  if (!gateway.chargeSavedPaymentMethod) {
+    throw new AppError(
+      400,
+      'SAVED_CARD_CHARGE_UNSUPPORTED',
+      'Saved card charging is not supported by this payment provider',
+    );
+  }
+
+  let customer: { name?: string | null; email?: string | null; phone?: string | null };
+  if (paytabsCustomer) {
+    customer = paytabsCustomer;
+  } else {
+    const u = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true },
+    });
+    customer = { name: u?.name, email: u?.email };
+  }
+
+  let intent;
+  try {
+    intent = await gateway.chargeSavedPaymentMethod({
+      paymentId: created.paymentId,
+      bookingId: created.bookingId,
+      amount: created.installment,
+      currency: created.currency,
+      purpose: created.purpose,
+      idempotencyKey: providerIdempotencyKey(created.paymentId, created.purpose),
+      description: `Mazare3 ${created.purpose} ${bookingMeta?.publicCode ?? created.bookingId}`,
+      customer,
+      providerToken: token,
+      providerOriginalTransactionRef: savedCardCharge.providerOriginalTransactionRef,
+      mode: savedCardCharge.mode,
+      savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+    });
+  } catch (err) {
+    await prisma.payment.update({
+      where: { id: created.paymentId },
+      data: { status: PaymentStatus.failed, failedAt: new Date() },
+    });
+    if (err instanceof AppError) throw err;
+    if (err instanceof Error && err.message === 'MOCK_NETWORK_UNKNOWN') {
+      throw new AppError(
+        409,
+        'PAYMENT_STATUS_UNKNOWN',
+        'Payment status is uncertain; verify before retrying',
+      );
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.info(
+      '[saved-card-charge] provider error',
+      redactPaymentVaultSecrets(msg.slice(0, 160), [token]),
+    );
+    throwPaymentProviderError(err);
+  }
+
+  const outcome = intent.savedCardOutcome ?? null;
+
+  if (intent.status === 'succeeded') {
+    await prisma.payment.update({
+      where: { id: created.paymentId },
+      data: {
+        status: PaymentStatus.pending,
+        provider: intent.provider,
+        providerRef: intent.providerRef,
+      },
+    });
+    await appendPaymentEvent(created.paymentId, 'payment.intent_created', PaymentStatus.pending, {
+      method: created.method,
+      provider: intent.provider,
+      purpose: created.purpose,
+      amount: created.installment,
+      savedCardCharge: true,
+      savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+      savedCardMode: savedCardCharge.mode,
+      savedCardOutcome: 'authorised',
+      redirectUrl: null,
+    });
+    await applyNormalizedGatewayEvent(
+      {
+        type: 'payment_succeeded',
+        paymentId: created.paymentId,
+        providerPaymentId: intent.providerRef,
+        providerEventId: `sc_immediate_${intent.providerRef}`,
+        raw: intent.providerRaw ?? { source: 'saved_card_immediate', savedCardOutcome: 'authorised' },
+      },
+      userId,
+      req,
+    );
+    await createAuditLog({
+      actorUserId: userId,
+      action: 'payment.saved_card_charge',
+      entityType: 'payment',
+      entityId: created.paymentId,
+      metadata: {
+        bookingId: created.bookingId,
+        savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+        mode: savedCardCharge.mode,
+        result: 'authorised',
+      },
+      req,
+    });
+    const refreshed = await prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId } });
+    return toPaymentSummary(refreshed, {
+      redirectUrl: null,
+      savedCardOutcome: 'authorised',
+    });
+  }
+
+  if (intent.status === 'failed') {
+    await prisma.payment.update({
+      where: { id: created.paymentId },
+      data: {
+        status: PaymentStatus.failed,
+        failedAt: new Date(),
+        provider: intent.provider,
+        providerRef: intent.providerRef,
+      },
+    });
+    await appendPaymentEvent(created.paymentId, 'payment.intent_created', PaymentStatus.failed, {
+      method: created.method,
+      provider: intent.provider,
+      purpose: created.purpose,
+      amount: created.installment,
+      savedCardCharge: true,
+      savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+      savedCardMode: savedCardCharge.mode,
+      savedCardOutcome: outcome ?? 'declined',
+    });
+    if (outcome === 'invalid_token') {
+      await markSavedPaymentMethodInvalidToken(
+        userId,
+        savedCardCharge.savedPaymentMethodId,
+        req,
+      );
+    }
+    await applyNormalizedGatewayEvent(
+      {
+        type: 'payment_failed',
+        paymentId: created.paymentId,
+        providerPaymentId: intent.providerRef,
+        providerEventId: `sc_fail_${intent.providerRef}`,
+        raw: intent.providerRaw ?? { source: 'saved_card', savedCardOutcome: outcome },
+      },
+      userId,
+      req,
+    );
+    await createAuditLog({
+      actorUserId: userId,
+      action: 'payment.saved_card_charge',
+      entityType: 'payment',
+      entityId: created.paymentId,
+      metadata: {
+        bookingId: created.bookingId,
+        savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+        mode: savedCardCharge.mode,
+        result: outcome ?? 'declined',
+      },
+      req,
+    });
+    const refreshed = await prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId } });
+    return toPaymentSummary(refreshed, {
+      redirectUrl: null,
+      savedCardOutcome: outcome ?? 'declined',
+    });
+  }
+
+  // pending — typically ecom_cvv_redirect with provider redirect_url
+  await prisma.payment.update({
+    where: { id: created.paymentId },
+    data: {
+      status: PaymentStatus.pending,
+      provider: intent.provider,
+      providerRef: intent.providerRef,
+    },
+  });
+  await appendPaymentEvent(created.paymentId, 'payment.intent_created', PaymentStatus.pending, {
+    method: created.method,
+    provider: intent.provider,
+    purpose: created.purpose,
+    amount: created.installment,
+    savedCardCharge: true,
+    savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+    savedCardMode: savedCardCharge.mode,
+    savedCardOutcome: outcome ?? 'ecom_redirect',
+    redirectUrl: intent.redirectUrl ?? null,
+  });
+  await createAuditLog({
+    actorUserId: userId,
+    action: 'payment.saved_card_charge',
+    entityType: 'payment',
+    entityId: created.paymentId,
+    metadata: {
+      bookingId: created.bookingId,
+      savedPaymentMethodId: savedCardCharge.savedPaymentMethodId,
+      mode: savedCardCharge.mode,
+      result: outcome ?? 'ecom_redirect',
+      hasRedirect: Boolean(intent.redirectUrl),
+    },
+    req,
+  });
+  const updated = await prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId } });
+  return toPaymentSummary(updated, {
+    redirectUrl: intent.redirectUrl ?? null,
+    savedCardOutcome: outcome ?? 'ecom_redirect',
+  });
+}
+
+/**
+ * CB-5B — pay with a vaulted saved card (customer-initiated only).
+ * Body: bookingId + savedPaymentMethodId. Never accepts token/CVV/amount/purpose.
+ */
+export async function createSavedCardPayment(
+  userId: string,
+  input: CreateSavedCardPaymentInput,
+  req?: AuthenticatedRequest,
+): Promise<PaymentSummary> {
+  const charge = resolveSavedCardChargeMode();
+  if (!charge.enabled || !charge.mode) {
+    throw new AppError(
+      400,
+      'SAVED_CARD_CHARGE_DISABLED',
+      charge.reason === 'recurring_direct_requires_PAYTABS_RECURRING_ENABLED'
+        ? 'Recurring saved-card charging is not approved for this deployment'
+        : 'Saved card charging is not enabled',
+    );
+  }
+
+  const raw = req?.body as Record<string, unknown> | undefined;
+  if (raw) {
+    const forbidden = [
+      'number',
+      'card_number',
+      'cardNumber',
+      'pan',
+      'cvv',
+      'cvc',
+      'securityCode',
+      'token',
+      'providerToken',
+      'tran_ref',
+      'tranRef',
+      'providerOriginalTransactionRef',
+      'amount',
+      'currency',
+      'purpose',
+      'collectionMode',
+      'paymentCollectionMode',
+      'remaining',
+      'fee',
+      'total',
+    ];
+    for (const key of forbidden) {
+      if (key in raw && raw[key] != null && raw[key] !== '') {
+        throw new AppError(400, 'PCI_FORBIDDEN_FIELD', 'Card or amount fields are not accepted');
+      }
+    }
+  }
+
+  const method = await loadSavedPaymentMethodForCharge(userId, input.savedPaymentMethodId);
+
+  let mode = charge.mode;
+  if (mode === 'recurring_direct' && !method.providerOriginalTransactionRef?.trim()) {
+    // Prefer safe ecom redirect when original tran_ref is missing and ecom is an allowed alternate.
+    // Product rule: only when configured mode was recurring but ref missing — fall back to ecom
+    // if PAYTABS_SAVED_CARD_CHARGE_MODE allows ecom via explicit env FALLBACK, else refuse.
+    // Spec: "fallback to ecom_cvv_redirect if allowed, otherwise new card."
+    // We allow automatic ecom fallback when recurring was requested but ref is missing —
+    // customer-present is safer than failing hard when vault lacks original ref.
+    mode = 'ecom_cvv_redirect';
+  }
+
+  // If config is strictly recurring_direct without ref and we fell back, still OK (safer).
+  // If config was ecom, mode stays ecom.
+
+  return createPaymentIntent(
+    userId,
+    {
+      bookingId: input.bookingId,
+      method: 'card',
+      idempotencyKey: input.idempotencyKey,
+      contactEmail: input.contactEmail,
+      contactPhone: input.contactPhone,
+      initialPaymentChoice: input.initialPaymentChoice,
+    },
+    req,
+    {
+      savedCardCharge: {
+        savedPaymentMethodId: method.id,
+        providerToken: method.providerToken,
+        providerOriginalTransactionRef: method.providerOriginalTransactionRef,
+        mode,
+      },
+    },
+  );
+}
+
+/**
+ * CB-4 Managed Form payment — temporary payment_token only.
+ * Server derives amount, currency, duePurpose; never accepts PAN/CVV.
+ */
+export async function createManagedFormPayment(
+  userId: string,
+  input: CreateManagedFormPaymentInput,
+  req?: AuthenticatedRequest,
+): Promise<PaymentSummary> {
+  const paytabs = loadPaytabsConfig();
+  if (paytabs.checkoutMode !== 'managed_form') {
+    throw new AppError(
+      400,
+      'MANAGED_FORM_DISABLED',
+      'Managed Form checkout is not enabled for this deployment',
+    );
+  }
+
+  // Reject accidental card-field smuggling if present on a loosely typed body.
+  const raw = req?.body as Record<string, unknown> | undefined;
+  if (raw) {
+    const forbidden = [
+      'number',
+      'card_number',
+      'cardNumber',
+      'pan',
+      'cvv',
+      'cvc',
+      'securityCode',
+      'expmonth',
+      'expyear',
+      'expiry',
+      'expMonth',
+      'expYear',
+      'amount',
+      'currency',
+      'purpose',
+      'collectionMode',
+      'paymentCollectionMode',
+      'remaining',
+      'fee',
+      'total',
+    ];
+    for (const key of forbidden) {
+      if (key in raw && raw[key] != null && raw[key] !== '') {
+        throw new AppError(400, 'PCI_FORBIDDEN_FIELD', 'Card or amount fields are not accepted');
+      }
+    }
+  }
+
+  return createPaymentIntent(
+    userId,
+    {
+      bookingId: input.bookingId,
+      method: 'card',
+      // purpose intentionally omitted — server derives duePurpose from initialPaymentChoice / flags
+      idempotencyKey: input.idempotencyKey,
+      contactEmail: input.contactEmail,
+      contactPhone: input.contactPhone,
+      initialPaymentChoice: input.initialPaymentChoice,
+    },
+    req,
+    { paymentToken: input.paymentToken, saveCard: input.saveCard === true },
+  );
 }
 
 async function loadStoredRedirectUrl(paymentId: string): Promise<string | null> {
@@ -594,6 +1343,49 @@ async function loadStoredRedirectUrl(paymentId: string): Promise<string | null> 
   });
   const meta = ev?.metadata as { redirectUrl?: string | null } | null;
   return typeof meta?.redirectUrl === 'string' ? meta.redirectUrl : null;
+}
+
+async function loadStoredManagedFormOutcome(
+  paymentId: string,
+): Promise<PaymentSummary['managedFormOutcome']> {
+  const ev = await prisma.paymentEvent.findFirst({
+    where: { paymentId, action: 'payment.intent_created' },
+    orderBy: { createdAt: 'desc' },
+    select: { metadata: true },
+  });
+  const meta = ev?.metadata as { managedFormOutcome?: PaymentSummary['managedFormOutcome'] } | null;
+  const outcome = meta?.managedFormOutcome;
+  if (
+    outcome === 'redirect_3ds' ||
+    outcome === 'authorised' ||
+    outcome === 'declined' ||
+    outcome === 'pending'
+  ) {
+    return outcome;
+  }
+  return null;
+}
+
+async function loadStoredSavedCardOutcome(
+  paymentId: string,
+): Promise<PaymentSummary['savedCardOutcome']> {
+  const ev = await prisma.paymentEvent.findFirst({
+    where: { paymentId, action: 'payment.intent_created' },
+    orderBy: { createdAt: 'desc' },
+    select: { metadata: true },
+  });
+  const meta = ev?.metadata as { savedCardOutcome?: PaymentSummary['savedCardOutcome'] } | null;
+  const outcome = meta?.savedCardOutcome;
+  if (
+    outcome === 'ecom_redirect' ||
+    outcome === 'authorised' ||
+    outcome === 'declined' ||
+    outcome === 'pending' ||
+    outcome === 'invalid_token'
+  ) {
+    return outcome;
+  }
+  return null;
 }
 
 export async function getPaymentForUser(
@@ -1071,11 +1863,33 @@ export async function applyNormalizedGatewayEvent(
       // Event was recorded before a previous capture attempt failed (e.g. hold expiry).
       if (event.type === 'payment_succeeded' && payment.status !== PaymentStatus.succeeded) {
         await finalizePaymentSuccess(payment.id, actor, req);
-        return { handled: true, message: 'payment_succeeded applied', paymentId: payment.id };
+      }
+      // CB-5A — vault upsert is idempotent; re-run on duplicate success so token capture is not lost.
+      if (event.type === 'payment_succeeded') {
+        try {
+          const saveCardRequested = await paymentRequestedSaveCard(payment.id);
+          await maybeSavePaytabsCardAfterSuccess({
+            userId: actor,
+            paymentId: payment.id,
+            provider: payment.provider,
+            providerRef: payment.providerRef,
+            raw: event.raw,
+            saveCardRequested,
+            req,
+          });
+        } catch (err) {
+          console.error(
+            '[saved-payment-method] capture after duplicate success failed',
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
       return {
         handled: true,
-        message: 'Duplicate gateway event ignored',
+        message:
+          event.type === 'payment_succeeded' && payment.status !== PaymentStatus.succeeded
+            ? 'payment_succeeded applied'
+            : 'Duplicate gateway event ignored',
         paymentId: payment.id,
       };
     }
@@ -1097,6 +1911,23 @@ export async function applyNormalizedGatewayEvent(
   if (event.type === 'payment_succeeded') {
     // Do not expire unpaid holds here — a verified capture outranks the hold clock.
     await finalizePaymentSuccess(payment.id, actor, req);
+    try {
+      const saveCardRequested = await paymentRequestedSaveCard(payment.id);
+      await maybeSavePaytabsCardAfterSuccess({
+        userId: actor,
+        paymentId: payment.id,
+        provider: payment.provider,
+        providerRef: payment.providerRef,
+        raw: event.raw,
+        saveCardRequested,
+        req,
+      });
+    } catch (err) {
+      console.error(
+        '[saved-payment-method] capture after success failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
     return { handled: true, message: 'payment_succeeded applied', paymentId: payment.id };
   }
 
@@ -1163,12 +1994,34 @@ export async function listAdminPayments(): Promise<
 
 export function getPublicPaymentConfig(): import('@mazare3/shared').PaymentPublicConfig {
   const c = loadPaymentConfig();
+  const paytabs = loadPaytabsConfig();
+  const managedForm =
+    paytabs.checkoutMode === 'managed_form' &&
+    (c.provider === 'paytabs'
+      ? Boolean(paytabs.clientKey)
+      : c.provider === 'test' /* mock Managed Form seam */);
+
   return {
     provider: c.provider,
     currency: c.currency,
     simulateEnabled: c.simulateEnabled,
     livePaymentsEnabled: c.livePaymentsEnabled,
     policy: getPublicPolicySummary(),
+    paymentUiMode: managedForm ? 'managed_form' : 'hosted_redirect',
+    paytabsClientKey: managedForm
+      ? c.provider === 'test'
+        ? 'mock_client_key'
+        : paytabs.clientKey || null
+      : null,
+    paylibScriptUrl: managedForm
+      ? c.provider === 'test'
+        ? null
+        : paytabsPaylibScriptUrl(paytabs.baseUrl)
+      : null,
+    managedFormMock: managedForm && c.provider === 'test',
+    savedCardsEnabled: isSavedCardVaultCapabilityEnabled(),
+    savedCardChargeEnabled: resolveSavedCardChargeMode().enabled,
+    savedCardChargeMode: resolveSavedCardChargeMode().mode,
   };
 }
 

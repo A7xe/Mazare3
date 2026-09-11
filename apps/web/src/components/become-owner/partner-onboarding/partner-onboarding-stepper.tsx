@@ -47,7 +47,7 @@ export function PartnerOnboardingStepper({
         </div>
       </div>
 
-      <ol className="hidden gap-1.5 md:grid md:grid-cols-6" data-testid="partner-stepper-desktop">
+      <ol className="hidden gap-1.5 md:grid md:grid-cols-4" data-testid="partner-stepper-desktop">
         {PARTNER_ONBOARDING_STEPS.map((id, index) => {
           const done = completion[id];
           const active = id === current;

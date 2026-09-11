@@ -4,7 +4,12 @@ import {
   calculatePlatformFundedSnapshot,
   computeBalanceDueAt,
   computeBalanceDueAtFromStart,
+  evaluateCancellationSettlement,
+  hoursUntilInstant,
+  resolveBookingPeriodStart,
+  resolvePaymentPlan,
   type BookingFinancialSnapshot,
+  type CancellationSettlement,
 } from '@mazare3/shared';
 import {
   loadPaymentPolicyConfig,
@@ -21,14 +26,9 @@ export type BookingFinancialBreakdown = {
   currency: string;
 };
 
-export type CancellationPolicyResult = {
-  hoursUntilBookingStart: number;
-  tier: 'free' | 'partial' | 'late' | 'past';
-  refundPercent: number;
+export type CancellationPolicyResult = CancellationSettlement & {
   refundableAmount: number;
   cancellationPenaltyAmount: number;
-  canCancel: boolean;
-  reason?: string;
 };
 
 export function roundMoney(value: number): number {
@@ -43,12 +43,22 @@ export function buildPlatformFundedSnapshot(params: {
   slotDate: Date;
   bookingStartAt?: Date | null;
   platformCommissionPercent?: number;
+  hoursUntilStart?: number;
 }) {
   const config = loadPaymentPolicyConfig();
+  const depositPercentRaw = resolveDepositPercent(params.propertyDepositPercent);
+  const hoursUntilStart =
+    params.hoursUntilStart ??
+    hoursUntilBookingStart(params.bookingStartAt, params.slotDate);
+  const plan = resolvePaymentPlan({
+    hoursUntilStart,
+    customerPayable: params.merchantBookingValue - params.platformDiscountAmount,
+    depositPercent: depositPercentRaw,
+  });
   const snapshot = calculatePlatformFundedSnapshot({
     merchantBookingValue: params.merchantBookingValue,
     platformDiscountAmount: params.platformDiscountAmount,
-    depositPercent: resolveDepositPercent(params.propertyDepositPercent),
+    depositPercent: plan.fullPaymentRequired ? 100 : plan.depositPercent,
     platformCommissionPercent:
       params.platformCommissionPercent ?? config.platformCommissionPercent,
     customerServiceFeePercent: config.customerServiceFeePercent,
@@ -60,6 +70,7 @@ export function buildPlatformFundedSnapshot(params: {
   return {
     ...snapshot,
     balanceDueAt,
+    fullPaymentRequired: plan.fullPaymentRequired,
   };
 }
 
@@ -70,16 +81,27 @@ export function buildBookingFinancialSnapshot(params: {
   slotDate: Date;
   bookingStartAt?: Date | null;
   platformCommissionPercent?: number;
-}): BookingFinancialSnapshot & { balanceDueAt: Date } {
+  hoursUntilStart?: number;
+}): BookingFinancialSnapshot & { balanceDueAt: Date; fullPaymentRequired: boolean } {
   const config = loadPaymentPolicyConfig();
+  const depositPercentRaw = resolveDepositPercent(params.propertyDepositPercent);
+  const hoursUntilStart =
+    params.hoursUntilStart ??
+    hoursUntilBookingStart(params.bookingStartAt, params.slotDate);
+  const plan = resolvePaymentPlan({
+    hoursUntilStart,
+    customerPayable: params.bookingTotalAmount,
+    depositPercent: depositPercentRaw,
+  });
+  const fullPayment = params.fullPayment ?? plan.fullPaymentRequired;
   const snapshot = calculateBookingFinancialSnapshot({
     bookingTotalAmount: params.bookingTotalAmount,
-    depositPercent: resolveDepositPercent(params.propertyDepositPercent),
+    depositPercent: fullPayment ? 100 : plan.depositPercent,
     platformCommissionPercent:
       params.platformCommissionPercent ?? config.platformCommissionPercent,
     customerServiceFeePercent: config.customerServiceFeePercent,
     currency: config.currency,
-    fullPayment: params.fullPayment,
+    fullPayment,
   });
   const balanceDueAt = params.bookingStartAt
     ? computeBalanceDueAtFromStart(params.bookingStartAt, config.balanceDueHoursBeforeStart)
@@ -87,10 +109,11 @@ export function buildBookingFinancialSnapshot(params: {
   return {
     ...snapshot,
     balanceDueAt,
+    fullPaymentRequired: fullPayment,
   };
 }
 
-/** @deprecated Prefer buildBookingFinancialSnapshot — kept for callers that only need totals. */
+/** @deprecated Prefer buildBookingFinancialSnapshot - kept for callers that only need totals. */
 export function calculateBookingFinancials(bookingTotalAmount: number): BookingFinancialBreakdown {
   const snap = buildBookingFinancialSnapshot({
     bookingTotalAmount,
@@ -121,9 +144,42 @@ export function snapshotToBreakdown(snap: BookingFinancialSnapshot): BookingFina
 }
 
 export function bookingStartAt(slotDate: Date): Date {
-  const d = new Date(slotDate);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+  return resolveBookingPeriodStart(null, slotDate);
+}
+
+export function hoursUntilBookingStart(
+  bookingStartAt: Date | null | undefined,
+  slotDate: Date,
+  now = new Date(),
+): number {
+  return hoursUntilInstant(resolveBookingPeriodStart(bookingStartAt, slotDate), now);
+}
+
+function settlementToPolicyResult(settlement: CancellationSettlement): CancellationPolicyResult {
+  return {
+    ...settlement,
+    refundableAmount: settlement.customerRefund,
+    cancellationPenaltyAmount: settlement.retainedAmount,
+  };
+}
+
+export function evaluateCancellationPolicy(
+  merchantBookingValue: number,
+  capturedAmount: number,
+  bookingStartAt: Date | null | undefined,
+  slotDate: Date,
+  commissionPercent: number,
+  now = new Date(),
+): CancellationPolicyResult {
+  const hours = hoursUntilBookingStart(bookingStartAt, slotDate, now);
+  return settlementToPolicyResult(
+    evaluateCancellationSettlement({
+      merchantBookingValue,
+      capturedAmount,
+      hoursUntilStart: hours,
+      commissionPercent,
+    }),
+  );
 }
 
 export function computePayoutAvailableAt(slotDate: Date): Date {
@@ -132,59 +188,6 @@ export function computePayoutAvailableAt(slotDate: Date): Date {
   end.setUTCHours(23, 59, 59, 999);
   end.setTime(end.getTime() + config.ownerPayoutDelayHours * 60 * 60 * 1000);
   return end;
-}
-
-export function hoursUntilBookingStart(slotDate: Date, now = new Date()): number {
-  const start = bookingStartAt(slotDate);
-  return (start.getTime() - now.getTime()) / (60 * 60 * 1000);
-}
-
-export function evaluateCancellationPolicy(
-  customerPayableAmount: number,
-  slotDate: Date,
-  now = new Date(),
-): CancellationPolicyResult {
-  const config = loadPaymentPolicyConfig();
-  const hours = hoursUntilBookingStart(slotDate, now);
-  const payable = roundMoney(customerPayableAmount);
-
-  if (hours <= 0) {
-    return {
-      hoursUntilBookingStart: hours,
-      tier: 'past',
-      refundPercent: 0,
-      refundableAmount: 0,
-      cancellationPenaltyAmount: payable,
-      canCancel: false,
-      reason: 'Booking period has already started or passed',
-    };
-  }
-
-  let refundPercent: number;
-  let tier: CancellationPolicyResult['tier'];
-
-  if (hours >= config.cancellationFreeUntilHours) {
-    tier = 'free';
-    refundPercent = 100;
-  } else if (hours >= config.cancellationPartialUntilHours) {
-    tier = 'partial';
-    refundPercent = config.cancellationPartialRefundPercent;
-  } else {
-    tier = 'late';
-    refundPercent = config.lateCancellationRefundPercent;
-  }
-
-  const refundableAmount = roundMoney((payable * refundPercent) / 100);
-  const cancellationPenaltyAmount = roundMoney(payable - refundableAmount);
-
-  return {
-    hoursUntilBookingStart: hours,
-    tier,
-    refundPercent,
-    refundableAmount,
-    cancellationPenaltyAmount,
-    canCancel: true,
-  };
 }
 
 export function resolvePayoutStatus(params: {
@@ -201,7 +204,8 @@ export function resolvePayoutStatus(params: {
   if (
     params.bookingCancelled &&
     params.refundStatus !== 'none' &&
-    params.refundStatus !== 'rejected'
+    params.refundStatus !== 'rejected' &&
+    params.refundStatus !== 'processed'
   ) {
     return PayoutStatus.blocked;
   }
@@ -218,12 +222,19 @@ export function getPublicPolicySummary() {
     mode: c.mode,
     currency: c.currency,
     platformCommissionPercent: c.platformCommissionPercent,
+    platformVerifiedCommissionPercent: c.platformVerifiedCommissionPercent,
     customerServiceFeePercent: c.customerServiceFeePercent,
     defaultDepositPercent: c.defaultDepositPercent,
+    fullPaymentWithinHours: c.fullPaymentWithinHours,
     balanceDueHoursBeforeStart: c.balanceDueHoursBeforeStart,
     cancellationFreeUntilHours: c.cancellationFreeUntilHours,
-    cancellationPartialUntilHours: c.cancellationPartialUntilHours,
-    cancellationPartialRefundPercent: c.cancellationPartialRefundPercent,
-    lateCancellationRefundPercent: c.lateCancellationRefundPercent,
+    cancellationCharge30UntilHours: c.cancellationCharge30UntilHours,
+    cancellationCharge50UntilHours: c.cancellationCharge50UntilHours,
+    cancellationChargePercents: {
+      free: 0,
+      tier30: 30,
+      tier50: 50,
+      tier100: 100,
+    },
   };
 }

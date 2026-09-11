@@ -194,7 +194,10 @@ export function AdminPartnerDetailView({ ownerId }: { ownerId: string }) {
 
       <OwnerPerformancePanel ns="admin" locale={locale} load={loadPerformance} />
 
-      <AdminPartnerSettlements ownerId={ownerId} />
+      <AdminPartnerSettlements
+        ownerId={ownerId}
+        payoutReady={partner.payout.reviewStatus === 'reviewed'}
+      />
 
       <Card className="rounded-2xl border-primary/12">
         <CardHeader>

@@ -69,7 +69,9 @@ test.describe('Property promotions (10F.1)', () => {
     await expect(card.getByTestId('price-original')).toBeVisible();
     await expect(card.getByTestId('price-final')).toBeVisible();
 
-    await page.goto(`/ar/properties/${PROPERTY_SLUG}?date=${slot.date}&period=${slot.period}`);
+    await page.goto(
+      `/ar/properties/${PROPERTY_SLUG}/book?date=${slot.date}&period=${slot.period}`,
+    );
     await expect(page.getByTestId('booking-panel')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('property-offers')).toBeVisible({ timeout: 20_000 });
     await selectBookingSlot(page, slot, 4);
