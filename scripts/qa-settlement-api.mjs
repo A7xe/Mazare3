@@ -48,8 +48,63 @@ async function login(creds) {
   return (await api('POST', '/auth/login', creds, false)).status === 200;
 }
 
+async function ensureCustomerTermsAccepted() {
+  const status = await api('GET', '/me/legal/status');
+  const termsGate = (status.json.data?.customer?.gates ?? []).find(
+    (g) => g.documentType === 'terms_and_conditions',
+  );
+  if (termsGate && termsGate.status !== 'missing' && termsGate.status !== 'reacceptance_required') {
+    return true;
+  }
+  if (!termsGate && status.json.data?.customer?.requiresAction === false) return true;
+  const doc = await api('GET', '/legal/documents/terms_and_conditions?lang=en', null, false);
+  const versionId = doc.json.data?.id;
+  if (!versionId) return false;
+  const accept = await api('POST', '/me/legal/accept', {
+    documentVersionId: versionId,
+    context: 'login_reacceptance',
+    sourceSurface: 'qa.settlement-api',
+  });
+  return accept.status === 201 || accept.status === 200;
+}
+
+async function ensurePriorConsents() {
+  const status = await api('GET', '/me/prior-consents');
+  const purposes = status.json.data?.purposes ?? [];
+  for (const key of ['marketplace_booking_processing', 'payment_and_refund_processing']) {
+    const row = purposes.find((p) => p.purposeKey === key);
+    if (row?.validity === 'CONSENT_STILL_VALID') continue;
+    const grant = await api('POST', '/me/prior-consents', {
+      purposeKey: key,
+      language: 'ar',
+      explicitConsent: true,
+      sourceSurface: 'qa.settlement-api',
+    });
+    if (grant.status !== 200 && grant.status !== 201) return false;
+  }
+  return true;
+}
+
+async function fetchBookingLegalIds() {
+  const set = await api('GET', '/legal/customer-booking-set?lang=ar', null, false);
+  const data = set.json.data;
+  if (!data?.corpusReady) return null;
+  const docs = data.documents ?? data;
+  if (!docs.terms?.versionId || !docs.cancellation?.versionId || !docs.bookingTerms?.versionId) return null;
+  return {
+    terms: docs.terms.versionId,
+    cancellation: docs.cancellation.versionId,
+    bookingTerms: docs.bookingTerms.versionId,
+    privacy: docs.privacy?.versionId,
+  };
+}
+
 async function createPaidBooking() {
   await login(CUSTOMER);
+  if (!(await ensureCustomerTermsAccepted())) return null;
+  if (!(await ensurePriorConsents())) return null;
+  await api('POST', `/internal/properties/${SLUG}/ensure-bookable`, {}, false);
+  const legalIds = await fetchBookingLegalIds();
   const slot = await api('POST', `/internal/properties/${SLUG}/ensure-available-slot`, {}, false);
   if (slot.status !== 200 || !slot.json.data?.date) return null;
   const book = await api('POST', '/bookings', {
@@ -57,13 +112,33 @@ async function createPaidBooking() {
     date: slot.json.data.date,
     period: slot.json.data.period,
     guestsCount: 4,
+    ...(legalIds
+      ? {
+          acceptedDocumentVersionIds: {
+            terms: legalIds.terms,
+            cancellation: legalIds.cancellation,
+            bookingTerms: legalIds.bookingTerms,
+            ...(legalIds.privacy ? { privacy: legalIds.privacy } : {}),
+          },
+        }
+      : {}),
   });
   if (book.status !== 201) return null;
   const bookingId = book.json.data.id;
-  const dep = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'deposit' });
+  const dep = await api('POST', '/payments/create-intent', {
+    bookingId,
+    method: 'card',
+    purpose: 'deposit',
+    contactPhone: '+962790000001',
+  });
   if (dep.status !== 201) return null;
   await api('POST', `/payments/${dep.json.data.id}/simulate-success`, {});
-  const bal = await api('POST', '/payments/create-intent', { bookingId, method: 'card', purpose: 'balance' });
+  const bal = await api('POST', '/payments/create-intent', {
+    bookingId,
+    method: 'card',
+    purpose: 'balance',
+    contactPhone: '+962790000001',
+  });
   if (bal.status !== 201) return { bookingId, paymentId: null, depositOnly: true, publicCode: book.json.data.publicCode };
   await api('POST', `/payments/${bal.json.data.id}/simulate-success`, {});
   return {
@@ -108,17 +183,38 @@ async function main() {
   pass('resolved owner1');
 
   await login(CUSTOMER);
+  if (!(await ensureCustomerTermsAccepted()) || !(await ensurePriorConsents())) {
+    fail('customer gates', 'legal/consent');
+    process.exit(1);
+  }
+  await api('POST', `/internal/properties/${SLUG}/ensure-bookable`, {}, false);
+  const unpaidLegal = await fetchBookingLegalIds();
   const slotU = await api('POST', `/internal/properties/${SLUG}/ensure-available-slot`, {}, false);
   const bookU = await api('POST', '/bookings', {
     propertySlug: SLUG,
     date: slotU.json.data.date,
     period: slotU.json.data.period,
     guestsCount: 4,
+    ...(unpaidLegal
+      ? {
+          acceptedDocumentVersionIds: {
+            terms: unpaidLegal.terms,
+            cancellation: unpaidLegal.cancellation,
+            bookingTerms: unpaidLegal.bookingTerms,
+            ...(unpaidLegal.privacy ? { privacy: unpaidLegal.privacy } : {}),
+          },
+        }
+      : {}),
   });
+  if (bookU.status !== 201 || !bookU.json.data?.id) {
+    fail('unpaid booking create', `${bookU.status} ${bookU.json.code}`);
+    process.exit(1);
+  }
   const depU = await api('POST', '/payments/create-intent', {
     bookingId: bookU.json.data.id,
     method: 'card',
     purpose: 'deposit',
+    contactPhone: '+962790000001',
   });
   await api('POST', `/payments/${depU.json.data.id}/simulate-success`, {});
   const pUnpaid = await preview();

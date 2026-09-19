@@ -91,6 +91,15 @@ export const createBookingSchema = z.object({
   guestsCount: z.coerce.number().int().min(1).max(100),
   expectedTotalAmount: z.coerce.number().positive().optional(),
   couponCode: z.string().trim().min(1).max(24).optional(),
+  /** Explicit legal version IDs accepted at checkout (separate from marketing). */
+  acceptedDocumentVersionIds: z
+    .object({
+      terms: z.string().min(1).optional(),
+      cancellation: z.string().min(1).optional(),
+      bookingTerms: z.string().min(1).optional(),
+      privacy: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;

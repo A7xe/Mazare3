@@ -10,6 +10,8 @@ export const PAYOUT_EXCLUSION_REASONS = [
   'payout_delay',
   'refund_blocked',
   'dispute_blocked',
+  'incident_blocked',
+  'owner_fault_cancelled',
   'already_paid',
   'already_in_settlement',
 ] as const;
@@ -28,6 +30,7 @@ export function classifyPayoutEligibility(params: {
   refundStatus: string;
   slotDate: Date;
   bookingStartAt?: Date | null;
+  cancellationReasonCode?: string | null;
   payoutAvailableAt: Date | null;
   ownerPayoutRecordStatus?: string | null;
   ownerNetPayoutAmount?: number;
@@ -71,10 +74,19 @@ export function classifyPayoutEligibility(params: {
     return { eligible: false, reason: 'already_in_settlement', payoutStatus: PayoutStatus.pending };
   }
   if (params.operationsBlock.blocked) {
-    const reason: PayoutExclusionReason = params.operationsBlock.reason?.startsWith('dispute_')
-      ? 'dispute_blocked'
-      : 'refund_blocked';
+    let reason: PayoutExclusionReason = 'refund_blocked';
+    if (params.operationsBlock.reason?.startsWith('dispute_')) reason = 'dispute_blocked';
+    else if (params.operationsBlock.reason?.startsWith('incident_')) reason = 'incident_blocked';
     return { eligible: false, reason, payoutStatus: PayoutStatus.blocked };
+  }
+
+  const ownerFaultCodes = ['OWNER_CANCEL', 'OWNER_NO_SHOW', 'ACCESS_DENIED', 'FORCE_MAJEURE'];
+  if (
+    params.bookingStatus === BookingStatus.cancelled &&
+    params.cancellationReasonCode &&
+    ownerFaultCodes.includes(params.cancellationReasonCode)
+  ) {
+    return { eligible: false, reason: 'owner_fault_cancelled', payoutStatus: PayoutStatus.blocked };
   }
 
   // Retention payouts unlock after financial finalization (refund none/processed),

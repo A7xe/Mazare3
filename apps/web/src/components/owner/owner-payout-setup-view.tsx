@@ -15,6 +15,8 @@ import {
   type PartnerOnboardingView,
   type PartnerRequirementRow,
 } from '@/lib/api-partner';
+import { grantPriorConsent, fetchPriorConsentStatus } from '@/lib/api-legal';
+import { PriorConsentCheckbox } from '@/components/legal/prior-consent-checkbox';
 import {
   cleanPartnerRequirementText,
   deriveOwnerPayoutReadiness,
@@ -38,11 +40,18 @@ export function OwnerPayoutSetupView() {
   const [onboarding, setOnboarding] = useState<PartnerOnboardingView | null>(null);
   const [requirements, setRequirements] = useState<PartnerRequirementRow[]>([]);
   const [editing, setEditing] = useState(false);
+  const [payoutPriorConsent, setPayoutPriorConsent] = useState(false);
+  const [needPayoutPriorConsent, setNeedPayoutPriorConsent] = useState(true);
   const [form, setForm] = useState({
     beneficiaryName: '',
     bankName: '',
     iban: '',
     optionalNotes: '',
+    beneficiaryRelationship: 'operator_self' as
+      | 'operator_self'
+      | 'operator_legal_entity'
+      | 'authorised_third_party'
+      | 'other_review_required',
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -61,6 +70,15 @@ export function OwnerPayoutSetupView() {
     void (async () => {
       try {
         await load();
+        try {
+          const consent = await fetchPriorConsentStatus();
+          const payout = consent.data.purposes.find(
+            (p) => p.purposeKey === 'owner_payout_and_financial_processing',
+          );
+          setNeedPayoutPriorConsent(payout?.validity !== 'CONSENT_STILL_VALID');
+        } catch {
+          setNeedPayoutPriorConsent(true);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : tOwner('loadError'));
       } finally {
@@ -89,16 +107,37 @@ export function OwnerPayoutSetupView() {
       setFieldErrors(mapped);
       return;
     }
+    if (needPayoutPriorConsent && !payoutPriorConsent) {
+      setError(t('transfer.priorConsentRequired'));
+      return;
+    }
     setSaving(true);
     try {
+      if (needPayoutPriorConsent) {
+        await grantPriorConsent({
+          purposeKey: 'owner_payout_and_financial_processing',
+          language: locale,
+          explicitConsent: true,
+          sourceSurface: 'owner.payout-setup',
+        });
+        setNeedPayoutPriorConsent(false);
+      }
       const res = await putPartnerPayoutProfile({
         beneficiaryName: form.beneficiaryName.trim(),
         bankName: form.bankName.trim(),
         iban: form.iban.trim(),
         optionalNotes: form.optionalNotes.trim() || undefined,
+        beneficiaryRelationship: form.beneficiaryRelationship,
+        payoutCountry: 'JO',
       });
       setOnboarding(res.data);
-      setForm({ beneficiaryName: '', bankName: '', iban: '', optionalNotes: '' });
+      setForm({
+        beneficiaryName: '',
+        bankName: '',
+        iban: '',
+        optionalNotes: '',
+        beneficiaryRelationship: 'operator_self',
+      });
       setFieldErrors({});
       setEditing(false);
       setOk(true);
@@ -218,6 +257,19 @@ export function OwnerPayoutSetupView() {
 
       {editing || !onboarding?.payout.complete ? (
         <div className="space-y-4 rounded-2xl border border-[#E5EAF1] bg-white p-5" data-testid="owner-payout-form">
+          {needPayoutPriorConsent ? (
+            <div
+              className="rounded-xl border border-[#C5D4E8] bg-[#F8FBFF] px-3 py-3"
+              data-testid="owner-payout-prior-consent"
+            >
+              <PriorConsentCheckbox
+                purposeKey="owner_payout_and_financial_processing"
+                checked={payoutPriorConsent}
+                testId="owner-payout-prior-consent"
+                onChange={setPayoutPriorConsent}
+              />
+            </div>
+          ) : null}
           <div className="space-y-2">
             <label htmlFor="owner-payout-beneficiary" className="text-sm font-semibold text-navy">
               {t('beneficiaryName')}
@@ -244,6 +296,38 @@ export function OwnerPayoutSetupView() {
               aria-invalid={Boolean(fieldErrors.bankName)}
               onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))}
             />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="owner-payout-relationship" className="text-sm font-semibold text-navy">
+              {t('transfer.relationshipLabel')}
+            </label>
+            <select
+              id="owner-payout-relationship"
+              data-testid="owner-payout-relationship"
+              className="h-11 w-full rounded-xl border border-[#D7DEE8] bg-white px-3 text-sm text-navy"
+              value={form.beneficiaryRelationship}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  beneficiaryRelationship: e.target.value as typeof f.beneficiaryRelationship,
+                }))
+              }
+            >
+              <option value="operator_self">{t('transfer.relationship.operator_self')}</option>
+              <option value="operator_legal_entity">
+                {t('transfer.relationship.operator_legal_entity')}
+              </option>
+              <option value="authorised_third_party">
+                {t('transfer.relationship.authorised_third_party')}
+              </option>
+              <option value="other_review_required">
+                {t('transfer.relationship.other_review_required')}
+              </option>
+            </select>
+            <p className="text-[12px] text-muted">{t('transfer.relationshipHint')}</p>
+            {fieldErrors.beneficiaryRelationship ? (
+              <p className="text-[12px] text-danger">{t('transfer.errors.relationship')}</p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <label htmlFor="owner-payout-iban" className="text-sm font-semibold text-navy">

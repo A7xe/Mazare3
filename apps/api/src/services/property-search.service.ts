@@ -59,7 +59,11 @@ import {
 } from './recommended-ranking.service.js';
 
 const searchInclude = {
-  media: { orderBy: { sortOrder: 'asc' as const }, take: 1 },
+  media: {
+    where: { removedFromListingAt: null },
+    orderBy: { sortOrder: 'asc' as const },
+    take: 1,
+  },
   amenities: { include: { amenity: true } },
 } as const;
 

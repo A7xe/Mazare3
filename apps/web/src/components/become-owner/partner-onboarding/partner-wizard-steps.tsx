@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { PriorConsentCheckbox } from '@/components/legal/prior-consent-checkbox';
 import { cn } from '@/lib/utils';
 import {
   PARTNER_DOC_ACCEPT,
@@ -43,6 +44,7 @@ function docStatusClass(state: PartnerDocUiState): string {
 
 export type PartnerWizardFormState = {
   entityType: '' | PartnerEntityType;
+  accountHolderRelation: '' | import('@/lib/api-partner').AccountHolderOperatorRelation;
   displayName: string;
   businessName: string;
   phone: string;
@@ -78,6 +80,9 @@ export function PartnerWizardSteps(props: {
   accountEmail?: string | null;
   completion?: PartnerSectionCompletion;
   onEditStep?: (step: PartnerOnboardingStepId) => void;
+  needKycPriorConsent?: boolean;
+  kycPriorConsent?: boolean;
+  setKycPriorConsent?: (v: boolean) => void;
 }) {
   const {
     currentStep,
@@ -98,6 +103,9 @@ export function PartnerWizardSteps(props: {
     accountEmail = null,
     completion,
     onEditStep,
+    needKycPriorConsent = false,
+    kycPriorConsent = false,
+    setKycPriorConsent,
   } = props;
 
   const t = useTranslations('becomeOwner');
@@ -353,6 +361,35 @@ export function PartnerWizardSteps(props: {
                 ) : null}
               </fieldset>
 
+              {form.entityType ? (
+                <label className="block space-y-2" data-testid="partner-account-holder-relation">
+                  <span className="text-sm font-semibold text-[#0D2046]">
+                    {t('accountHolderRelation')}
+                  </span>
+                  <select
+                    className="w-full rounded-xl border border-[#E5EAF1] bg-white px-3 py-2 text-sm"
+                    disabled={!editable}
+                    value={form.accountHolderRelation}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        accountHolderRelation: e.target
+                          .value as PartnerWizardFormState['accountHolderRelation'],
+                      }))
+                    }
+                  >
+                    <option value="">{t('accountHolderRelationSelect')}</option>
+                    <option value="is_contracting_party">{t('relation.is_contracting_party')}</option>
+                    <option value="acts_for_entity">{t('relation.acts_for_entity')}</option>
+                    <option value="authorised_representative">
+                      {t('relation.authorised_representative')}
+                    </option>
+                    <option value="authorised_manager">{t('relation.authorised_manager')}</option>
+                  </select>
+                  <span className="block text-[12px] text-[#53637A]">{t('accountHolderRelationHint')}</span>
+                </label>
+              ) : null}
+
               {form.entityType === 'business' ? (
                 <div className="space-y-2" data-testid="partner-business-name-field">
                   <label htmlFor="partner-business-name" className="text-sm font-semibold text-[#0D2046]">
@@ -549,6 +586,21 @@ export function PartnerWizardSteps(props: {
             {t('docs.privacyNote')}
           </div>
 
+          {needKycPriorConsent && setKycPriorConsent ? (
+            <div
+              className="rounded-2xl border border-[#C5D4E8] bg-white px-4 py-3"
+              data-testid="partner-kyc-prior-consent"
+            >
+              <PriorConsentCheckbox
+                purposeKey="owner_identity_and_authority_verification"
+                checked={kycPriorConsent}
+                disabled={!editable}
+                testId="partner-kyc-prior-consent"
+                onChange={setKycPriorConsent}
+              />
+            </div>
+          ) : null}
+
           <p className="text-[12px] text-[#8A96A8]" data-testid="partner-docs-formats">
             {t('docs.formatsHint', { mb: PARTNER_DOC_MAX_MB_DEFAULT })}
           </p>
@@ -635,11 +687,12 @@ export function PartnerWizardSteps(props: {
                         accept={PARTNER_DOC_ACCEPT}
                         className="sr-only"
                         data-testid={`partner-doc-upload-${req.id}`}
-                        disabled={busy}
+                        disabled={busy || (needKycPriorConsent && !kycPriorConsent)}
                         aria-label={
                           req.currentDocument ? t('replaceFile') : t('uploadFile')
                         }
                         onChange={(e) => {
+                          if (needKycPriorConsent && !kycPriorConsent) return;
                           const file = e.target.files?.[0];
                           if (file) void handleUpload(req.id, file);
                           e.target.value = '';

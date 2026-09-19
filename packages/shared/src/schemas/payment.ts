@@ -17,6 +17,8 @@ export const createPaymentIntentSchema = z.object({
    * Server validates and maps to collection mode + PaymentPurpose. Never trusts amount.
    */
   initialPaymentChoice: z.enum(INITIAL_PAYMENT_CHOICES).optional(),
+  /** Phase 3A — reschedule difference payment for accepted_pending_payment request. */
+  rescheduleRequestId: z.string().min(1).optional(),
 });
 
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;

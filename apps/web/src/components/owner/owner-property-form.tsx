@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { Link, useRouter } from '@/i18n/navigation';
 import { ArrowLeft, ImagePlus, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
@@ -26,6 +26,8 @@ import {
   updateOwnerProperty,
   OwnerApiError,
 } from '@/lib/api-owner';
+import { PriorConsentCheckbox } from '@/components/legal/prior-consent-checkbox';
+import { ensurePriorConsentsForPurposes } from '@/lib/ensure-prior-consents';
 
 type Props = {
   mode: 'create' | 'edit';
@@ -38,9 +40,11 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
   const t = useTranslations('ownerProperty');
   const tOwner = useTranslations('owner');
   const tCommon = useTranslations('common');
+  const locale = useLocale() === 'en' ? 'en' : 'ar';
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exactLocationConsent, setExactLocationConsent] = useState(false);
   const [media, setMedia] = useState<OwnerPropertyEdit['media']>(initial?.media ?? []);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [createFileInputKey, setCreateFileInputKey] = useState(0);
@@ -154,6 +158,37 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     };
   }, [mode, pendingFiles]);
 
+  async function ensureExactLocationConsentIfNeeded(fields: {
+    exactAddress?: string | null;
+    latitudeExact?: number | null;
+    longitudeExact?: number | null;
+    arrivalInstructionsAr?: string | null;
+    arrivalInstructionsEn?: string | null;
+  }): Promise<boolean> {
+    const needs =
+      (typeof fields.exactAddress === 'string' && fields.exactAddress.trim().length > 0) ||
+      fields.latitudeExact != null ||
+      fields.longitudeExact != null ||
+      (typeof fields.arrivalInstructionsAr === 'string' &&
+        fields.arrivalInstructionsAr.trim().length > 0) ||
+      (typeof fields.arrivalInstructionsEn === 'string' &&
+        fields.arrivalInstructionsEn.trim().length > 0);
+    if (!needs) return true;
+    const result = await ensurePriorConsentsForPurposes({
+      purposeKeys: ['property_and_exact_location_processing'],
+      checkedPurposes: {
+        property_and_exact_location_processing: exactLocationConsent,
+      },
+      language: locale,
+      sourceSurface: 'owner.property-form.exact-location',
+    });
+    if (!result.ok) {
+      setError(t('exactLocationPriorConsentRequired'));
+      return false;
+    }
+    return true;
+  }
+
   async function handleSave(submitReview: boolean) {
     setError(null);
     if (submitReview && !mediaAssessment.canSubmitReview) {
@@ -163,6 +198,10 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     setSaving(true);
     try {
       const payload = buildPayload();
+      if (!(await ensureExactLocationConsentIfNeeded(payload))) {
+        setSaving(false);
+        return;
+      }
       let propertyId = initial?.id;
       if (mode === 'create') {
         const res = await createOwnerProperty(payload);
@@ -221,7 +260,12 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
     setError(null);
     setLocationSaved(false);
     try {
-      await updateOwnerProperty(initial.id, buildLocationPayload());
+      const loc = buildLocationPayload();
+      if (!(await ensureExactLocationConsentIfNeeded(loc))) {
+        setSaving(false);
+        return;
+      }
+      await updateOwnerProperty(initial.id, loc);
       setLocationSaved(true);
       router.refresh();
     } catch (e) {
@@ -435,6 +479,18 @@ export function OwnerPropertyForm({ mode, initial }: Props) {
                 onChange={(e) => setForm((f) => ({ ...f, exactAddress: e.target.value }))}
               />
               <p className="text-xs text-muted">{t('exactAddressHint')}</p>
+              <div
+                className="mt-3 rounded-xl border border-[#C5D4E8] bg-[#F8FBFF] px-3 py-3"
+                data-testid="owner-exact-location-prior-consent"
+              >
+                <PriorConsentCheckbox
+                  purposeKey="property_and_exact_location_processing"
+                  checked={exactLocationConsent}
+                  disabled={saving || !listingEditable}
+                  testId="owner-exact-location-prior-consent"
+                  onChange={setExactLocationConsent}
+                />
+              </div>
             </div>
             <OwnerLocationPicker
               latitudeExact={form.latitudeExact}

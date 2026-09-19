@@ -23,6 +23,9 @@ const PATHS: Record<LegalPageSlug, string> = {
   privacy: '/privacy',
   'cancellation-refund': '/cancellation-refund',
   'booking-payment': '/booking-payment',
+  verification: '/verification',
+  'cookie-policy': '/cookie-policy',
+  'community-reviews': '/community-reviews',
 };
 
 type ContactPageViewProps = {
@@ -34,7 +37,12 @@ type ContactPageViewProps = {
 export async function ContactPageView({ locale, title, identity }: ContactPageViewProps) {
   const t = await getTranslations('contactPage');
   const tLegal = await getTranslations('legal');
-  const hasPublishedContact = Boolean(identity.supportEmail || identity.supportPhone);
+  const hasPublishedContact = Boolean(
+    identity.legalContactEmail ||
+      identity.projectOperationalEmail ||
+      identity.supportEmail ||
+      identity.supportPhone,
+  );
 
   function toWhatsAppDigits(phone: string): string | null {
     const digits = phone.replace(/\D/g, '');
@@ -83,9 +91,18 @@ export async function ContactPageView({ locale, title, identity }: ContactPageVi
     {
       id: 'email',
       title: t('channels.emailTitle'),
-      hint: identity.supportEmail ?? t('channels.emailHintFallback'),
-      href: identity.supportEmail ? `mailto:${identity.supportEmail}` : '#contact-form',
-      external: Boolean(identity.supportEmail),
+      hint:
+        identity.legalContactEmail ??
+        identity.projectOperationalEmail ??
+        identity.supportEmail ??
+        t('channels.emailHintFallback'),
+      href:
+        identity.legalContactEmail || identity.projectOperationalEmail || identity.supportEmail
+          ? `mailto:${identity.legalContactEmail ?? identity.projectOperationalEmail ?? identity.supportEmail}`
+          : '#contact-form',
+      external: Boolean(
+        identity.legalContactEmail || identity.projectOperationalEmail || identity.supportEmail,
+      ),
       icon: Mail,
       iconWrap: 'bg-[#F1E9FF]',
       iconClass: 'text-[#7C3AED]',
@@ -102,6 +119,7 @@ export async function ContactPageView({ locale, title, identity }: ContactPageVi
       icon: Phone,
       iconWrap: 'bg-[#FFF1EC]',
       iconClass: 'text-[#F06A4D]',
+      // Partnership phone must never appear as customer support phone.
       show: Boolean(identity.supportPhone),
     },
   ];

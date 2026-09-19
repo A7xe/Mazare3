@@ -29,7 +29,11 @@ export function makeLegalPage(slug: LegalPageSlug) {
         doc={doc}
         locale={typedLocale}
         updatedOn={LEGAL_PAGES_UPDATED_ON}
-        identity={slug === 'contact' || slug === 'about' ? getSiteIdentity() : undefined}
+        identity={
+          slug === 'contact' || slug === 'about'
+            ? getSiteIdentity(typedLocale === 'ar' ? 'ar' : 'en')
+            : undefined
+        }
         showContactBlock={slug === 'contact'}
       />
     );

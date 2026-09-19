@@ -1,4 +1,5 @@
 import { PaymentProvider, PaymentStatus, prisma } from '@mazare3/db';
+import { validateProviderCaptureAgainstPayment } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { loadPaytabsConfig, maskPaytabsProfileId } from '../config/paytabs-config.js';
 import { createAuditLog } from './audit.service.js';
@@ -13,7 +14,7 @@ const RECOVERABLE_STATUSES: PaymentStatus[] = [
   PaymentStatus.expired,
 ];
 
-export type PaytabsReconcileSource = 'admin' | 'internal_qa';
+export type PaytabsReconcileSource = 'admin' | 'internal_qa' | 'scheduled_job';
 
 export type PaytabsQueryOverride = {
   status: 'pending' | 'succeeded' | 'failed';
@@ -45,10 +46,6 @@ export type PaytabsReconcileResult = {
 
 function decimalToNumber(value: { toNumber(): number } | number): number {
   return typeof value === 'number' ? value : value.toNumber();
-}
-
-function jodEqual(a: number, b: number): boolean {
-  return Math.round(a * 100) === Math.round(b * 100);
 }
 
 async function appendReconcileEvent(
@@ -91,21 +88,16 @@ function validateQuery(
   query: ProviderPaymentResult,
   profileId: string,
 ): string | null {
-  if (!payment.providerRef || query.providerRef !== payment.providerRef) {
-    return 'PayTabs tran_ref does not match the internal payment';
-  }
-  if (query.amount == null) {
-    return 'PayTabs query did not return a transaction amount';
-  }
-  if (!jodEqual(query.amount, decimalToNumber(payment.amount))) {
-    return 'PayTabs amount does not match the internal payment';
-  }
-  if (!query.currency) {
-    return 'PayTabs query did not return a currency';
-  }
-  if (query.currency.toUpperCase() !== payment.currency.toUpperCase()) {
-    return 'PayTabs currency does not match the internal payment';
-  }
+  const shared = validateProviderCaptureAgainstPayment({
+    expectedAmountJod: decimalToNumber(payment.amount),
+    expectedCurrency: payment.currency,
+    expectedProviderRef: payment.providerRef,
+    providerAmountJod: query.amount,
+    providerCurrency: query.currency,
+    providerRef: query.providerRef,
+    requireAmountCurrency: true,
+  });
+  if (!shared.ok) return shared.message;
   if (query.profileId && profileId && query.profileId !== profileId) {
     return 'PayTabs profile does not match the configured profile';
   }
@@ -301,6 +293,8 @@ export async function reconcilePayTabsPayment(
         paymentId: payment.id,
         providerPaymentId: query.providerRef,
         providerEventId,
+        amount: query.amount,
+        currency: query.currency,
         raw: {
           source: 'paytabs_reconciliation',
           providerStatus: query.providerStatus ?? null,

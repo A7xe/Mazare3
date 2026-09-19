@@ -7,6 +7,7 @@ import {
   evaluateCancellationSettlement,
   hoursUntilInstant,
   resolveBookingPeriodStart,
+  resolveCancellationPolicyHours,
   resolvePaymentPlan,
   type BookingFinancialSnapshot,
   type CancellationSettlement,
@@ -170,8 +171,21 @@ export function evaluateCancellationPolicy(
   slotDate: Date,
   commissionPercent: number,
   now = new Date(),
+  options?: {
+    originalBookingStartAt?: Date | null;
+    applyRescheduleAnchor?: boolean;
+  },
 ): CancellationPolicyResult {
-  const hours = hoursUntilBookingStart(bookingStartAt, slotDate, now);
+  const currentStart = resolveBookingPeriodStart(bookingStartAt, slotDate);
+  const hours =
+    options?.applyRescheduleAnchor !== false && options?.originalBookingStartAt
+      ? resolveCancellationPolicyHours({
+          currentBookingStartAt: currentStart,
+          originalBookingStartAt: options.originalBookingStartAt,
+          applyRescheduleAnchor: true,
+          now,
+        })
+      : hoursUntilBookingStart(bookingStartAt, slotDate, now);
   return settlementToPolicyResult(
     evaluateCancellationSettlement({
       merchantBookingValue,

@@ -137,10 +137,16 @@ export type PartnerPayoutUiState = 'missing' | 'saved' | 'reviewed' | 'needs_att
 
 export function partnerPayoutUiState(payout: {
   complete: boolean;
-  reviewStatus: 'pending' | 'reviewed' | 'rejected' | null;
+  reviewStatus: string | null;
 } | null | undefined): PartnerPayoutUiState {
   if (!payout?.complete) return 'missing';
-  if (payout.reviewStatus === 'rejected') return 'needs_attention';
+  if (
+    payout.reviewStatus === 'rejected' ||
+    payout.reviewStatus === 'action_required' ||
+    payout.reviewStatus === 'reassessment_required'
+  ) {
+    return 'needs_attention';
+  }
   if (payout.reviewStatus === 'reviewed') return 'reviewed';
   return 'saved'; // pending or null after save
 }
@@ -149,10 +155,30 @@ export function partnerPayoutUiState(payout: {
 export function deriveOwnerPayoutReadiness(payout: {
   complete?: boolean;
   reviewStatus?: string | null;
+  beneficiaryRelationship?: string | null;
+  payoutReadiness?: string | null;
 } | null | undefined): 'not_configured' | 'pending_review' | 'ready' | 'needs_attention' {
+  if (payout?.payoutReadiness === 'ready') return 'ready';
+  if (payout?.payoutReadiness === 'not_configured') return 'not_configured';
+  if (payout?.payoutReadiness === 'needs_attention') return 'needs_attention';
+  if (payout?.payoutReadiness === 'pending_review') return 'pending_review';
   if (!payout?.complete) return 'not_configured';
-  if (payout.reviewStatus === 'reviewed') return 'ready';
-  if (payout.reviewStatus === 'rejected') return 'needs_attention';
+  if (payout.reviewStatus === 'reviewed') {
+    if (
+      payout.beneficiaryRelationship === 'authorised_third_party' ||
+      payout.beneficiaryRelationship === 'other_review_required'
+    ) {
+      return 'pending_review';
+    }
+    return 'ready';
+  }
+  if (
+    payout.reviewStatus === 'rejected' ||
+    payout.reviewStatus === 'action_required' ||
+    payout.reviewStatus === 'reassessment_required'
+  ) {
+    return 'needs_attention';
+  }
   return 'pending_review';
 }
 
@@ -177,6 +203,7 @@ export function validatePartnerPayoutForm(form: {
   beneficiaryName: string;
   bankName: string;
   iban: string;
+  beneficiaryRelationship?: string;
 }): Record<string, string> | null {
   const errors: Record<string, string> = {};
   if (form.beneficiaryName.trim().length < 2) errors.beneficiaryName = 'beneficiaryName';
@@ -186,6 +213,17 @@ export function validatePartnerPayoutForm(form: {
   if (looksLikeMaskedPayoutValue(iban)) errors.iban = 'ibanMasked';
   if (looksLikeMaskedPayoutValue(form.beneficiaryName) || looksLikeMaskedPayoutValue(form.bankName)) {
     errors.beneficiaryName = errors.beneficiaryName ?? 'masked';
+  }
+  if (
+    !form.beneficiaryRelationship ||
+    ![
+      'operator_self',
+      'operator_legal_entity',
+      'authorised_third_party',
+      'other_review_required',
+    ].includes(form.beneficiaryRelationship)
+  ) {
+    errors.beneficiaryRelationship = 'beneficiaryRelationship';
   }
   return Object.keys(errors).length ? errors : null;
 }

@@ -5,11 +5,14 @@ import {
   OwnerDocumentReviewStatus,
   OwnerPayoutReviewStatus,
   PartnerAgreementStatus,
+  PartnerCommercialTermsStatus,
+  PayoutBeneficiaryRelationship,
   type OwnerDocument,
   type OwnerProfile,
   type OwnerVerificationProfile,
   type PartnerDocumentType,
   type PartnerEntityType,
+  type AccountHolderOperatorRelation,
 } from '@mazare3/db';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
@@ -28,12 +31,17 @@ import {
   nextStatusOnSubmit,
 } from '../lib/partner-verification-machine.js';
 import { encryptPartnerField, fingerprintIban, last4Of } from '../lib/partner-crypto.js';
-import { isPayoutRelatedFieldKey } from '../lib/owner-payout-readiness.js';
+import { assertPriorConsentActive } from './legal/data-processing-consent.service.js';
+import {
+  deriveOwnerPayoutReadiness,
+  isPayoutRelatedFieldKey,
+} from '../lib/owner-payout-readiness.js';
 import { assertPartnerUploadFile, loadPartnerDocumentMaxBytes, loadPartnerDocumentMaxCount } from '../lib/partner-file-magic.js';
 import {
   deletePartnerDocumentFile,
   writePartnerDocumentFile,
 } from './partner-documents/private-storage.js';
+import { saveOwnerPayoutBeneficiaryProfile } from './payout-beneficiary.service.js';
 import {
   resolveCommercialTerms,
   pickResolvedTerms,
@@ -67,6 +75,8 @@ export type PartnerReadiness = {
   payoutProfileApproved: boolean;
   agreementAccepted: boolean;
   commercialTermsReady: boolean;
+  /** True when custom PartnerCommercialTerms lack CommercialTermsAcceptance. */
+  customTermsAcceptanceMissing: boolean;
   unresolvedChanges: boolean;
   canSubmit: boolean;
   canApprove: boolean;
@@ -80,7 +90,25 @@ export type PartnerPayoutView = {
   ibanMasked: string | null;
   reviewStatus: OwnerPayoutReviewStatus | null;
   reviewReason: string | null;
+  reviewReasonCategory?: string | null;
+  beneficiaryRelationship?: string | null;
+  nameMatchHint?: string | null;
+  payoutCountry?: string | null;
+  payoutReadiness?: string | null;
   updatedAt: string | null;
+};
+
+export type PartnerPayoutInput = {
+  beneficiaryName: string;
+  bankName: string;
+  iban: string;
+  optionalNotes?: string;
+  beneficiaryRelationship:
+    | 'operator_self'
+    | 'operator_legal_entity'
+    | 'authorised_third_party'
+    | 'other_review_required';
+  payoutCountry?: string;
 };
 
 export type PartnerAgreementView = {
@@ -110,6 +138,7 @@ export type PartnerOnboardingView = {
   ownerStatus: OwnerStatus | null;
   verificationStatus: PartnerVerificationStatus | null;
   entityType: PartnerEntityType | null;
+  accountHolderRelation: AccountHolderOperatorRelation | null;
   legacyApproved: boolean;
   complianceNotice: boolean;
   displayName: string;
@@ -157,6 +186,7 @@ const EMPTY_READINESS: PartnerReadiness = {
   payoutProfileApproved: false,
   agreementAccepted: false,
   commercialTermsReady: false,
+  customTermsAcceptanceMissing: false,
   unresolvedChanges: false,
   canSubmit: false,
   canApprove: false,
@@ -196,6 +226,7 @@ export type PatchPartnerOnboardingInput = {
   bio?: string;
   approximateFarmCount?: number | null;
   entityType?: PartnerEntityType;
+  accountHolderRelation?: AccountHolderOperatorRelation;
   legalName?: string;
   operatingPhone?: string;
   operatingCity?: string;
@@ -211,13 +242,6 @@ export type UploadPartnerDocumentParams = {
   declaredMime: string;
   originalName: string;
   req?: AuthenticatedRequest;
-};
-
-export type PartnerPayoutInput = {
-  iban: string;
-  beneficiaryName: string;
-  bankName: string;
-  optionalNotes?: string;
 };
 
 type OwnerOnboardingProfile = OwnerProfile & {
@@ -279,6 +303,7 @@ export async function computePartnerReadiness(ownerProfileId: string): Promise<P
       payoutProfileApproved: false,
       agreementAccepted: false,
       commercialTermsReady: false,
+      customTermsAcceptanceMissing: false,
       unresolvedChanges: false,
       canSubmit: false,
       canApprove: false,
@@ -331,6 +356,33 @@ export async function computePartnerReadiness(ownerProfileId: string): Promise<P
   const resolved = await resolveCommercialTerms({ ownerProfileId });
   const commercialTermsReady = resolved.source !== 'platform_default' || v.usePlatformDefaultCommission === true;
   if (!commercialTermsReady) missing.push('commercial_terms');
+
+  let customTermsAcceptanceMissing = false;
+  if (resolved.termsId) {
+    const ack = await prisma.commercialTermsAcceptance.findFirst({
+      where: { ownerProfileId, commercialTermsId: resolved.termsId },
+    });
+    customTermsAcceptanceMissing = !ack;
+  } else {
+    const pending = await prisma.partnerCommercialTerms.findFirst({
+      where: {
+        ownerProfileId,
+        status: {
+          in: [
+            PartnerCommercialTermsStatus.draft,
+            PartnerCommercialTermsStatus.scheduled,
+          ],
+        },
+      },
+    });
+    if (pending) {
+      const ack = await prisma.commercialTermsAcceptance.findFirst({
+        where: { ownerProfileId, commercialTermsId: pending.id },
+      });
+      customTermsAcceptanceMissing = !ack;
+    }
+  }
+  if (customTermsAcceptanceMissing) missing.push('commercial_terms_acceptance');
   // Legacy payout-targeted change requests must not block Partner KYC (PF-5).
   const kycChangeRequests = profile.changeRequests.filter(
     (c) => !isPayoutRelatedFieldKey(c.fieldKey),
@@ -353,6 +405,7 @@ export async function computePartnerReadiness(ownerProfileId: string): Promise<P
     requiredDocumentsApproved &&
     agreementAccepted &&
     commercialTermsReady &&
+    !customTermsAcceptanceMissing &&
     !unresolvedChanges &&
     (v.verificationStatus === PartnerVerificationStatus.under_review ||
       v.verificationStatus === PartnerVerificationStatus.submitted ||
@@ -365,6 +418,7 @@ export async function computePartnerReadiness(ownerProfileId: string): Promise<P
     payoutProfileApproved,
     agreementAccepted,
     commercialTermsReady,
+    customTermsAcceptanceMissing,
     unresolvedChanges,
     canSubmit,
     canApprove,
@@ -430,6 +484,26 @@ export async function computePartnerReadinessFromLoaded(params: {
   const resolved = pickResolvedTerms(profile.commercialTerms, null);
   const commercialTermsReady = resolved.source !== 'platform_default' || v.usePlatformDefaultCommission === true;
   if (!commercialTermsReady) missing.push('commercial_terms');
+  let customTermsAcceptanceMissing = false;
+  if (resolved.termsId) {
+    const ack = await prisma.commercialTermsAcceptance.findFirst({
+      where: { ownerProfileId: profile.id, commercialTermsId: resolved.termsId },
+    });
+    customTermsAcceptanceMissing = !ack;
+  } else {
+    const pending = profile.commercialTerms.find(
+      (t) =>
+        t.status === PartnerCommercialTermsStatus.draft ||
+        t.status === PartnerCommercialTermsStatus.scheduled,
+    );
+    if (pending) {
+      const ack = await prisma.commercialTermsAcceptance.findFirst({
+        where: { ownerProfileId: profile.id, commercialTermsId: pending.id },
+      });
+      customTermsAcceptanceMissing = !ack;
+    }
+  }
+  if (customTermsAcceptanceMissing) missing.push('commercial_terms_acceptance');
   const kycChangeRequests = profile.changeRequests.filter(
     (c) => !isPayoutRelatedFieldKey(c.fieldKey),
   );
@@ -449,6 +523,7 @@ export async function computePartnerReadinessFromLoaded(params: {
     requiredDocumentsApproved &&
     agreementAccepted &&
     commercialTermsReady &&
+    !customTermsAcceptanceMissing &&
     !unresolvedChanges &&
     (v.verificationStatus === PartnerVerificationStatus.under_review ||
       v.verificationStatus === PartnerVerificationStatus.submitted ||
@@ -461,6 +536,7 @@ export async function computePartnerReadinessFromLoaded(params: {
     payoutProfileApproved,
     agreementAccepted,
     commercialTermsReady,
+    customTermsAcceptanceMissing,
     unresolvedChanges,
     canSubmit,
     canApprove,
@@ -548,6 +624,7 @@ export async function emptyPartnerOnboardingView(): Promise<PartnerOnboardingVie
     ownerStatus: null,
     verificationStatus: null,
     entityType: null,
+    accountHolderRelation: null,
     legacyApproved: false,
     complianceNotice: false,
     displayName: '',
@@ -575,6 +652,11 @@ export async function emptyPartnerOnboardingView(): Promise<PartnerOnboardingVie
       ibanMasked: null,
       reviewStatus: null,
       reviewReason: null,
+      reviewReasonCategory: null,
+      beneficiaryRelationship: null,
+      nameMatchHint: null,
+      payoutCountry: null,
+      payoutReadiness: 'not_configured',
       updatedAt: null,
     },
     currentAgreement: currentAgreement
@@ -643,6 +725,7 @@ export async function buildOnboardingView(ownerProfileId: string): Promise<Partn
     ownerStatus: profile.status,
     verificationStatus: v.verificationStatus,
     entityType: v.entityType,
+    accountHolderRelation: v.accountHolderRelation ?? null,
     legacyApproved: v.verificationStatus === PartnerVerificationStatus.legacy_approved,
     complianceNotice: v.verificationStatus === PartnerVerificationStatus.legacy_approved,
     displayName: profile.displayName,
@@ -676,6 +759,11 @@ export async function buildOnboardingView(ownerProfileId: string): Promise<Partn
           ibanMasked: `••••${profile.payoutProfile.ibanLast4}`,
           reviewStatus: profile.payoutProfile.reviewStatus,
           reviewReason: profile.payoutProfile.reviewReason,
+          reviewReasonCategory: profile.payoutProfile.reviewReasonCategory ?? null,
+          beneficiaryRelationship: profile.payoutProfile.beneficiaryRelationship ?? null,
+          nameMatchHint: profile.payoutProfile.nameMatchHint ?? null,
+          payoutCountry: profile.payoutProfile.payoutCountry ?? null,
+          payoutReadiness: deriveOwnerPayoutReadiness(profile.payoutProfile),
           updatedAt: profile.payoutProfile.updatedAt.toISOString(),
         }
       : {
@@ -685,6 +773,11 @@ export async function buildOnboardingView(ownerProfileId: string): Promise<Partn
           ibanMasked: null,
           reviewStatus: null,
           reviewReason: null,
+          reviewReasonCategory: null,
+          beneficiaryRelationship: null,
+          nameMatchHint: null,
+          payoutCountry: null,
+          payoutReadiness: 'not_configured',
           updatedAt: null,
         },
     currentAgreement: currentAgreement
@@ -758,6 +851,9 @@ export async function patchPartnerOnboardingProfile(
             create: {
               verificationStatus: PartnerVerificationStatus.draft,
               ...(input.entityType != null ? { entityType: input.entityType } : {}),
+              ...(input.accountHolderRelation != null
+                ? { accountHolderRelation: input.accountHolderRelation }
+                : {}),
               ...(input.legalName != null ? { legalName: input.legalName.trim() } : {}),
               ...(input.operatingPhone != null
                 ? { operatingPhone: input.operatingPhone.trim() }
@@ -802,6 +898,9 @@ export async function patchPartnerOnboardingProfile(
       where: { ownerProfileId: profile!.id },
       data: {
         ...(input.entityType != null ? { entityType: input.entityType } : {}),
+        ...(input.accountHolderRelation != null
+          ? { accountHolderRelation: input.accountHolderRelation }
+          : {}),
         ...(input.legalName != null ? { legalName: input.legalName.trim() } : {}),
         ...(input.operatingPhone != null ? { operatingPhone: input.operatingPhone.trim() } : {}),
         ...(input.operatingCity != null ? { operatingCity: input.operatingCity.trim() } : {}),
@@ -817,6 +916,32 @@ export async function patchPartnerOnboardingProfile(
     entityId: profile.id,
     req,
   });
+
+  // Phase 3C.4D.3 — ensure a default contracting OperatorParty exists (not auto authority-approved)
+  try {
+    const refreshed = await findOwnerOnboarding(userId);
+    if (refreshed) {
+      const { ensureDefaultContractingOperatorFromOwner, defaultOperatorEntityKindFromPartner } =
+        await import('./property-authority.service.js');
+      const entityKind = defaultOperatorEntityKindFromPartner(
+        refreshed.verificationProfile?.entityType ?? null,
+      );
+      const legalName =
+        refreshed.verificationProfile?.legalName?.trim() ||
+        refreshed.businessName?.trim() ||
+        refreshed.displayName;
+      await ensureDefaultContractingOperatorFromOwner({
+        ownerProfileId: refreshed.id,
+        legalName,
+        entityKind,
+        contactPhone: refreshed.phone,
+        contactEmail: refreshed.verificationProfile?.contactEmail ?? null,
+      });
+    }
+  } catch (err) {
+    console.error('[3c4d3] ensureDefaultContractingOperatorFromOwner', err);
+  }
+
   return buildOnboardingView(profile.id);
 }
 
@@ -891,6 +1016,9 @@ export async function getOwnerPayoutRequirements(userId: string): Promise<Partne
 export async function uploadPartnerDocument(
   params: UploadPartnerDocumentParams,
 ): Promise<PartnerDocumentView> {
+  // Jordan Prior Consent before KYC / authority document storage (no upload before consent).
+  await assertPriorConsentActive(params.userId, 'owner_identity_and_authority_verification');
+
   const profile = await ensureOwnerOnboarding(params.userId);
   const status = profile.verificationProfile.verificationStatus;
   const allReqs = await loadRequirementRows();
@@ -1076,49 +1204,26 @@ export async function putPartnerPayoutProfile(
   input: PartnerPayoutInput,
   req?: AuthenticatedRequest,
 ): Promise<PartnerOnboardingView> {
+  // Financial-sensitive Prior Consent before IBAN / beneficiary collection (not PAN/CVV).
+  await assertPriorConsentActive(userId, 'owner_payout_and_financial_processing');
+
   const profile = await ensureOwnerOnboarding(userId);
   const status = profile.verificationProfile.verificationStatus;
   if (!canOwnerEditOnboarding(status) && !isOperationallyApproved(status)) {
     assertOwnerCanEdit(status);
   }
-  const iban = input.iban.replace(/\s+/g, '').toUpperCase();
-  const beneficiaryNameCipher = encryptPartnerField(input.beneficiaryName.trim());
-  const bankNameCipher = encryptPartnerField(input.bankName.trim());
-  const ibanCipher = encryptPartnerField(iban);
-  const optionalNotesCipher = input.optionalNotes?.trim()
-    ? encryptPartnerField(input.optionalNotes.trim())
-    : null;
-  await prisma.ownerPayoutProfile.upsert({
-    where: { ownerProfileId: profile.id },
-    create: {
-      ownerProfileId: profile.id,
-      beneficiaryNameCipher,
-      bankNameCipher,
-      ibanCipher,
-      ibanLast4: last4Of(iban),
-      ibanFingerprint: fingerprintIban(iban),
-      optionalNotesCipher,
-      reviewStatus: OwnerPayoutReviewStatus.pending,
+
+  await saveOwnerPayoutBeneficiaryProfile({
+    userId,
+    ownerProfileId: profile.id,
+    input: {
+      beneficiaryName: input.beneficiaryName,
+      bankName: input.bankName,
+      iban: input.iban,
+      optionalNotes: input.optionalNotes,
+      beneficiaryRelationship: input.beneficiaryRelationship as PayoutBeneficiaryRelationship,
+      payoutCountry: input.payoutCountry ?? 'JO',
     },
-    update: {
-      beneficiaryNameCipher,
-      bankNameCipher,
-      ibanCipher,
-      ibanLast4: last4Of(iban),
-      ibanFingerprint: fingerprintIban(iban),
-      optionalNotesCipher,
-      reviewStatus: OwnerPayoutReviewStatus.pending,
-      reviewReason: null,
-      reviewedAt: null,
-      reviewedByUserId: null,
-    },
-  });
-  await createAuditLog({
-    actorUserId: userId,
-    action: 'owner.payout_profile_saved',
-    entityType: 'owner_payout_profile',
-    entityId: profile.id,
-    metadata: { ibanLast4: last4Of(iban) },
     req,
   });
   return buildOnboardingView(profile.id);
@@ -1161,6 +1266,33 @@ export async function acceptPartnerAgreement(
       acceptedLocale: acceptedLocale ?? null,
     },
   });
+
+  // Bridge to unified LegalAcceptance for OWNER_AGREEMENT when an active legal version exists.
+  try {
+    const { getActiveVersion } = await import('./legal/legal-document.service.js');
+    const { recordAcceptance } = await import('./legal/legal-acceptance.service.js');
+    const { LegalAcceptanceContext, LegalDocumentType } = await import('@mazare3/db');
+    const lang = acceptedLocale === 'en' ? 'en' : 'ar';
+    const activeOwnerAgreement = await getActiveVersion(
+      LegalDocumentType.owner_agreement,
+      lang,
+    );
+    if (activeOwnerAgreement) {
+      await recordAcceptance(
+        userId,
+        {
+          documentVersionId: activeOwnerAgreement.id,
+          context: LegalAcceptanceContext.owner_onboarding,
+          sourceSurface: 'owner.partner_agreement.accept',
+          relatedOwnerProfileId: profile.id,
+        },
+        { req },
+      );
+    }
+  } catch (bridgeErr) {
+    console.error('[legal] owner_agreement LegalAcceptance bridge failed', bridgeErr);
+  }
+
   await createAuditLog({
     actorUserId: userId,
     action: 'owner.partner_agreement_accepted',

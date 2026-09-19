@@ -191,6 +191,9 @@ export class PayTabsPaymentGateway implements PaymentGateway {
       paymentId: parsed?.paymentId ?? null,
       providerPaymentId: tranRef,
       providerEventId,
+      amount: parsePaytabsQueryAmount(payload),
+      currency: parsePaytabsQueryCurrency(payload),
+      cartPurpose: parsed?.purpose ?? null,
       raw: params.payload,
     };
   }

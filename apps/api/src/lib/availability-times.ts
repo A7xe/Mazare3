@@ -81,7 +81,7 @@ export function mapOwnerSlotRow(slot: {
   date: Date;
   period: AvailabilityPeriod;
   price: { toNumber(): number } | number;
-  status: 'available' | 'blocked' | 'booked';
+  status: 'available' | 'blocked' | 'booked' | 'held';
   startAt: Date | null;
   endAt: Date | null;
   source: 'legacy' | 'generated' | 'manual';

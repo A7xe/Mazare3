@@ -18,6 +18,11 @@ import type {
   PaymentSummary,
   SavedPaymentMethodPublic,
 } from '@mazare3/shared';
+import {
+  BALANCE_DUE_HOURS_BEFORE_START,
+  CANCELLATION_FREE_UNTIL_HOURS,
+  DEPOSIT_PERCENT,
+} from '@mazare3/shared';
 import { Button } from '@/components/ui/button';
 import {
   createManagedFormPayment,
@@ -33,7 +38,17 @@ import { listMyPaymentMethods } from '@/lib/api-payment-methods';
 import { Link } from '@/i18n/navigation';
 import { formatPlatformDateTime } from '@/lib/format-platform-time';
 import { formatPrice } from '@/lib/property-helpers';
-import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+import {
+  BookingLegalAck,
+  type BookingLegalAckState,
+} from '@/components/legal/booking-legal-ack';
+import { FirstRunLegalGate } from '@/components/legal/first-run-legal-gate';
+import {
+  contractualActionsBlocked,
+  legalAcceptHref,
+  useMyLegalStatus,
+} from '@/components/legal/legal-reacceptance';
+import { ackBookingLegal } from '@/lib/api-legal';
 import { CheckoutPropertySummary } from '@/components/checkout/checkout-property-summary';
 import { CheckoutBookingDetails } from '@/components/checkout/checkout-booking-details';
 import { CheckoutPaymentSummary } from '@/components/checkout/checkout-payment-summary';
@@ -78,9 +93,27 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
   /** CB-6 — UI-only until Pay; never PATCHes collection mode on radio click. */
   const [initialPaymentChoice, setInitialPaymentChoice] =
     useState<InitialPaymentChoice>('deposit');
+  const [legalAck, setLegalAck] = useState<BookingLegalAckState | null>(null);
+  const [planRevalidatedNotice, setPlanRevalidatedNotice] = useState<string | null>(null);
+  const { status: legalStatus } = useMyLegalStatus();
   const managedPayLockRef = useRef(false);
   const managedIdempotencyRef = useRef<string | null>(null);
   const savedCardIdempotencyRef = useRef<string | null>(null);
+
+  async function handlePaymentPlanUpdated(e: PaymentApiError): Promise<boolean> {
+    if (e.code !== 'PAYMENT_PLAN_UPDATED') return false;
+    setPlanRevalidatedNotice(t('fullPaymentRequiredWithin72h'));
+    setInitialPaymentChoice('full');
+    setError(t('fullPaymentRequiredWithin72h'));
+    await load();
+    return true;
+  }
+
+  function notePlanRevalidated(payment: PaymentSummary) {
+    if (payment.paymentPlanRevalidated?.code === 'FULL_PAYMENT_REQUIRED_WITHIN_72H') {
+      setPlanRevalidatedNotice(t('fullPaymentRequiredWithin72h'));
+    }
+  }
 
   function applyPaymentContactError(e: unknown): boolean {
     if (!(e instanceof PaymentApiError)) return false;
@@ -98,6 +131,31 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
       return true;
     }
     return false;
+  }
+
+  function assertCheckoutLegalReady(): boolean {
+    if (!legalAck?.isValid) {
+      setError(t('legalAckRequired'));
+      return false;
+    }
+    if (contractualActionsBlocked(legalStatus)) {
+      router.push(legalAcceptHref(`/checkout/${bookingId}`));
+      return false;
+    }
+    return true;
+  }
+
+  async function ensureBookingLegalAck(): Promise<boolean> {
+    if (!assertCheckoutLegalReady() || !legalAck?.versionIds) return false;
+    try {
+      await ackBookingLegal(bookingId, {
+        acceptedDocumentVersionIds: legalAck.versionIds,
+      });
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('legalAckRequired'));
+      return false;
+    }
   }
 
   const load = useCallback(async () => {
@@ -215,6 +273,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     setActing(true);
     setError(null);
     try {
+      if (!(await ensureBookingLegalAck())) return;
       const pay = await ensureSimulatePayment();
       await simulatePaymentSuccess(pay.id);
       router.push('/account/bookings');
@@ -231,6 +290,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     setActing(true);
     setError(null);
     try {
+      if (!(await ensureBookingLegalAck())) return;
       const pay = await ensureSimulatePayment();
       await simulatePaymentFailure(pay.id);
       setError(t('paymentFailed'));
@@ -247,6 +307,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     setActing(true);
     setError(null);
     try {
+      if (!(await ensureBookingLegalAck())) return;
       const duePurpose = booking?.duePurpose;
       if (!duePurpose && !booking?.initialPaymentOptions?.length) {
         throw new Error(t('payError'));
@@ -270,6 +331,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
       }
       const intent = await createPaymentIntent(payload);
       setPayment(intent.data);
+      notePlanRevalidated(intent.data);
       setContactRequired(null);
       if (intent.data.redirectUrl) {
         window.location.assign(intent.data.redirectUrl);
@@ -282,6 +344,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
         await load();
         return;
       }
+      if (e instanceof PaymentApiError && (await handlePaymentPlanUpdated(e))) return;
       if (e instanceof PaymentApiError && e.code === 'PAYMENT_CHOICE_LOCKED') {
         setError(t('verifyingPayment'));
         await load();
@@ -300,6 +363,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     setActing(true);
     setError(null);
     try {
+      if (!(await ensureBookingLegalAck())) return;
       if (!managedIdempotencyRef.current) {
         managedIdempotencyRef.current = `mf_${bookingId.slice(0, 8)}_${Date.now().toString(36)}`;
       }
@@ -322,6 +386,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
       }
       const result = await createManagedFormPayment(payload);
       setPayment(result.data);
+      notePlanRevalidated(result.data);
       setContactRequired(null);
 
       if (result.data.managedFormOutcome === 'declined' || result.data.status === 'failed') {
@@ -351,6 +416,11 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
         managedIdempotencyRef.current = null;
         setManagedFormResetKey((k) => k + 1);
         await load();
+        return;
+      }
+      if (e instanceof PaymentApiError && (await handlePaymentPlanUpdated(e))) {
+        managedIdempotencyRef.current = null;
+        setManagedFormResetKey((k) => k + 1);
         return;
       }
       if (e instanceof PaymentApiError && e.code === 'PAYMENT_CHOICE_LOCKED') {
@@ -386,6 +456,7 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
     setActing(true);
     setError(null);
     try {
+      if (!(await ensureBookingLegalAck())) return;
       if (!savedCardIdempotencyRef.current) {
         savedCardIdempotencyRef.current = `sc_${bookingId.slice(0, 8)}_${Date.now().toString(36)}`;
       }
@@ -442,6 +513,10 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
         setError(t('holdExpiredTitle'));
         savedCardIdempotencyRef.current = null;
         await load();
+        return;
+      }
+      if (e instanceof PaymentApiError && (await handlePaymentPlanUpdated(e))) {
+        savedCardIdempotencyRef.current = null;
         return;
       }
       if (e instanceof PaymentApiError && e.code === 'PAYMENT_CHOICE_LOCKED') {
@@ -631,6 +706,16 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
         </div>
       )}
 
+      {planRevalidatedNotice && (
+        <p
+          className="mb-3 rounded-[14px] border border-primary/20 bg-primary/5 px-4 py-3 text-[13px] text-navy"
+          role="status"
+          data-testid="checkout-plan-revalidated"
+        >
+          {planRevalidatedNotice}
+        </p>
+      )}
+
       {error && (
         <p
           className="mb-3 rounded-[14px] border border-danger/20 bg-danger/10 px-4 py-3 text-[13px] text-danger"
@@ -748,22 +833,35 @@ export function CheckoutView({ bookingId }: { bookingId: string }) {
 
           {awaitingPay ? (
             <div className="rounded-[18px] border border-[#E0E8F3] bg-white px-3.5 py-3 shadow-[0_6px_18px_rgba(47,90,150,.06)]">
-              <LegalCommitmentNotice testId="checkout-legal-notice" />
-              <p className="mt-2 text-[10px] leading-relaxed text-[#8794A7]">{t('payConsent')}</p>
-              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
-                <Link href="/terms" className="font-semibold text-[#2F6EF6] hover:underline">
-                  {t('termsLink')}
-                </Link>
-                <Link
-                  href="/cancellation-refund"
-                  className="font-semibold text-[#2F6EF6] hover:underline"
-                >
-                  {t('cancellationLink')}
-                </Link>
-                <Link href="/privacy" className="font-semibold text-[#2F6EF6] hover:underline">
-                  {t('privacyLink')}
-                </Link>
-              </div>
+              <BookingLegalAck
+                testIdPrefix="checkout-legal"
+                summary={{
+                  depositPercent: DEPOSIT_PERCENT,
+                  freeCancelUntilHours: CANCELLATION_FREE_UNTIL_HOURS,
+                  balanceDueHoursBeforeStart: BALANCE_DUE_HOURS_BEFORE_START,
+                  showCancelTiers: true,
+                  amountDueNow: displayDueNow,
+                  currency: booking.currency,
+                  remainingBalance:
+                    displayDuePurpose === 'deposit'
+                      ? (selectedOption?.remainingAfterPayment ??
+                        booking.remainingAmount ??
+                        null)
+                      : null,
+                  balanceDueAtIso:
+                    displayDuePurpose === 'deposit' || displayDuePurpose === 'balance'
+                      ? (booking.balanceDueAt ?? null)
+                      : null,
+                  showDepositDisclosure: displayDuePurpose === 'deposit',
+                  showFullPaymentDisclosure:
+                    displayDuePurpose === 'full' ||
+                    selectedOption?.choice === 'full' ||
+                    booking.paymentCollectionMode === 'full',
+                }}
+                disabled={acting}
+                onChange={setLegalAck}
+              />
+              <FirstRunLegalGate enforceOnPaths={['/checkout']} />
 
               {showSimulate && (
                 <>

@@ -14,6 +14,8 @@ import {
   qaEnsureAvailableSlot,
   qaBackdateBookingCreatedAt,
   qaSetPayoutAvailableAt,
+  qaMarkVerifiedVisit,
+  qaEnsurePropertyBookable,
 } from '../services/internal-qa.service.js';
 import {
   backdateOwnerApprovalDeadlineForQa,
@@ -123,6 +125,34 @@ internalRouter.post(
       return;
     }
     const data = await qaBackdateBookingSlot(id, date);
+    res.json({ data });
+  }),
+);
+
+internalRouter.post(
+  '/bookings/:id/mark-verified-visit',
+  asyncHandler(async (req, res) => {
+    requireInternalQa();
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'booking id required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const data = await qaMarkVerifiedVisit(id);
+    res.json({ data });
+  }),
+);
+
+internalRouter.post(
+  '/properties/:slug/ensure-bookable',
+  asyncHandler(async (req, res) => {
+    requireInternalQa();
+    const slug = req.params.slug;
+    if (!slug) {
+      res.status(400).json({ error: 'slug required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    const data = await qaEnsurePropertyBookable(slug);
     res.json({ data });
   }),
 );

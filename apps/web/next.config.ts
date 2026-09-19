@@ -70,6 +70,14 @@ const nextConfig: NextConfig = {
     ],
   },
   transpilePackages: ['@mazare3/shared'],
+  webpack: (config) => {
+    // Shared package uses ESM `.js` import specifiers that map to `.ts` sources.
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      '.js': ['.ts', '.tsx', '.js'],
+    };
+    return config;
+  },
 };
 
 export default withNextIntl(nextConfig);

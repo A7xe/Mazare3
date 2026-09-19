@@ -378,7 +378,11 @@ export async function listAdminProperties(): Promise<AdminPropertyRow[]> {
     orderBy: { createdAt: 'desc' },
     include: {
       owner: { include: { user: { select: { email: true } } } },
-      media: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' },
+        take: 1,
+      },
       _count: { select: { bookings: true } },
     },
   });
@@ -406,7 +410,10 @@ export async function getAdminPropertyById(id: string): Promise<AdminPropertyDet
     where: { id },
     include: {
       owner: { include: { user: { select: { email: true } } } },
-      media: { orderBy: { sortOrder: 'asc' } },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' },
+      },
       amenities: { include: { amenity: true } },
       _count: { select: { bookings: true } },
     },
@@ -507,6 +514,11 @@ export async function patchAdminPropertyStatus(
     await assertMediaForPublish(propertyId);
     assertPropertyListingComplete(property);
     await assertAndGenerateForPublish(propertyId, property.status);
+    // Phase 3C.4D.4B — authority + regulatory READY required to publish/republish
+    const { assertPropertyEligibleForPublish } = await import(
+      './property-bookability.service.js'
+    );
+    await assertPropertyEligibleForPublish(propertyId);
   }
 
   const isChangesRequested = targetStatus === PropertyStatus.changes_requested;
@@ -641,9 +653,14 @@ export async function listAdminBookings(): Promise<AdminBookingRow[]> {
     },
   });
 
+  const { mapInitialListingSnapshotsByBookingIds, applyListingSnapshotIdentity } = await import(
+    './booking-listing-snapshot.service.js'
+  );
+  const snapByBooking = await mapInitialListingSnapshotsByBookingIds(bookings.map((b) => b.id));
+
   return bookings.map((b) => {
     const pay = b.payments[0];
-    return {
+    const base = {
       id: b.id,
       publicCode: b.publicCode,
       status: b.status,
@@ -671,10 +688,12 @@ export async function listAdminBookings(): Promise<AdminBookingRow[]> {
         pay?.cancellationRefundAmount != null
           ? decimalToNumber(pay.cancellationRefundAmount)
           : null,
+      cancellationReasonCode: b.cancellationReasonCode ?? null,
       paymentState: b.paymentState,
       paymentCollectionMode: b.paymentCollectionMode,
       isFullyPaid: b.paymentState === 'fully_paid',
     };
+    return applyListingSnapshotIdentity(base, snapByBooking.get(b.id));
   });
 }
 

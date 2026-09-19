@@ -37,7 +37,10 @@ import {
   classifyOwnerInboxGroup,
   formatLocalTime,
   getPlatformTimeZone,
+  resolveBookingPeriodStart,
+  resolveVisitLifecycleProjection,
 } from '@mazare3/shared';
+import { mapPendingRescheduleByBookingIds } from './reschedule.service.js';
 import {
   listPropertyAvailabilityRules,
   putPropertyAvailabilityRules,
@@ -223,7 +226,11 @@ export async function listOwnerProperties(
     where: propertyWhere(scope),
     orderBy: { titleAr: 'asc' },
     include: {
-      media: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' },
+        take: 1,
+      },
       _count: {
         select: {
           bookings: {
@@ -259,7 +266,11 @@ export async function getOwnerPropertyById(
   const p = await prisma.property.findFirst({
     where: { id: propertyId, ...propertyWhere(scope) },
     include: {
-      media: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' },
+        take: 1,
+      },
       _count: {
         select: {
           bookings: {
@@ -327,6 +338,12 @@ export async function listOwnerBookings(
     },
   });
 
+  const pendingByBooking = await mapPendingRescheduleByBookingIds(bookings.map((b) => b.id));
+  const { mapInitialListingSnapshotsByBookingIds, applyListingSnapshotIdentity } = await import(
+    './booking-listing-snapshot.service.js'
+  );
+  const snapByBooking = await mapInitialListingSnapshotsByBookingIds(bookings.map((b) => b.id));
+
   return bookings.map((b) => {
     const pay = b.payments[0];
     let payoutAvailableAt = pay?.payoutAvailableAt ?? null;
@@ -349,7 +366,32 @@ export async function listOwnerBookings(
       bookingEndAt: b.bookingEndAt,
       slot: b.slot,
     });
-    return {
+    const visitLifecycle = resolveVisitLifecycleProjection({
+      bookingStatus: b.status,
+      visitOutcome: b.visitOutcome ?? null,
+      cancellationReasonCode: b.cancellationReasonCode ?? null,
+      checkInStatus: b.checkInStatus ?? null,
+      bookingStartAt: resolveBookingPeriodStart(b.bookingStartAt ?? timed?.startAt ?? null, b.slot.date),
+      bookingEndAt: b.bookingEndAt ?? timed?.endAt ?? null,
+      slotEndAt: b.slot.endAt ?? null,
+      slotDate: b.slot.date,
+    });
+    const inboxGroup = (() => {
+      const baseGroup = classifyOwnerInboxGroup({
+        status: b.status,
+        date: formatDateOnly(b.slot.date),
+        timeZone: getPlatformTimeZone(),
+      });
+      // Phase 3C.4E.4C — completed / terminal visit outcomes leave Upcoming.
+      if (
+        baseGroup === 'upcoming' &&
+        (visitLifecycle.displayKey === 'completed' || visitLifecycle.terminal)
+      ) {
+        return 'past' as const;
+      }
+      return baseGroup;
+    })();
+    const base = {
       id: b.id,
       publicCode: b.publicCode,
       status: b.status,
@@ -362,11 +404,7 @@ export async function listOwnerBookings(
       startAtLocal: timed ? formatLocalTime(timed.startAt, getPlatformTimeZone()) : null,
       endAtLocal: timed ? formatLocalTime(timed.endAt, getPlatformTimeZone()) : null,
       timeZone: getPlatformTimeZone(),
-      inboxGroup: classifyOwnerInboxGroup({
-        status: b.status,
-        date: formatDateOnly(b.slot.date),
-        timeZone: getPlatformTimeZone(),
-      }),
+      inboxGroup,
       guestsCount: b.guestsCount,
       totalAmount: decimalToNumber(b.totalAmount),
       currency: b.currency,
@@ -399,7 +437,11 @@ export async function listOwnerBookings(
         b.paymentState === 'fully_paid' ? payoutAvailableAt?.toISOString() ?? null : null,
       paymentState: b.paymentState,
       isFullyPaid: b.paymentState === 'fully_paid',
+      pendingReschedule: pendingByBooking.get(b.id) ?? null,
+      visitOutcome: b.visitOutcome ?? null,
+      visitLifecycleDisplayKey: visitLifecycle.displayKey,
     };
+    return applyListingSnapshotIdentity(base, snapByBooking.get(b.id)) as OwnerBookingRow;
   });
 }
 

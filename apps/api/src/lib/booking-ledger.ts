@@ -12,6 +12,12 @@ export type RefundRequestLike = {
   status: string;
   approvedAmount?: { toNumber(): number } | number | null;
   requestedAmount?: { toNumber(): number } | number | null;
+  /** Phase 3C.4E.2A — when present, succeeded allocations are the refunded truth. */
+  allocations?: Array<{
+    status: string;
+    refundedAmount?: { toNumber(): number } | number | null;
+    allocatedAmount?: { toNumber(): number } | number | null;
+  }>;
 };
 
 function moneyToFils(value: { toNumber(): number } | number | null | undefined): number {
@@ -46,10 +52,21 @@ export function succeededInstallmentFils(payments: PaymentLike[]): {
   return { deposit, balance, full, total: deposit + balance + full };
 }
 
-/** Approved/processed refunds only. Failed/expired/cancelled payments never count as captured. */
+/**
+ * Approved/processed refunds, or succeeded multi-capture allocations.
+ * Pending RefundRequests with partial allocation successes count only succeeded allocation amounts.
+ */
 export function refundedFilsFromRequests(requests: RefundRequestLike[]): number {
   let fils = 0;
   for (const r of requests) {
+    const allocs = r.allocations ?? [];
+    if (allocs.length > 0) {
+      for (const a of allocs) {
+        if (a.status !== 'succeeded') continue;
+        fils += moneyToFils(a.refundedAmount ?? a.allocatedAmount ?? 0);
+      }
+      continue;
+    }
     if (r.status !== 'approved' && r.status !== 'processed') continue;
     fils += moneyToFils(r.approvedAmount ?? r.requestedAmount ?? 0);
   }
@@ -86,6 +103,9 @@ export function derivePayFlags(params: {
   payments: PaymentLike[];
   customerPayableTotal: { toNumber(): number } | number;
   remainingSnapshotFils: number;
+  /** Phase 3C.4E.2C — when set, canPayBalance is false at/after the snapshotted deadline. */
+  balanceDueAt?: Date | null;
+  now?: Date;
 }): {
   canPayDeposit: boolean;
   canPayBalance: boolean;
@@ -135,12 +155,17 @@ export function derivePayFlags(params: {
     paid.deposit === 0 &&
     paid.full === 0;
 
+  const now = params.now ?? new Date();
+  const pastBalanceDeadline =
+    params.balanceDueAt != null && params.balanceDueAt.getTime() <= now.getTime();
+
   const canPayBalance =
     !isFullMode &&
     paid.deposit > 0 &&
     remainingFils > 0 &&
     paid.balance === 0 &&
-    (params.status === BookingStatus.confirmed || params.status === 'confirmed');
+    (params.status === BookingStatus.confirmed || params.status === 'confirmed') &&
+    !pastBalanceDeadline;
 
   let duePurpose: PaymentPurpose | null = null;
   if (canPayFull) duePurpose = 'full';

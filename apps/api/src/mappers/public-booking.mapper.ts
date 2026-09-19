@@ -9,6 +9,11 @@ import type {
 import { canRevealExactLocation, toBookingArrival } from '@mazare3/shared';
 import { formatLocalTime, getPlatformTimeZone } from '@mazare3/shared';
 import {
+  resolveBookingPeriodStart,
+  resolveVisitLifecycleProjection,
+} from '@mazare3/shared';
+import { loadPaymentPolicyConfig } from '../config/payment-policy.config.js';
+import {
   evaluateCancellationPolicy,
   snapshotToBreakdown,
   type CancellationPolicyResult,
@@ -46,6 +51,9 @@ export function isPropertyCurrentlyBookable(property: {
   status: string;
   owner: { status: string };
 }): boolean {
+  // Base published + owner.approved gates only.
+  // Full NEW Booking eligibility (authority + regulatory READY) lives in
+  // evaluatePropertyBookability (Phase 3C.4D.4B) — do not expand this sync helper.
   return property.status === PropertyStatus.published && property.owner.status === OwnerStatus.approved;
 }
 
@@ -98,6 +106,7 @@ export function toPublicBookingSummary(booking: BookingWithRelations): PublicBoo
     payments,
     customerPayableTotal: booking.customerPayableTotal,
     remainingSnapshotFils: 0,
+    balanceDueAt: booking.balanceDueAt ?? null,
   });
 
   const paidInFull = flags.isFullyPaid;
@@ -141,6 +150,16 @@ export function toPublicBookingSummary(booking: BookingWithRelations): PublicBoo
         booking.bookingStartAt,
         booking.slot.date,
         commissionPercent,
+        new Date(),
+        'rescheduleCount' in booking &&
+          typeof booking.rescheduleCount === 'number' &&
+          booking.rescheduleCount > 0
+          ? {
+              originalBookingStartAt:
+                'originalBookingStartAt' in booking ? booking.originalBookingStartAt : null,
+              applyRescheduleAnchor: true,
+            }
+          : undefined,
       ),
     );
   }
@@ -167,6 +186,30 @@ export function toPublicBookingSummary(booking: BookingWithRelations): PublicBoo
     currency: booking.currency,
     createdAt: booking.createdAt.toISOString(),
     cancelledAt: booking.cancelledAt?.toISOString() ?? null,
+    cancellationReasonCode: booking.cancellationReasonCode ?? null,
+    visitOutcome: booking.visitOutcome ?? null,
+    visitOutcomeAt: booking.visitOutcomeAt?.toISOString() ?? null,
+    visitLifecycle: (() => {
+      const start = resolveBookingPeriodStart(booking.bookingStartAt, booking.slot.date);
+      const grace = loadPaymentPolicyConfig().customerNoShowGraceMinutes;
+      const proj = resolveVisitLifecycleProjection({
+        bookingStatus: booking.status,
+        visitOutcome: booking.visitOutcome ?? null,
+        cancellationReasonCode: booking.cancellationReasonCode ?? null,
+        checkInStatus: booking.checkInStatus ?? null,
+        bookingStartAt: start,
+        bookingEndAt: booking.bookingEndAt ?? null,
+        slotEndAt: booking.slot.endAt ?? null,
+        slotDate: booking.slot.date,
+        graceMinutes: grace,
+      });
+      return {
+        outcome: proj.outcome,
+        terminal: proj.terminal,
+        displayKey: proj.displayKey,
+        graceDeadlineAt: proj.graceDeadlineAt,
+      };
+    })(),
     paymentStatus: toPaymentDisplayStatus(latestPayment, booking.status),
     paymentId: latestPayment?.id ?? null,
     customerPayableAmount: decimalToNumber(booking.customerPayableTotal),
@@ -248,6 +291,7 @@ export function withBookingOperationsFlags(
     canOpenDispute: boolean;
     canReview?: boolean;
     myReview?: PublicBookingSummary['myReview'];
+    forceMajeureResolution?: PublicBookingSummary['forceMajeureResolution'];
   },
 ): PublicBookingSummary {
   return {
@@ -257,6 +301,7 @@ export function withBookingOperationsFlags(
     canOpenDispute: flags.canOpenDispute,
     canReview: flags.canReview,
     myReview: flags.myReview,
+    forceMajeureResolution: flags.forceMajeureResolution ?? summary.forceMajeureResolution ?? null,
   };
 }
 

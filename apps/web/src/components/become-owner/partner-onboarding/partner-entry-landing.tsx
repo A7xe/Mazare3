@@ -10,7 +10,8 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { sanitizeReturnUrl } from '@mazare3/shared';
+import { FOUNDER_CONFIRMED_LEGAL_IDENTITY } from '@mazare3/shared/legal-identity';
+import { sanitizeReturnUrl } from '@mazare3/shared/safe-return-url';
 import { Button } from '@/components/ui/button';
 import { Link } from '@/i18n/navigation';
 
@@ -42,6 +43,8 @@ function partnerAuthHandoffHref(returnUrl: string): string {
 export function PartnerEntryLanding({ returnUrl, mode, onStart }: Props) {
   const t = useTranslations('becomeOwner');
   const authHref = partnerAuthHandoffHref(returnUrl);
+  const partnershipPhone = FOUNDER_CONFIRMED_LEGAL_IDENTITY.partnershipContactPhone;
+  const opsEmail = FOUNDER_CONFIRMED_LEGAL_IDENTITY.projectOperationalEmail;
 
   return (
     <div className="space-y-10 sm:space-y-12" data-testid="partner-entry-landing">
@@ -62,12 +65,42 @@ export function PartnerEntryLanding({ returnUrl, mode, onStart }: Props) {
         <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-[#53637A] sm:text-base">
           {t('entry.supporting')}
         </p>
-        <p
-          className="mt-2 max-w-xl text-[13px] font-medium text-[#0D2046]/85"
-          data-testid="become-owner-entry-bridge"
-        >
+        <p className="mt-2 max-w-xl text-[13px] font-medium text-[#0D2046]/85" data-testid="become-owner-entry-bridge">
           {t('entryBridge')}
         </p>
+
+        {(partnershipPhone || opsEmail) && (
+          <div
+            className="mt-5 max-w-xl rounded-2xl border border-[#DCE6F5] bg-white/80 px-4 py-3 text-sm text-[#53637A]"
+            data-testid="partner-partnership-contact"
+          >
+            <p className="font-semibold text-[#0D2046]">{t('partnershipContact.title')}</p>
+            <p className="mt-1">{t('partnershipContact.lead')}</p>
+            {partnershipPhone ? (
+              <p className="mt-2 font-medium text-[#0D2046]" dir="ltr">
+                <a
+                  className="hover:underline"
+                  href={`tel:${partnershipPhone.replace(/\s+/g, '')}`}
+                  data-testid="partner-partnership-phone"
+                >
+                  {partnershipPhone}
+                </a>
+              </p>
+            ) : null}
+            {opsEmail ? (
+              <p className="mt-1">
+                <a
+                  className="text-primary hover:underline"
+                  href={`mailto:${opsEmail}`}
+                  data-testid="partner-ops-email"
+                >
+                  {opsEmail}
+                </a>
+              </p>
+            ) : null}
+            <p className="mt-2 text-[12px] text-[#7A879B]">{t('partnershipContact.hoursNote')}</p>
+          </div>
+        )}
 
         {mode === 'guest' ? (
           <div

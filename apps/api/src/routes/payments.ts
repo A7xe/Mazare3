@@ -11,16 +11,20 @@ import {
   requireRole,
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
+import { requireTermsAcceptance } from '../middleware/require-terms-acceptance.js';
 import { AppError, formatZodErrors } from '../lib/errors.js';
 import {
   acknowledgeBrowserPaymentReturn,
   createManagedFormPayment,
   createPaymentIntent,
+  createRescheduleDifferencePaymentIntent,
   createSavedCardPayment,
   getPaymentForUser,
   simulatePaymentFailure,
   simulatePaymentSuccess,
 } from '../services/payment.service.js';
+import { z } from 'zod';
+import { PAYMENT_METHODS } from '@mazare3/shared';
 
 export const paymentsRouter = Router();
 
@@ -28,6 +32,7 @@ paymentsRouter.use(requireAuth, attachUser, requireRole('customer'));
 
 paymentsRouter.post(
   '/create-intent',
+  requireTermsAcceptance,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const parsed = createPaymentIntentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -39,12 +44,44 @@ paymentsRouter.post(
   }),
 );
 
+const createRescheduleDifferenceSchema = z.object({
+  rescheduleRequestId: z.string().min(1),
+  method: z.enum(PAYMENT_METHODS),
+  idempotencyKey: z.string().min(8).max(64).optional(),
+  contactEmail: z.string().trim().min(3).max(254).optional(),
+  contactPhone: z.string().trim().min(8).max(32).optional(),
+});
+
+paymentsRouter.post(
+  '/reschedule-difference',
+  requireTermsAcceptance,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = createRescheduleDifferenceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await createRescheduleDifferencePaymentIntent(
+      req.session!.userId,
+      parsed.data.rescheduleRequestId,
+      parsed.data.method,
+      req,
+      {
+        idempotencyKey: parsed.data.idempotencyKey,
+        contactEmail: parsed.data.contactEmail,
+        contactPhone: parsed.data.contactPhone,
+      },
+    );
+    res.status(201).json({ data });
+  }),
+);
+
 /**
  * CB-4 Managed Form — temporary payment_token from paylib only.
  * Never accepts PAN/CVV/amount/purpose from the client.
  */
 paymentsRouter.post(
   '/managed-form',
+  requireTermsAcceptance,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const parsed = createManagedFormPaymentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -61,6 +98,7 @@ paymentsRouter.post(
  */
 paymentsRouter.post(
   '/saved-card',
+  requireTermsAcceptance,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const parsed = createSavedCardPaymentSchema.safeParse(req.body);
     if (!parsed.success) {

@@ -13,6 +13,11 @@ import {
   previewPartnerCommercialTermsSchema,
   requestPartnerChangesSchema,
   reviewPartnerPayoutSchema,
+  adminIncidentActionSchema,
+  adminForceMajeureSchema,
+  adminWaivePenaltySchema,
+  adminPropertyAuthorityDecisionSchema,
+  adminRegulatoryDecisionSchema,
 } from '@mazare3/shared';
 import { asyncHandler } from '../middleware/error-handler.js';
 import { requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
@@ -34,6 +39,17 @@ import {
   patchAdminPropertyVerification,
   patchAdminUserStatus,
 } from '../services/admin.service.js';
+import {
+  adminGetPropertyAuthority,
+  adminDecidePropertyAuthority,
+  adminStreamAuthorityDocument,
+} from '../services/property-authority.service.js';
+import {
+  adminGetPropertyRegulatory,
+  adminDecideRegulatoryRequirement,
+  adminStreamRegulatoryEvidence,
+  bootstrapActivitiesFromPropertyFlags,
+} from '../services/property-regulatory.service.js';
 import {
   disableAdminPromotion,
   listAdminPropertyPromotions,
@@ -86,6 +102,17 @@ import {
   suspendPartner,
 } from '../services/partner-admin.service.js';
 import { listAdminPayments } from '../services/payment.service.js';
+import { auditCommercialTermsDrift } from '../services/commercial-terms.service.js';
+import {
+  listAdminBookingIncidents,
+  listAdminOwnerAdjustments,
+  adminConfirmCustomerNoShow,
+  adminConfirmOwnerFaultArrival,
+  adminRejectIncident,
+  adminClassifyForceMajeure,
+  waiveOwnerPenaltyAdjustment,
+  adminApproveExtraReschedule,
+} from '../services/marketplace-fairness-admin.service.js';
 import { reconcilePayTabsPayment } from '../services/paytabs-reconciliation.service.js';
 import {
   listAdminRefundRequests,
@@ -465,6 +492,18 @@ adminRouter.post(
   }),
 );
 
+/** Phase 3C.4D.7A — Admin payout beneficiary review bundle (sensitive; authorised admin only). */
+adminRouter.get(
+  '/partners/:id/payout-beneficiary',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { getAdminPayoutBeneficiaryReviewBundle } = await import(
+      '../services/payout-beneficiary.service.js'
+    );
+    const data = await getAdminPayoutBeneficiaryReviewBundle(req.params.id!);
+    res.json({ data });
+  }),
+);
+
 adminRouter.post(
   '/partners/:id/approve',
   asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -603,6 +642,166 @@ adminRouter.get(
       return;
     }
     res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/properties/:id/authority',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const data = await adminGetPropertyAuthority(id);
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/properties/:id/authority/decision',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const parsed = adminPropertyAuthorityDecisionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminDecidePropertyAuthority(
+      req.session!.userId,
+      id,
+      parsed.data,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/properties/:id/authority/documents/:docId/file',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const docId = req.params.docId;
+    if (!docId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Document id is required');
+    }
+    const { doc, buffer } = await adminStreamAuthorityDocument(docId);
+    res.setHeader('Content-Type', doc.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(doc.originalFileName)}"`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  }),
+);
+
+/** Phase 3C.4D.4A — Regulatory compliance (distinct from KYC / authority / platform verification) */
+adminRouter.get(
+  '/properties/:id/regulatory',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const data = await adminGetPropertyRegulatory(id);
+    res.json({ data });
+  }),
+);
+
+/** Phase 3C.4D.4B — publication + new-Booking eligibility package */
+adminRouter.get(
+  '/properties/:id/bookability',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { getPropertyBookabilityAdminPackage } = await import(
+      '../services/property-bookability.service.js'
+    );
+    const data = await getPropertyBookabilityAdminPackage(id);
+    res.json({ data });
+  }),
+);
+
+/** Phase 3C.4D.4B — read-only regulatory gate preflight (no mutations) */
+adminRouter.get(
+  '/regulatory-gate/preflight',
+  asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const { runRegulatoryGatePreflightReport } = await import(
+      '../services/property-bookability.service.js'
+    );
+    const data = await runRegulatoryGatePreflightReport();
+    res.json({ data });
+  }),
+);
+
+/** Phase 3C.4D.5 — Admin pool safety review (distinct from KYC / authority / platform verification) */
+adminRouter.get(
+  '/properties/:id/pool-safety',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { adminGetPoolSafety } = await import('../services/property-pool-safety.service.js');
+    const data = await adminGetPoolSafety(id);
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/pool-safety/preflight',
+  asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const { runPoolSafetyPreflightReport } = await import(
+      '../services/property-pool-safety.service.js'
+    );
+    const data = await runPoolSafetyPreflightReport();
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/properties/:id/regulatory/bootstrap-activities',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const data = await bootstrapActivitiesFromPropertyFlags(id, req.session!.userId, req);
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/properties/:id/regulatory/requirements/:requirementId/decision',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    const requirementId = req.params.requirementId;
+    if (!id || !requirementId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property and requirement ids are required');
+    }
+    const parsed = adminRegulatoryDecisionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminDecideRegulatoryRequirement(
+      req.session!.userId,
+      id,
+      requirementId,
+      parsed.data,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/properties/:id/regulatory/evidence/:evidenceId/file',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const evidenceId = req.params.evidenceId;
+    if (!evidenceId) throw new AppError(400, 'VALIDATION_ERROR', 'Evidence id is required');
+    const { evidence, buffer } = await adminStreamRegulatoryEvidence(evidenceId);
+    res.setHeader('Content-Type', evidence.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(evidence.originalFileName)}"`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
   }),
 );
 
@@ -774,6 +973,20 @@ adminRouter.get(
   }),
 );
 
+/** Phase 3C.4D.6 — Admin compare Booking-time snapshot vs current listing. */
+adminRouter.get(
+  '/bookings/:id/listing-snapshot',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Booking id is required');
+    const { getAdminListingSnapshotComparison } = await import(
+      '../services/booking-listing-snapshot.service.js'
+    );
+    const data = await getAdminListingSnapshotComparison(id);
+    res.json({ data });
+  }),
+);
+
 adminRouter.get(
   '/availability',
   asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -884,6 +1097,128 @@ adminRouter.patch(
       throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
     }
     const data = await patchAdminDispute(req.session!.userId, id, parsed.data, req);
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/marketplace-fairness/incidents',
+  asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const data = await listAdminBookingIncidents();
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/incidents/:id/confirm-no-show',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = adminIncidentActionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminConfirmCustomerNoShow({
+      adminUserId: req.session!.userId,
+      incidentId: req.params.id!,
+      adminNote: parsed.data.adminNote,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/incidents/:id/confirm-owner-fault',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = adminIncidentActionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminConfirmOwnerFaultArrival({
+      adminUserId: req.session!.userId,
+      incidentId: req.params.id!,
+      adminNote: parsed.data.adminNote,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/incidents/:id/reject',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = adminIncidentActionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminRejectIncident({
+      adminUserId: req.session!.userId,
+      incidentId: req.params.id!,
+      adminNote: parsed.data.adminNote ?? 'Rejected',
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/force-majeure',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = adminForceMajeureSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await adminClassifyForceMajeure({
+      adminUserId: req.session!.userId,
+      ...parsed.data,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/marketplace-fairness/owner-adjustments',
+  asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const data = await listAdminOwnerAdjustments();
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/owner-adjustments/:id/waive',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = adminWaivePenaltySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await waiveOwnerPenaltyAdjustment({
+      adjustmentId: req.params.id!,
+      adminUserId: req.session!.userId,
+      reason: parsed.data.reason,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.post(
+  '/marketplace-fairness/bookings/:id/approve-extra-reschedule',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
+    const data = await adminApproveExtraReschedule({
+      adminUserId: req.session!.userId,
+      bookingId: req.params.id!,
+      reason,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+adminRouter.get(
+  '/marketplace-fairness/commercial-terms-audit',
+  asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const data = await auditCommercialTermsDrift();
     res.json({ data });
   }),
 );

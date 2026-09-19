@@ -66,6 +66,116 @@ enum PartnerDocumentType {
   business_registration
   payout_proof
   other
+  /// Phase 3C.4D.3 — authority evidence when listing on behalf of another party
+  representation_authority
+  /// Phase 3C.4D.3 — lease/sublease authority evidence (declared; not legal sufficiency)
+  lease_or_sublease_authority
+}
+
+/// Phase 3C.4D.3 — contracting operator entity kind (not PartnerEntityType coarse UX)
+enum OperatorEntityKind {
+  individual
+  sole_establishment
+  legal_entity
+}
+
+/// How the account holder relates to the contracting operator
+enum AccountHolderOperatorRelation {
+  is_contracting_party
+  acts_for_entity
+  authorised_representative
+  authorised_manager
+}
+
+/// Declared relationship: who owns the Property (Owner-declared, not verified title)
+enum DeclaredPropertyOwnerRelation {
+  same_as_contracting_operator
+  other_individual
+  legal_entity
+  other
+}
+
+/// Declared basis for offering the Property on Mazare3
+enum PropertyAuthorityBasis {
+  owner
+  authorised_manager
+  authorised_representative
+  lessee
+  sublessee
+  other
+}
+
+/// Property-level authority review — distinct from KYC / platform verification / PropertyStatus
+enum PropertyAuthorityReviewStatus {
+  not_submitted
+  under_review
+  action_required
+  approved
+  rejected
+  reassessment_required
+}
+
+/// Phase 3C.4D.4A — controlled Property activity taxonomy (multi-select)
+enum PropertyActivityCode {
+  day_use
+  overnight_accommodation
+  events
+  swimming_pool
+  food_service
+  other
+}
+
+/// Regulatory requirement category — assessment need, NOT automatic legal obligation
+enum RegulatoryRequirementType {
+  tourism_regulatory_status
+  municipal_or_professional_licence
+  pool_regulatory_assessment
+  civil_liability_insurance
+  other
+}
+
+/// Applicability decided by Mazare3/admin — Owner cannot set not_applicable_confirmed
+enum RegulatoryApplicability {
+  unassessed
+  applicable
+  not_applicable_confirmed
+  regulatory_confirmation_required
+}
+
+/// Phase 3C.4D.5 — water feature kind (only swimming_pool triggers pool regulatory assessment)
+enum PoolWaterFeatureKind {
+  swimming_pool
+  children_pool
+  jacuzzi_hot_tub
+  decorative_water_feature
+  agricultural_reservoir_or_tank
+  other
+}
+
+enum PoolSeasonality {
+  permanent
+  seasonal
+  unknown
+}
+
+/// Phase 3C.4D.5 — material Property safety disclosure categories (Owner-reported facts)
+enum PropertySafetyDisclosureCategory {
+  access_limitation
+  stairs_accessibility
+  open_water_hazard
+  child_restriction
+  construction_maintenance
+  other
+}
+
+/// Compliance/review status for an applicable (or pending) requirement
+enum RegulatoryComplianceStatus {
+  not_assessed
+  under_review
+  action_required
+  verified
+  rejected
+  expired
 }
 
 enum OwnerDocumentReviewStatus {
@@ -80,6 +190,25 @@ enum OwnerPayoutReviewStatus {
   pending
   reviewed
   rejected
+  /// Owner must fix details (non-sensitive reason shown)
+  action_required
+  /// Material OperatorParty or beneficiary change — admin must re-approve
+  reassessment_required
+}
+
+/// Phase 3C.4D.7A — beneficiary relationship to Contracting OperatorParty
+enum PayoutBeneficiaryRelationship {
+  operator_self
+  operator_legal_entity
+  authorised_third_party
+  other_review_required
+}
+
+/// Review-oriented name comparison hint — NOT legal identity proof
+enum PayoutBeneficiaryNameMatchHint {
+  match_likely
+  review_required
+  clear_mismatch
 }
 
 enum PartnerAgreementStatus {
@@ -146,6 +275,7 @@ enum AvailabilitySlotStatus {
   available
   blocked
   booked
+  held
 }
 
 enum AvailabilitySlotSource {
@@ -190,6 +320,7 @@ enum PaymentPurpose {
   full
   deposit
   balance
+  reschedule_difference
 }
 
 enum PaymentStatus {
@@ -239,12 +370,123 @@ enum RefundRequestStatus {
   cancelled
 }
 
+/// Phase 3C.4E.2A — per-capture refund execution status (Booking-level RefundRequest remains the obligation).
+enum RefundAllocationStatus {
+  pending
+  succeeded
+  failed
+  cancelled
+}
+
 enum DisputeType {
   property_mismatch
   owner_cancelled
   access_problem
   cleanliness_issue
   other
+  customer_no_show
+  owner_no_show
+  force_majeure
+}
+
+enum CheckInStatus {
+  not_open
+  available
+  verified
+  disputed
+  expired
+}
+
+/// Phase 3C.4E.4B — terminal visit/service outcome (orthogonal to Booking.status).
+/// Legacy rows remain null — do not fabricate historical outcomes.
+enum BookingVisitOutcome {
+  pending_visit
+  checked_in
+  completed
+  customer_no_show
+  owner_no_show
+  access_denied
+  force_majeure
+  disputed
+  resolved_other
+}
+
+enum OwnerCancellationReason {
+  property_unavailable
+  owner_emergency
+  maintenance_failure
+  double_booking_owner_fault
+  property_damage
+  access_problem
+  force_majeure
+  other
+}
+
+enum BookingIncidentType {
+  customer_no_show_report
+  owner_no_show_report
+  access_denied_report
+  property_unavailable_report
+  force_majeure
+  check_in_dispute
+}
+
+enum BookingIncidentStatus {
+  open
+  under_review
+  confirmed
+  rejected
+  resolved
+}
+
+/// Phase 3C.4A.3 — explicit Customer force-majeure resolution election (never inferred).
+enum ForceMajeureCustomerChoice {
+  FULL_REFUND
+  EQUIVALENT_RESCHEDULE
+}
+
+enum OwnerReliabilityCategory {
+  owner_cancel
+  owner_no_show
+  access_denied
+  approval_timeout
+  force_majeure
+  admin_confirmed
+  waived
+}
+
+enum OwnerFinancialAdjustmentStatus {
+  pending
+  applied
+  waived
+}
+
+enum OwnerFinancialAdjustmentType {
+  owner_cancel_penalty
+  owner_no_show_penalty
+  access_denied_penalty
+  other
+}
+
+enum BookingRescheduleRequestStatus {
+  pending
+  accepted
+  accepted_pending_payment
+  rejected
+  cancelled
+  expired
+}
+
+enum BookingRescheduleRequestedBy {
+  customer
+  owner
+  admin
+}
+
+enum Mazare3GoodwillCreditStatus {
+  pending
+  issued
+  cancelled
 }
 
 enum DisputeStatus {
@@ -348,6 +590,8 @@ model User {
   role             UserRole   @default(customer)
   status           UserStatus @default(active)
   locale           String     @default("ar")
+  /// Phase 3C.4B.1.3 — elevated admin (grants all privacy_breach_* capabilities).
+  superAdmin       Boolean    @default(false)
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
 
@@ -368,6 +612,23 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   authIdentities         AuthIdentity[]
   savedPaymentMethods    SavedPaymentMethod[]
+  bookingIncidentsOpened BookingIncident[] @relation("BookingIncidentOpenedBy")
+  bookingIncidentFmChoices BookingIncident[] @relation("BookingIncidentFmChoiceBy")
+  rescheduleRequestsMade BookingRescheduleRequest[] @relation("RescheduleRequestedBy")
+  goodwillCreditsIssued    Mazare3GoodwillCredit[] @relation("GoodwillCreditAdmin")
+  goodwillCreditsReceived  Mazare3GoodwillCredit[] @relation("GoodwillCreditCustomer")
+  legalAcceptances         LegalAcceptance[]
+  privacyConsents          PrivacyConsent[]
+  dataProcessingConsents   DataProcessingConsent[]
+  personalDataTransferRegisterEntries PersonalDataTransferRegisterEntry[]
+  dataSubjectRequests      DataSubjectRequest[]
+  commercialTermsAcceptances CommercialTermsAcceptance[] @relation("CommercialTermsAcceptedBy")
+  personalDataBreachesReported PersonalDataBreachIncident[] @relation("BreachReportedBy")
+  personalDataBreachesReviewed PersonalDataBreachIncident[] @relation("BreachReviewedBy")
+  capabilityGrants             UserCapabilityGrant[] @relation("CapabilityGrantUser")
+  capabilityGrantsIssued       UserCapabilityGrant[] @relation("CapabilityGrantIssuer")
+  breachRecipientNoticesActed  PersonalDataBreachRecipientNotice[] @relation("BreachRecipientNoticeActor")
+  breachDeadlineHistoriesReviewed PersonalDataBreachDeadlineHistory[] @relation("BreachDeadlineHistoryReviewer")
   // LoginAbuseState is keyed by HMAC(email), not userId — no User relation.
 
   @@index([role])
@@ -491,8 +752,14 @@ model OwnerProfile {
   payoutProfile        OwnerPayoutProfile?
   agreementAcceptances PartnerAgreementAcceptance[]
   commercialTerms      PartnerCommercialTerms[]
+  commercialTermsAcceptances CommercialTermsAcceptance[]
   changeRequests       OwnerOnboardingChangeRequest[]
   sponsorshipOrders    SponsoredPlacementOrder[]
+  reliabilityIncidents OwnerReliabilityIncident[]
+  financialAdjustments OwnerFinancialAdjustment[]
+  legalAcceptances     LegalAcceptance[]
+  operatorParties      OperatorParty[]
+  ownerAttestations    OwnerAttestation[]
 }
 
 model Property {
@@ -551,10 +818,29 @@ model Property {
   reviewRejectionReason    String?   @db.Text
   /// When the property was rejected (server-set on rejection).
   reviewRejectedAt         DateTime?
+  /// Phase 3C.4D.3 — contracting operator party (nullable on legacy/draft)
+  contractingOperatorPartyId String?
+  /// Declared Property owner party when not same as contracting operator
+  declaredPropertyOwnerPartyId String?
+  declaredPropertyOwnerRelation DeclaredPropertyOwnerRelation?
+  authorityBasis            PropertyAuthorityBasis?
+  authorityReviewStatus     PropertyAuthorityReviewStatus @default(not_submitted)
+  authorityReviewReason     String?   @db.Text
+  authorityReviewedAt       DateTime?
+  authorityReviewedByUserId String?
+  authorityAttestedAt       DateTime?
+  authorityAttestationVersion String?
+  authorityAttestedByUserId String?
+  /// Phase 3C.4D.5 — pool safety disclosure attestation (not regulatory verification)
+  poolSafetyAttestedAt         DateTime?
+  poolSafetyAttestationVersion String?
+  poolSafetyAttestedByUserId   String?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
   owner     OwnerProfile      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contractingOperator OperatorParty? @relation("PropertyContractingOperator", fields: [contractingOperatorPartyId], references: [id], onDelete: SetNull)
+  declaredPropertyOwner OperatorParty? @relation("PropertyDeclaredOwner", fields: [declaredPropertyOwnerPartyId], references: [id], onDelete: SetNull)
   media     PropertyMedia[]
   amenities PropertyAmenity[]
   rules     PropertyRule[]
@@ -569,10 +855,18 @@ model Property {
   platformCoupons   PlatformCoupon[]
   placements        PropertyPlacement[]
   sponsorshipOrders SponsoredPlacementOrder[]
+  authorityReviewEvents PropertyAuthorityReviewEvent[]
+  ownerAttestations     OwnerAttestation[]
+  activities            PropertyActivity[]
+  regulatoryRequirements PropertyRegulatoryRequirement[]
+  poolSafetyProfile     PropertyPoolSafetyProfile?
+  safetyDisclosures     PropertySafetyDisclosure[]
 
   @@index([city, status])
   @@index([status, verificationStatus])
   @@index([slug])
+  @@index([authorityReviewStatus])
+  @@index([contractingOperatorPartyId])
 }
 
 model PropertyMedia {
@@ -587,11 +881,14 @@ model PropertyMedia {
   altEn              String?
   sortOrder          Int                @default(0)
   verificationStatus VerificationStatus @default(owner_uploaded)
+  /// Phase 3C.4D.6 — soft-remove from live listing; keep row for Booking snapshot evidence
+  removedFromListingAt DateTime?
   createdAt          DateTime           @default(now())
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@index([propertyId, sortOrder])
+  @@index([propertyId, removedFromListingAt])
 }
 
 model PropertyPromotion {
@@ -918,9 +1215,23 @@ model Booking {
   cancelledAt        DateTime?
   /// Phase 1 — machine-readable cancel reason (e.g. BALANCE_NOT_PAID, CUSTOMER_CANCEL).
   cancellationReasonCode String?
+  /// Phase 2 — original start before customer reschedule (anti-abuse anchor).
+  originalBookingStartAt DateTime?
+  latestRescheduledAt    DateTime?
+  rescheduleCount        Int            @default(0)
+  checkInStatus          CheckInStatus  @default(not_open)
+  checkInCodeHash        String?
+  checkInCodeSalt        String?
+  checkInVerifiedAt      DateTime?
+  checkInExpiresAt       DateTime?
+  /// Phase 3C.4E.4B — terminal visit outcome (null = legacy / not yet resolved).
+  visitOutcome           BookingVisitOutcome?
+  visitOutcomeAt         DateTime?
+  visitOutcomeSource     String?
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  property Property         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  /// Restrict: historical Bookings must retain Property identity; snapshot remains even if listing archived.
+  property Property         @relation(fields: [propertyId], references: [id], onDelete: Restrict)
   slot     AvailabilitySlot @relation(fields: [availabilitySlotId], references: [id], onDelete: Restrict)
   promotion PropertyPromotion? @relation(fields: [promotionId], references: [id], onDelete: SetNull)
   coupon    PropertyCoupon?    @relation(fields: [couponId], references: [id], onDelete: SetNull)
@@ -933,6 +1244,14 @@ model Booking {
   review         Review?
   couponRedemption CouponRedemption?
   platformCouponRedemption PlatformCouponRedemption?
+  incidents          BookingIncident[]
+  rescheduleRequests BookingRescheduleRequest[]
+  goodwillCredits    Mazare3GoodwillCredit[]
+  ownerAdjustments   OwnerFinancialAdjustment[]
+  legalSnapshot      BookingLegalSnapshot?
+  legalAcceptances   LegalAcceptance[]
+  /// Phase 3C.4D.6 — immutable Booking-time listing snapshot(s)
+  propertySnapshots  BookingPropertySnapshot[]
 
   @@index([userId, status])
   @@index([propertyId])
@@ -945,6 +1264,10 @@ model Booking {
   @@index([promotionId])
   @@index([couponId])
   @@index([platformCouponId])
+  @@index([visitOutcome, status])
+  // Phase 3C.4E.3 — PostgreSQL partial unique index (SQL migration, not Prisma @@unique):
+  // Booking_one_holding_per_availability_slot ON (availabilitySlotId)
+  // WHERE status IN (pending_owner_approval, pending_payment, pending, confirmed)
 }
 
 model Review {
@@ -990,6 +1313,8 @@ model Payment {
   cancellationRefundAmount   Decimal?      @db.Decimal(10, 2)
   cancellationPenaltyAmount  Decimal?      @db.Decimal(10, 2)
   refundStatus               RefundStatus  @default(none)
+  /// Phase 3A — links delta payment to an accepted_pending_payment reschedule.
+  rescheduleRequestId String?
   idempotencyKey String?         @unique
   providerRef    String?
   expiresAt      DateTime?
@@ -1002,12 +1327,14 @@ model Payment {
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   events         PaymentEvent[]
   refundRequests RefundRequest[]
+  refundAllocations RefundPaymentAllocation[]
   payoutRecord   OwnerPayout?
 
   @@index([bookingId, status])
   @@index([bookingId, purpose, status])
   @@index([userId])
   @@index([status])
+  @@index([rescheduleRequestId])
 }
 
 model PaymentEvent {
@@ -1057,24 +1384,54 @@ model SavedPaymentMethod {
 model RefundRequest {
   id                 String              @id @default(cuid())
   bookingId          String
+  /// Anchor payment (newest eligible capture at creation). Execution uses RefundPaymentAllocation rows.
   paymentId          String
   customerId         String
   reason             String              @db.Text
   policyRefundAmount Decimal             @db.Decimal(10, 2)
   requestedAmount    Decimal             @db.Decimal(10, 2)
   approvedAmount     Decimal?            @db.Decimal(10, 2)
+  /// Phase 3C.4E.2A — sum of succeeded allocation refunds (fils-safe Decimal).
+  refundedAmount     Decimal             @default(0) @db.Decimal(10, 2)
   status             RefundRequestStatus @default(pending)
   adminNote          String?             @db.Text
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
-  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  customer User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  booking     Booking                   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment     Payment                   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  customer    User                      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  allocations RefundPaymentAllocation[]
 
   @@index([bookingId, status])
   @@index([customerId, status])
   @@index([paymentId])
+}
+
+/// Phase 3C.4E.2A — allocates a Booking-level RefundRequest across one or more captured Payments.
+model RefundPaymentAllocation {
+  id                 String                 @id @default(cuid())
+  refundRequestId    String
+  paymentId          String
+  allocatedAmount    Decimal                @db.Decimal(10, 2)
+  refundedAmount     Decimal                @default(0) @db.Decimal(10, 2)
+  status             RefundAllocationStatus @default(pending)
+  /// Provider refund tran_ref when known.
+  providerRefundRef  String?
+  idempotencyKey     String                 @unique
+  attemptCount       Int                    @default(0)
+  lastError          String?                @db.Text
+  lastAttemptAt      DateTime?
+  succeededAt        DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  refundRequest RefundRequest @relation(fields: [refundRequestId], references: [id], onDelete: Cascade)
+  payment       Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([refundRequestId, paymentId])
+  @@index([paymentId, status])
+  @@index([refundRequestId, status])
 }
 
 model Dispute {
@@ -1168,6 +1525,7 @@ model OwnerSettlement {
 
   owner OwnerProfile          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   items OwnerSettlementItem[]
+  financialAdjustments OwnerFinancialAdjustment[]
 
   @@index([ownerId, status])
   @@index([status])
@@ -1201,6 +1559,8 @@ model OwnerVerificationProfile {
   id                           String                     @id @default(cuid())
   ownerProfileId               String                     @unique
   entityType                   PartnerEntityType?
+  /// Phase 3C.4D.3 — how account holder relates to contracting operator
+  accountHolderRelation        AccountHolderOperatorRelation?
   verificationStatus           PartnerVerificationStatus  @default(draft)
   legalName                    String?
   operatingPhone               String?
@@ -1251,6 +1611,8 @@ model PartnerDocumentRequirement {
 model OwnerDocument {
   id               String                    @id @default(cuid())
   ownerProfileId   String
+  /// Phase 3C.4D.3 — optional Property scope for authority evidence (null = owner-level KYC)
+  propertyId       String?
   requirementId    String?
   documentType     PartnerDocumentType
   originalFileName String
@@ -1269,7 +1631,211 @@ model OwnerDocument {
   owner OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
 
   @@index([ownerProfileId, documentType])
+  @@index([propertyId, documentType])
   @@index([reviewStatus])
+}
+
+/// Phase 3C.4D.3 — contracting / declared owner party (account holder is User, not this row)
+model OperatorParty {
+  id                     String             @id @default(cuid())
+  ownerProfileId         String
+  entityKind             OperatorEntityKind
+  legalName              String
+  registrationNumber     String?
+  registrationAuthority  String?
+  country                String             @default("JO")
+  contactEmail           String?
+  contactPhone           String?
+  /// Default contracting operator for this OwnerProfile (at most one intended)
+  isDefaultContractingOperator Boolean      @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  owner OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  contractingForProperties Property[] @relation("PropertyContractingOperator")
+  declaredOwnerForProperties Property[] @relation("PropertyDeclaredOwner")
+  payoutProfilesAsContractingOperator OwnerPayoutProfile[]
+
+  @@index([ownerProfileId])
+  @@index([ownerProfileId, isDefaultContractingOperator])
+}
+
+/// Recorded Owner attestation (not a substitute for evidence review)
+model OwnerAttestation {
+  id                      String   @id @default(cuid())
+  userId                  String
+  ownerProfileId          String
+  propertyId              String?
+  attestationKey          String
+  attestationCorpusVersion String
+  sourceSurface           String?
+  acceptedAt              DateTime @default(now())
+  createdAt               DateTime @default(now())
+
+  owner    OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  property Property?    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([ownerProfileId, attestationKey])
+  @@index([propertyId, attestationKey])
+  @@index([userId])
+}
+
+/// Append-only authority review decisions
+model PropertyAuthorityReviewEvent {
+  id                   String                       @id @default(cuid())
+  propertyId           String
+  previousStatus       PropertyAuthorityReviewStatus
+  newStatus            PropertyAuthorityReviewStatus
+  actorUserId          String
+  reasonCategory       String?
+  reasonText           String?                      @db.Text
+  evidenceDocumentIds  Json?
+  createdAt            DateTime                     @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@index([actorUserId])
+}
+
+/// Phase 3C.4D.4A — multi-select activity profile (not a licence decision)
+model PropertyActivity {
+  id              String              @id @default(cuid())
+  propertyId      String
+  activityCode    PropertyActivityCode
+  /// Short free-text only when activityCode = other
+  otherDescription String?
+  active          Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, activityCode])
+  @@index([propertyId, active])
+  @@index([activityCode])
+}
+
+/// Property-scoped regulatory requirement instance
+model PropertyRegulatoryRequirement {
+  id                 String                     @id @default(cuid())
+  propertyId         String
+  requirementType    RegulatoryRequirementType
+  applicability      RegulatoryApplicability    @default(unassessed)
+  complianceStatus   RegulatoryComplianceStatus @default(not_assessed)
+  issuingAuthority   String?
+  referenceNumber    String?
+  issueDate          DateTime?
+  validFrom          DateTime?
+  expiresAt          DateTime?
+  reviewReason       String?                    @db.Text
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  verifiedAt         DateTime?
+  /// Soft flag when activity/operator/location change requires re-check
+  reassessmentRequired Boolean                  @default(false)
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  evidence RegulatoryEvidence[]
+  decisionEvents RegulatoryDecisionEvent[]
+
+  @@unique([propertyId, requirementType])
+  @@index([propertyId, applicability, complianceStatus])
+  @@index([requirementType])
+  @@index([expiresAt])
+}
+
+/// Private regulatory evidence — storageKey only (reuse partner private storage)
+model RegulatoryEvidence {
+  id               String   @id @default(cuid())
+  requirementId    String
+  uploadedByUserId String
+  originalFileName String
+  storageKey       String
+  mimeType         String
+  sizeBytes        Int
+  label            String?
+  documentNumber   String?
+  issuerName       String?
+  issueDate        DateTime?
+  expiresAt        DateTime?
+  superseded       Boolean  @default(false)
+  supersededById   String?
+  uploadedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  requirement PropertyRegulatoryRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId, superseded])
+  @@index([expiresAt])
+}
+
+/// Append-only regulatory applicability/status decisions
+model RegulatoryDecisionEvent {
+  id                     String                      @id @default(cuid())
+  requirementId          String
+  propertyId             String
+  previousApplicability  RegulatoryApplicability
+  newApplicability       RegulatoryApplicability
+  previousComplianceStatus RegulatoryComplianceStatus
+  newComplianceStatus    RegulatoryComplianceStatus
+  actorUserId            String
+  reasonCategory         String?
+  reasonText             String?                     @db.Text
+  evidenceIds            Json?
+  createdAt              DateTime                    @default(now())
+
+  requirement PropertyRegulatoryRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId, createdAt])
+  @@index([propertyId, createdAt])
+  @@index([actorUserId])
+}
+
+/// Phase 3C.4D.5 — Owner-reported pool / water-feature safety profile (not government certification)
+model PropertyPoolSafetyProfile {
+  id                              String               @id @default(cuid())
+  propertyId                      String               @unique
+  waterFeatureKind                PoolWaterFeatureKind @default(swimming_pool)
+  /// Indoor / outdoor — optional; may both be true for multi-pool sites
+  isIndoor                        Boolean?
+  isOutdoor                       Boolean?
+  /// Owner-provided approximate depths in metres (not certified measurements)
+  minDepthMeters                  Decimal?             @db.Decimal(4, 2)
+  maxDepthMeters                  Decimal?             @db.Decimal(4, 2)
+  childrenAllowed                 Boolean?
+  childrenRequireAdultSupervision Boolean?
+  seasonality                     PoolSeasonality      @default(unknown)
+  accessRestrictionsAr            String?              @db.Text
+  accessRestrictionsEn            String?              @db.Text
+  otherWarningsAr                 String?              @db.Text
+  otherWarningsEn                 String?              @db.Text
+  /// True when minimum profile fields for swimming_pool submission are complete
+  profileComplete                 Boolean              @default(false)
+  createdAt                       DateTime             @default(now())
+  updatedAt                       DateTime             @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+/// Phase 3C.4D.5 — optional material Property safety/access disclosures (Owner facts)
+model PropertySafetyDisclosure {
+  id             String                           @id @default(cuid())
+  propertyId     String
+  category       PropertySafetyDisclosureCategory
+  descriptionAr  String                           @db.Text
+  descriptionEn  String?                          @db.Text
+  active         Boolean                          @default(true)
+  createdAt      DateTime                         @default(now())
+  updatedAt      DateTime                         @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, active])
+  @@index([category])
 }
 
 model OwnerPayoutProfile {
@@ -1281,14 +1847,50 @@ model OwnerPayoutProfile {
   ibanLast4             String
   ibanFingerprint       String
   optionalNotesCipher   String?                 @db.Text
+  /// Contracting OperatorParty referenced at last material save (not User display name)
+  contractingOperatorPartyId String?
+  beneficiaryRelationship    PayoutBeneficiaryRelationship?
+  /// ISO country for payout rail context (default JO) — not ownership proof
+  payoutCountry              String?            @db.VarChar(2)
+  /// Heuristic only — Admin remains authoritative for approval
+  nameMatchHint              PayoutBeneficiaryNameMatchHint?
   reviewStatus          OwnerPayoutReviewStatus @default(pending)
   reviewReason          String?                 @db.Text
+  /// Controlled category for Owner-visible action-required / reject reasons
+  reviewReasonCategory  String?
   reviewedByUserId      String?
   reviewedAt            DateTime?
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
 
-  owner OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  owner                 OwnerProfile   @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  contractingOperator   OperatorParty? @relation(fields: [contractingOperatorPartyId], references: [id], onDelete: SetNull)
+  reviewEvents          OwnerPayoutBeneficiaryReviewEvent[]
+
+  @@index([reviewStatus])
+  @@index([contractingOperatorPartyId])
+}
+
+/// Append-only payout-beneficiary review / material-change audit (no full IBAN)
+model OwnerPayoutBeneficiaryReviewEvent {
+  id               String   @id @default(cuid())
+  payoutProfileId  String
+  ownerProfileId   String
+  actorUserId      String?
+  previousStatus   String?
+  newStatus        String
+  reasonCategory   String?
+  reason           String?  @db.Text
+  ibanLast4        String?
+  beneficiaryRelationship String?
+  nameMatchHint    String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  payoutProfile OwnerPayoutProfile @relation(fields: [payoutProfileId], references: [id], onDelete: Cascade)
+
+  @@index([payoutProfileId, createdAt])
+  @@index([ownerProfileId, createdAt])
 }
 
 model PartnerAgreement {
@@ -1350,6 +1952,7 @@ model PartnerCommercialTerms {
   owner    OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
   property Property?    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   bookings Booking[]
+  commercialTermsAcceptances CommercialTermsAcceptance[]
 
   @@index([ownerProfileId, status, effectiveFrom])
   @@index([propertyId, status, effectiveFrom])
@@ -1439,4 +2042,807 @@ model NotificationDelivery {
   @@index([status])
   @@index([userId])
   @@index([notificationId])
+}
+
+/// Phase 2 — operational incidents (no-show, access, force majeure).
+model BookingIncident {
+  id              String               @id @default(cuid())
+  bookingId       String
+  type            BookingIncidentType
+  status          BookingIncidentStatus @default(open)
+  openedByUserId  String
+  reason          String?              @db.Text
+  evidenceText    String?              @db.Text
+  adminNote       String?              @db.Text
+  resolvedAt      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  /// Explicit Customer election — never set from Owner/Admin actors.
+  customerResolutionChoice         ForceMajeureCustomerChoice?
+  customerResolutionChosenAt       DateTime?
+  customerResolutionChosenByUserId String?
+  customerResolutionSource         String?
+  customerChosenTargetSlotId       String?
+  customerResolutionInvalidatedAt  DateTime?
+
+  booking  Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  openedBy User    @relation("BookingIncidentOpenedBy", fields: [openedByUserId], references: [id], onDelete: Cascade)
+  customerResolutionChosenBy User? @relation("BookingIncidentFmChoiceBy", fields: [customerResolutionChosenByUserId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status])
+  @@index([type, status])
+  @@index([customerResolutionChosenByUserId])
+}
+
+/// Phase 2 — owner reliability tracking (not public scoring).
+model OwnerReliabilityIncident {
+  id             String                   @id @default(cuid())
+  ownerProfileId String
+  bookingId      String?
+  category       OwnerReliabilityCategory
+  reason         String                   @db.Text
+  penaltyAmount  Decimal?                 @db.Decimal(10, 2)
+  waived         Boolean                  @default(false)
+  waivedReason   String?                  @db.Text
+  waivedAt       DateTime?
+  waivedByUserId String?
+  adminNote      String?                  @db.Text
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  owner OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([ownerProfileId, category])
+  @@index([bookingId])
+}
+
+/// Phase 2 — owner penalty liabilities deducted from future settlements.
+model OwnerFinancialAdjustment {
+  id             String                       @id @default(cuid())
+  ownerProfileId String
+  bookingId      String
+  settlementId   String?
+  type           OwnerFinancialAdjustmentType
+  status         OwnerFinancialAdjustmentStatus @default(pending)
+  amount         Decimal                      @db.Decimal(10, 2)
+  currency       String                       @default("JOD")
+  reason         String                       @db.Text
+  adminNote      String?                      @db.Text
+  appliedAt      DateTime?
+  waivedAt       DateTime?
+  waivedByUserId String?
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+
+  owner      OwnerProfile     @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  booking    Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  settlement OwnerSettlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+
+  @@index([ownerProfileId, status])
+  @@index([bookingId])
+  @@index([settlementId])
+}
+
+/// Phase 2/3A — reschedule request/accept workflow with pricing snapshots.
+model BookingRescheduleRequest {
+  id                  String                       @id @default(cuid())
+  bookingId           String
+  requestedBy         BookingRescheduleRequestedBy
+  requestedByUserId   String
+  status              BookingRescheduleRequestStatus @default(pending)
+  fromSlotId          String
+  toSlotId            String
+  fromMerchantValue   Decimal                      @db.Decimal(10, 2)
+  toMerchantValue     Decimal                      @db.Decimal(10, 2)
+  priceDelta          Decimal                      @db.Decimal(10, 2)
+  /// What the customer pays commercially for the booking after finalize.
+  customerContractedValue Decimal                  @db.Decimal(10, 2)
+  /// What the customer must pay NOW to finalize (0 if owner absorbs; negative = refund).
+  customerPayableDelta    Decimal                  @default(0) @db.Decimal(10, 2)
+  /// Commission basis after finalize.
+  commissionBasisValue    Decimal                  @db.Decimal(10, 2)
+  /// Nominal target slot list price (audit).
+  listToMerchantValue     Decimal?                 @db.Decimal(10, 2)
+  ownerAbsorbsAmount      Decimal                  @default(0) @db.Decimal(10, 2)
+  /// customer_market | owner_price_freeze | force_majeure_equivalent | force_majeure_upgrade
+  pricingMode             String
+  deltaPaymentId          String?                  @unique
+  targetSlotHeldUntil     DateTime?
+  completedAt             DateTime?
+  exemptFromRescheduleLimit Boolean                @default(false)
+  exemptFromCancelAnchor    Boolean                @default(false)
+  respondedAt         DateTime?
+  expiresAt           DateTime?
+  adminNote           String?                      @db.Text
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+
+  booking          Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  requestedByUser  User    @relation("RescheduleRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, status])
+  @@index([requestedByUserId])
+  @@index([status, expiresAt])
+  @@index([status, targetSlotHeldUntil])
+}
+
+/// Phase 2 — optional Mazare3-funded goodwill credit (separate from refund).
+model Mazare3GoodwillCredit {
+  id               String                    @id @default(cuid())
+  customerId       String
+  bookingId        String?
+  amount           Decimal                   @db.Decimal(10, 2)
+  currency         String                    @default("JOD")
+  reason           String                    @db.Text
+  status           Mazare3GoodwillCreditStatus @default(pending)
+  createdByAdminId String?
+  issuedAt         DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  customer       User     @relation("GoodwillCreditCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  booking        Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  createdByAdmin User?    @relation("GoodwillCreditAdmin", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, status])
+  @@index([bookingId])
+}
+
+// ─── Phase 3B — Legal / consent architecture ─────────────────────────────────
+
+enum LegalDocumentType {
+  terms_and_conditions
+  privacy_policy
+  cancellation_refund_policy
+  owner_agreement
+  booking_terms
+  cookie_policy
+  verification_policy
+  community_review_policy
+}
+
+enum LegalDocumentStatus {
+  draft
+  scheduled
+  active
+  superseded
+  archived
+}
+
+enum LegalAcceptanceContext {
+  registration
+  login_reacceptance
+  checkout
+  owner_onboarding
+  owner_agreement_update
+  policy_update
+  privacy_consent
+  marketing_consent
+  commercial_terms_ack
+}
+
+enum LegalAcceptanceEvidenceSource {
+  user_explicit_acceptance
+  system_import_admin_exception
+}
+
+enum PrivacyConsentPurpose {
+  marketing_email
+  marketing_sms
+  personalized_analytics
+  optional_cookies
+}
+
+enum PrivacyConsentStatus {
+  granted
+  withdrawn
+}
+
+/// Phase 3C.4B.1.4 — Jordan PDPL Prior Consent (service purposes). Distinct from optional PrivacyConsent.
+enum DataProcessingConsentPurpose {
+  account_registration_and_authentication
+  marketplace_booking_processing
+  payment_and_refund_processing
+  saved_payment_method_processing
+  support_and_dispute_processing
+  owner_account_and_marketplace_operation
+  owner_identity_and_authority_verification
+  property_and_exact_location_processing
+  owner_payout_and_financial_processing
+}
+
+enum DataProcessingConsentStatus {
+  granted
+  withdrawn
+  superseded
+  expired
+}
+
+enum DataSubjectRequestType {
+  access
+  correction
+  erasure
+  objection
+  portability
+  privacy_inquiry
+  /// Phase 3C.4B.1.1 — distinct privacy complaint (not auto-inquiry)
+  privacy_complaint
+  /// Phase 3C.4B.1 — Jordan rights coverage
+  restriction
+  consent_withdrawal
+}
+
+enum DataSubjectRequestStatus {
+  requested
+  under_review
+  fulfilled
+  partially_fulfilled
+  rejected_with_reason
+}
+
+/// Phase 3C.2 — counsel review gate (Production activation must require approved later).
+enum LegalReviewStatus {
+  not_reviewed
+  under_review
+  approved
+  approved_with_changes
+  rejected
+}
+
+/// Phase 3C.2 — internal founder/business publication approval (not counsel approval).
+enum FounderApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+/// Logical bilingual release (AR/EN share legalReleaseId; each language has its own content hash).
+model LegalRelease {
+  id                   String              @id @default(cuid())
+  documentType         LegalDocumentType
+  version              String
+  status               LegalDocumentStatus @default(draft)
+  requiresReacceptance Boolean             @default(false)
+  materialChange       Boolean             @default(false)
+  changelog            String?             @db.Text
+  summaryOfChanges     String?             @db.Text
+  effectiveAt          DateTime?
+  publishedAt          DateTime?
+  supersededAt         DateTime?
+  createdAt            DateTime            @default(now())
+  createdByUserId      String?
+
+  /// Phase 3C.2 governance — counsel review (do not invent reviewer identity).
+  legalReviewStatus    LegalReviewStatus     @default(not_reviewed)
+  legalReviewedAt      DateTime?
+  legalReviewReference String?
+  legalReviewNote      String?               @db.Text
+  /// Phase 3C.2 — founder/business approval separate from counsel.
+  founderApprovalStatus FounderApprovalStatus @default(pending)
+  founderApprovedAt     DateTime?
+  founderApprovalNote   String?
+
+  versions    LegalDocumentVersion[]
+  acceptances LegalAcceptance[]
+
+  @@unique([documentType, version])
+  @@index([documentType, status])
+}
+
+/// Per-language publication of a LegalRelease. Immutable once active/superseded.
+model LegalDocumentVersion {
+  id              String              @id @default(cuid())
+  releaseId       String
+  documentType    LegalDocumentType
+  version         String
+  /// ar | en
+  language        String
+  title           String
+  content         String              @db.Text
+  contentHash     String
+  status          LegalDocumentStatus @default(draft)
+  publishedAt     DateTime?
+  effectiveAt     DateTime?
+  supersededAt    DateTime?
+  createdAt       DateTime            @default(now())
+  createdByUserId String?
+  /// e.g. static file path used for bootstrap import
+  sourceRef       String?
+
+  release     LegalRelease       @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  acceptances LegalAcceptance[]
+  privacyConsents PrivacyConsent[]
+
+  bookingSnapshotsAsTerms            BookingLegalSnapshot[] @relation("SnapshotTermsVersion")
+  bookingSnapshotsAsCancellation     BookingLegalSnapshot[] @relation("SnapshotCancellationVersion")
+  bookingSnapshotsAsBookingTerms     BookingLegalSnapshot[] @relation("SnapshotBookingTermsVersion")
+  bookingSnapshotsAsPrivacyNotice    BookingLegalSnapshot[] @relation("SnapshotPrivacyNoticeVersion")
+
+  @@unique([releaseId, language])
+  @@index([documentType, language, status])
+  @@index([contentHash])
+}
+
+/// Immutable evidence of explicit acceptance. Core fields are never updated after create.
+model LegalAcceptance {
+  id                   String                        @id @default(cuid())
+  userId               String
+  documentVersionId    String
+  releaseId            String
+  documentType         LegalDocumentType
+  documentVersion      String
+  documentHash         String
+  language             String
+  acceptedAt           DateTime                      @default(now())
+  acceptanceContext    LegalAcceptanceContext
+  relatedBookingId     String?
+  relatedOwnerProfileId String?
+  sourceSurface        String?
+  explicitAction       Boolean                       @default(true)
+  evidenceSource       LegalAcceptanceEvidenceSource @default(user_explicit_acceptance)
+  withdrawnAt          DateTime?
+  /// Conservative metadata — prefer omit raw IP; optional ipHash only when documented.
+  metadata             Json?
+
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  legalDocumentVersion LegalDocumentVersion @relation(fields: [documentVersionId], references: [id], onDelete: Restrict)
+  release              LegalRelease         @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  booking              Booking?             @relation(fields: [relatedBookingId], references: [id], onDelete: SetNull)
+  ownerProfile         OwnerProfile?        @relation(fields: [relatedOwnerProfileId], references: [id], onDelete: SetNull)
+
+  @@index([userId, documentType])
+  @@index([relatedBookingId])
+  @@index([documentVersionId])
+  @@index([releaseId])
+  @@index([relatedOwnerProfileId])
+}
+
+/// Governing legal + financial SSOT snapshot captured at booking creation (not fabricated later).
+model BookingLegalSnapshot {
+  id                         String   @id @default(cuid())
+  bookingId                  String   @unique
+  financialPolicyKey         String
+  financialPolicyHash        String
+  termsVersionId             String?
+  cancellationPolicyVersionId String?
+  bookingTermsVersionId      String?
+  privacyNoticeVersionId     String?
+  commissionPercent          Decimal  @db.Decimal(5, 2)
+  depositPercent             Decimal  @db.Decimal(5, 2)
+  cancellationRulesJson      Json
+  balanceDueHoursBeforeStart Int
+  fullPaymentWithinHours     Int
+  createdAt                  DateTime @default(now())
+
+  booking                   Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  termsVersion              LegalDocumentVersion? @relation("SnapshotTermsVersion", fields: [termsVersionId], references: [id], onDelete: SetNull)
+  cancellationPolicyVersion LegalDocumentVersion? @relation("SnapshotCancellationVersion", fields: [cancellationPolicyVersionId], references: [id], onDelete: SetNull)
+  bookingTermsVersion       LegalDocumentVersion? @relation("SnapshotBookingTermsVersion", fields: [bookingTermsVersionId], references: [id], onDelete: SetNull)
+  privacyNoticeVersion      LegalDocumentVersion? @relation("SnapshotPrivacyNoticeVersion", fields: [privacyNoticeVersionId], references: [id], onDelete: SetNull)
+
+  @@index([financialPolicyKey])
+}
+
+/// Phase 3C.4D.6 — immutable Booking-time listing snapshot (INITIAL evidence)
+enum BookingPropertySnapshotKind {
+  initial
+}
+
+model BookingPropertySnapshot {
+  id                        String                      @id @default(cuid())
+  bookingId                 String
+  kind                      BookingPropertySnapshotKind  @default(initial)
+  /// Canonical schema id — do not reinterpret old payloads under a new version
+  schemaVersion             String
+  propertyId                String
+  /// Property.updatedAt when snapshot was taken (source version reference)
+  propertyUpdatedAt         DateTime?
+  /// Canonical structured payload (Customer-safe facts + internal gate refs)
+  payload                   Json
+  /// SHA-256 hex of canonical JSON — integrity aid, not a digital signature
+  integrityHash             String?
+  createdAt                 DateTime                    @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, kind])
+  @@index([propertyId])
+  @@index([createdAt])
+}
+
+/// Purpose-specific optional privacy consents (never bundled with Terms). History preserved via withdrawnAt.
+model PrivacyConsent {
+  id              String                @id @default(cuid())
+  userId          String
+  purposeCode     PrivacyConsentPurpose
+  consentVersion  String
+  noticeVersionId String?
+  status          PrivacyConsentStatus  @default(granted)
+  grantedAt       DateTime              @default(now())
+  withdrawnAt     DateTime?
+  sourceSurface   String?
+  metadata        Json?
+
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  noticeVersion LegalDocumentVersion? @relation(fields: [noticeVersionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, purposeCode, status])
+  @@index([noticeVersionId])
+}
+
+/// Phase 3C.4B.1.4 — Jordan Prior Consent evidence (Arts 4–5). Append-safe history; never admin-fabricated.
+/// Distinct from PrivacyConsent (optional marketing/analytics/cookies) and LegalAcceptance (Terms/Privacy notice).
+model DataProcessingConsent {
+  id                 String                        @id @default(cuid())
+  userId             String
+  purposeKey         DataProcessingConsentPurpose
+  /// Corpus / purpose-definition version (e.g. 3c4b1-4-prior-consent-v1).
+  purposeVersion     String
+  language           String
+  /// Exact consent text shown to the Data Subject.
+  consentText        String                        @db.Text
+  /// SHA-256 hex of corpusVersion + purposeKey + language + consentText.
+  consentTextHash    String
+  status             DataProcessingConsentStatus   @default(granted)
+  grantedAt          DateTime                      @default(now())
+  withdrawnAt        DateTime?
+  supersededAt       DateTime?
+  expiresAt          DateTime?
+  /// Always DURATION_REQUIRES_LEGAL_REVIEW until counsel defines duration.
+  durationStatus     String                        @default("DURATION_REQUIRES_LEGAL_REVIEW")
+  /// Optional event-based validity label (undefined until counsel defines).
+  validityEvent      String?
+  sourceSurface      String?
+  relatedEntityType  String?
+  relatedEntityId    String?
+  privacyNoticeVersionId String?
+  metadata           Json?
+  createdAt          DateTime                      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purposeKey, status])
+  @@index([purposeKey, status])
+  @@index([consentTextHash])
+  @@index([grantedAt])
+}
+
+/// Owner acknowledgement of commercial terms (no auto-backfill of historical accepts).
+model CommercialTermsAcceptance {
+  id                String                        @id @default(cuid())
+  ownerProfileId    String
+  commercialTermsId String
+  acceptedAt        DateTime                      @default(now())
+  acceptedByUserId  String
+  evidenceSource    LegalAcceptanceEvidenceSource @default(user_explicit_acceptance)
+  documentHash      String?
+  adminIssuerUserId String?
+  metadata          Json?
+
+  ownerProfile    OwnerProfile           @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  commercialTerms PartnerCommercialTerms @relation(fields: [commercialTermsId], references: [id], onDelete: Restrict)
+  acceptedBy      User                   @relation("CommercialTermsAcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerProfileId, commercialTermsId])
+  @@index([acceptedByUserId])
+  @@index([commercialTermsId])
+}
+
+model DataSubjectRequest {
+  id               String                    @id @default(cuid())
+  userId           String?
+  email            String?
+  type             DataSubjectRequestType
+  status           DataSubjectRequestStatus  @default(requested)
+  description      String?                   @db.Text
+  adminNote        String?                   @db.Text
+  rejectionReason  String?                   @db.Text
+  /// Phase 3C.4B.1 — receipt instant (defaults to create time).
+  receivedAt       DateTime                  @default(now())
+  /// Phase 3C.4B.1 — 15 working days from the day after receipt (Asia/Amman).
+  dueAt            DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  resolvedAt       DateTime?
+  handledByUserId  String?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([email])
+  @@index([status, createdAt])
+  @@index([status, dueAt])
+}
+
+/// Phase 3C.4B.1.2 — personal-data breach readiness (NOT BookingIncident).
+enum PersonalDataBreachIncidentKind {
+  security_incident_only
+  personal_data_breach
+}
+
+enum PersonalDataBreachWorkflowStatus {
+  reported
+  triage
+  investigating
+  contained
+  legal_assessment
+  notification_required
+  notification_in_progress
+  monitoring
+  closed
+}
+
+enum SevereHarmAssessmentStatus {
+  unassessed
+  assessing
+  severe_harm_likely
+  severe_harm_not_likely
+  legal_review_required
+}
+
+enum LegalNotificationAssessment {
+  not_assessed
+  not_notifiable
+  notifiable_pending_confirmation
+  notifiable_confirmed
+  legal_review_required
+}
+
+enum BreachNotificationChannelStatus {
+  not_required
+  pending_review
+  required
+  prepared
+  approved_for_send
+  attempted
+  partially_sent
+  sent
+  confirmed
+  failed
+  manual_followup_required
+  overdue
+}
+
+/// Per Affected Data Subject / recipient notice evidence (3C.4B.1.3).
+enum BreachRecipientNoticeState {
+  not_required
+  pending
+  prepared
+  approved
+  attempted
+  sent
+  delivery_confirmed
+  failed
+  manual_followup_required
+}
+
+/// Phase 3C.4B.1.3 — least-privilege admin capabilities (not a full IAM redesign).
+enum AdminCapability {
+  privacy_breach_view
+  privacy_breach_manage
+  privacy_breach_notification_approve
+  privacy_breach_authority_record
+  privacy_breach_discovery_correct_later
+}
+
+model UserCapabilityGrant {
+  id              String          @id @default(cuid())
+  userId          String
+  capability      AdminCapability
+  grantedByUserId String?
+  createdAt       DateTime        @default(now())
+
+  user      User  @relation("CapabilityGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User? @relation("CapabilityGrantIssuer", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, capability])
+  @@index([capability])
+}
+
+/// Jordan PDPL Art. 20 readiness — dedicated privacy/security domain.
+/// Do not store copies of breached payloads, KYC bytes, PAN/CVV, or secrets.
+model PersonalDataBreachIncident {
+  id        String @id @default(cuid())
+  title     String
+  internalSummary String? @db.Text
+
+  incidentKind   PersonalDataBreachIncidentKind
+  workflowStatus PersonalDataBreachWorkflowStatus @default(reported)
+
+  /// Authoritative discovery instant for Article 20 clocks (never silently overwritten).
+  discoveredAt DateTime
+  /// Snapshot of originally recorded discovery (immutable after create).
+  initiallyRecordedDiscoveryAt DateTime
+  /// Optional human-authorised correction; does not erase discoveredAt / initial record.
+  correctedDiscoveryAt DateTime?
+  discoveryCorrectionReason String? @db.Text
+  discoveryCorrectionReviewedByUserId String?
+  discoveryCorrectionReviewedAt DateTime?
+
+  occurredAt  DateTime?
+  containedAt DateTime?
+  closedAt    DateTime?
+
+  discoverySource String?
+  affectedSystems Json?
+  affectedDataCategories Json?
+  affectedDataSubjectCategories Json?
+  estimatedAffectedCount Int?
+  /// ID/group references only — minimise PII in this JSON. Detail view only.
+  affectedSubjectRefs Json?
+
+  involvesSensitivePersonalData  Boolean @default(false)
+  involvesFinancialSensitiveData Boolean @default(false)
+  involvesKycData                Boolean @default(false)
+  involvesCredentialsAuthData    Boolean @default(false)
+  dataWasEncrypted               Boolean?
+  encryptionKeysCompromised      Boolean?
+
+  sourceMechanismDescription String? @db.Text
+  containmentActions         String? @db.Text
+  remediationActions         String? @db.Text
+  containmentChecklist       Json?
+  likelyConsequences         String? @db.Text
+
+  severeHarmAssessment SevereHarmAssessmentStatus @default(unassessed)
+  severeHarmReason     String? @db.Text
+  severeHarmFactorKeys Json?
+  /// Append-only prior assessments (reopen must not erase).
+  assessmentHistory    Json?
+
+  legalNotificationAssessment LegalNotificationAssessment @default(not_assessed)
+
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+
+  /// Art. 20 affected Data Subject notice (Customers are only one subset).
+  dataSubjectNotificationRequired Boolean @default(false)
+  authorityNotificationRequired Boolean @default(false)
+  dataSubjectNotificationDueAt    DateTime?
+  authorityNotificationDueAt   DateTime?
+  dataSubjectNotificationStatus   BreachNotificationChannelStatus @default(not_required)
+  authorityNotificationStatus   BreachNotificationChannelStatus @default(not_required)
+
+  dataSubjectNoticeDraftJson   Json?
+  dataSubjectNoticeContentHash String?
+  dataSubjectNoticeApprovedAt  DateTime?
+  /// Aggregate only — prefer per-recipient PersonalDataBreachRecipientNotice evidence.
+  dataSubjectNoticeSentAt      DateTime?
+
+  authorityPackJson          Json?
+  authorityPackApprovedAt     DateTime?
+  authoritySubmittedAt        DateTime?
+  authoritySubmissionReference String?
+  authoritySubmittedByUserId   String?
+
+  internalNotes String? @db.Text
+
+  reportedByUserId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  reportedBy User? @relation("BreachReportedBy", fields: [reportedByUserId], references: [id], onDelete: SetNull)
+  reviewedBy User? @relation("BreachReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  recipientNotices PersonalDataBreachRecipientNotice[]
+  deadlineHistory  PersonalDataBreachDeadlineHistory[]
+
+  @@index([workflowStatus, discoveredAt])
+  @@index([incidentKind, severeHarmAssessment])
+  @@index([dataSubjectNotificationDueAt])
+  @@index([authorityNotificationDueAt])
+  @@index([createdAt])
+}
+
+model PersonalDataBreachRecipientNotice {
+  id               String @id @default(cuid())
+  breachIncidentId String
+
+  subjectCategory BreachDataSubjectCategoryLabel
+  /// Prefer existing account refs — do not copy bulk PII.
+  userId          String?
+  ownerProfileId  String?
+  /// Minimal external ref when no Mazare3 account (label/token only — minimise contact data).
+  externalRef     String?
+  contactChannel  String  @default("email")
+
+  contentHash String?
+  state       BreachRecipientNoticeState @default(pending)
+
+  preparedAt  DateTime?
+  approvedAt  DateTime?
+  attemptedAt DateTime?
+  sentAt      DateTime?
+  failedAt    DateTime?
+  failureCategory String?
+  fallbackManualStatus String?
+  deliveryState String?
+
+  actorUserId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  incident PersonalDataBreachIncident @relation(fields: [breachIncidentId], references: [id], onDelete: Cascade)
+  actor    User? @relation("BreachRecipientNoticeActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([breachIncidentId, state])
+  @@index([userId])
+}
+
+enum BreachDataSubjectCategoryLabel {
+  customer
+  owner_partner
+  visitor_unauthenticated
+  admin_staff
+  mixed
+  unknown_or_non_account
+}
+
+model PersonalDataBreachDeadlineHistory {
+  id               String   @id @default(cuid())
+  breachIncidentId String
+  kind             String
+  discoveryAt      DateTime
+  dataSubjectDueAt DateTime?
+  authorityDueAt   DateTime?
+  reason           String?  @db.Text
+  reviewerUserId   String?
+  recordedAt       DateTime @default(now())
+  /// Snapshot of prior values before this change (JSON).
+  previousSnapshot Json?
+
+  incident PersonalDataBreachIncident @relation(fields: [breachIncidentId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("BreachDeadlineHistoryReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([breachIncidentId, recordedAt])
+}
+
+/// Phase 3C.4B.2C — Article 14 transfer/exchange register (compliance evidence).
+/// Does NOT store copied raw Personal Data. Legal sufficiency: COUNSEL_REVIEW_REQUIRED.
+enum PersonalDataTransferBorderScope {
+  domestic
+  cross_border
+  unknown_pending_review
+}
+
+enum PersonalDataTransferRegisterReviewStatus {
+  draft
+  recorded
+  under_counsel_review
+  closed
+}
+
+model PersonalDataTransferRegisterEntry {
+  id                        String   @id @default(cuid())
+  /// Processing activity key from privacy inventory / Prior Consent purpose where applicable.
+  processingActivityKey     String
+  /// Category codes only — never paste raw Personal Data payloads.
+  dataCategoryCodes         String[]
+  recipientKey              String
+  recipientVerifiedLabel    String?
+  purpose                   String   @db.Text
+  borderScope               PersonalDataTransferBorderScope @default(unknown_pending_review)
+  consentPurposeKey         String?
+  consentPurposeVersion     String?
+  privacyNoticeVersionId    String?
+  dataProcessingConsentId   String?
+  startedAt                 DateTime @default(now())
+  effectiveAt               DateTime?
+  endedAt                   DateTime?
+  /// Only when a statutory exception is counsel-confirmed; otherwise null.
+  legalExceptionReference   String?
+  reviewStatus              PersonalDataTransferRegisterReviewStatus @default(draft)
+  legalSufficiencyStatus    String   @default("COUNSEL_REVIEW_REQUIRED")
+  notes                     String?  @db.Text
+  createdByUserId           String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([processingActivityKey, reviewStatus])
+  @@index([recipientKey])
+  @@index([borderScope, reviewStatus])
+  @@index([dataProcessingConsentId])
+  @@index([startedAt])
 }

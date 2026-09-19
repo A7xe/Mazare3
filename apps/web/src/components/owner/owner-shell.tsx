@@ -13,6 +13,7 @@ import {
   LifeBuoy,
 } from 'lucide-react';
 import { OwnerGuard } from './owner-guard';
+import { OwnerAgreementGate } from './owner-agreement-gate';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -83,7 +84,10 @@ export function OwnerShell({ children }: { children: React.ReactNode }) {
               </nav>
             </aside>
           ) : null}
-          <div className="min-w-0 flex-1">{children}</div>
+          <div className="min-w-0 flex-1">
+            <OwnerAgreementGate />
+            {children}
+          </div>
         </div>
       </div>
     </OwnerGuard>

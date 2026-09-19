@@ -79,6 +79,16 @@ export async function signup(data: {
   email: string;
   password: string;
   locale?: string;
+  acceptedTermsVersionId: string;
+  acknowledgedPrivacyVersionId: string;
+  priorConsentAccount: true;
+  priorConsentLanguage?: 'ar' | 'en';
+  marketingConsent?: {
+    email?: boolean;
+    sms?: boolean;
+    consentVersion?: string;
+    noticeVersionId?: string;
+  };
 }) {
   return authFetch<{ data: { user: AuthUser } }>('/auth/signup', {
     method: 'POST',

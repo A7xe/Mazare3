@@ -107,10 +107,7 @@ export function PropertyBookingEntryCard({ property, locale, query }: Props) {
         data-booking-disabled="true"
         className="rounded-[22px] border border-[#E0E8F3] bg-white px-4 py-5 text-center shadow-[0_8px_14px_-8px_rgba(47,90,150,.12)]"
       >
-        <p className="font-semibold text-[#0D2046]">{t('rebookUnavailable')}</p>
-        {property.bookingDisabledReason ? (
-          <p className="mt-2 text-sm text-[#53637A]">{property.bookingDisabledReason}</p>
-        ) : null}
+        <p className="font-semibold text-[#0D2046]">{t('bookingUnavailable')}</p>
       </div>
     );
   }

@@ -69,9 +69,12 @@ export async function expireStaleOwnerApprovals(): Promise<{ processed: number; 
   const candidates = await prisma.booking.findMany({
     where: {
       status: BookingStatus.pending_owner_approval,
-      ownerApprovalExpiresAt: { lt: new Date() },
+      // Inclusive of exact expiry instant (matches expireOwnerApprovalIfNeeded / accept guards).
+      ownerApprovalExpiresAt: { lte: new Date() },
     },
     select: { id: true },
+    orderBy: { ownerApprovalExpiresAt: 'asc' },
+    take: 50,
   });
   let expired = 0;
   for (const { id } of candidates) {

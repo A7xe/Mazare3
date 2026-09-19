@@ -8,6 +8,25 @@ export const signupSchema = z.object({
     .min(8, 'Password must be at least 8 characters')
     .max(128, 'Password is too long'),
   locale: z.enum(['ar', 'en']).optional(),
+  /** Explicit Terms acceptance — never bundled with Privacy or Marketing. */
+  acceptedTermsVersionId: z.string().min(1),
+  /** Privacy notice acknowledgement (not Prior Consent / marketing). */
+  acknowledgedPrivacyVersionId: z.string().min(1),
+  /**
+   * Phase 3C.4B.1.4 — Jordan Prior Consent for account processing.
+   * Distinct from Privacy Policy acknowledgement and Terms acceptance.
+   */
+  priorConsentAccount: z.literal(true),
+  priorConsentLanguage: z.enum(['ar', 'en']).optional(),
+  /** Optional separate marketing opt-in — never required for signup. */
+  marketingConsent: z
+    .object({
+      email: z.boolean().optional(),
+      sms: z.boolean().optional(),
+      consentVersion: z.string().min(1).max(64).optional(),
+      noticeVersionId: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 export const loginSchema = z.object({

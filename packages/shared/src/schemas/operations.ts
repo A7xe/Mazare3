@@ -84,3 +84,70 @@ export type AdminSupportTicketListQuery = z.infer<typeof adminSupportTicketListQ
 export type MarkAdminPayoutPaidInput = z.infer<typeof markAdminPayoutPaidSchema>;
 export type CreateOwnerSettlementInput = z.infer<typeof createOwnerSettlementSchema>;
 export type MarkOwnerSettlementPaidInput = z.infer<typeof markOwnerSettlementPaidSchema>;
+
+export const ownerCancelBookingSchema = z.object({
+  reasonCode: z.enum([
+    'PROPERTY_UNAVAILABLE',
+    'OWNER_EMERGENCY',
+    'MAINTENANCE_FAILURE',
+    'DOUBLE_BOOKING_OWNER_FAULT',
+    'PROPERTY_DAMAGE',
+    'ACCESS_PROBLEM',
+    'FORCE_MAJEURE',
+    'OTHER',
+  ]),
+  note: z.string().max(2000).optional(),
+});
+
+export const reportCustomerNoShowSchema = z.object({
+  evidence: z.string().max(3000).optional(),
+});
+
+export const verifyCheckInSchema = z.object({
+  pin: z.string().regex(/^\d{6}$/),
+});
+
+export const requestRescheduleSchema = z.object({
+  toSlotId: z.string().min(1),
+});
+
+export const respondRescheduleSchema = z.object({
+  accept: z.boolean(),
+});
+
+export const reportArrivalProblemSchema = z.object({
+  type: z.enum(['owner_no_show_report', 'access_denied_report', 'property_unavailable_report']),
+  description: z.string().min(10).max(3000),
+});
+
+export const adminIncidentActionSchema = z.object({
+  adminNote: z.string().max(2000).optional(),
+});
+
+export const adminForceMajeureSchema = z.object({
+  bookingId: z.string().min(1),
+  incidentId: z.string().optional(),
+  outcome: z.enum(['confirm_awaiting_customer', 'full_refund', 'approve_reschedule']),
+  reason: z.string().min(10).max(2000),
+  evidenceText: z.string().max(3000).optional(),
+  /** Phase 3A — optional target slot for approve_reschedule. */
+  toSlotId: z.string().min(1).optional(),
+  /** Customer elects a more expensive FM upgrade (pays market delta). */
+  voluntaryUpgrade: z.boolean().optional(),
+});
+
+export const customerForceMajeureChoiceSchema = z.object({
+  choice: z.enum(['FULL_REFUND', 'EQUIVALENT_RESCHEDULE']),
+  toSlotId: z.string().min(1).optional(),
+  voluntaryUpgrade: z.boolean().optional(),
+  source: z.string().max(120).optional(),
+});
+
+export const adminWaivePenaltySchema = z.object({
+  reason: z.string().min(10).max(2000),
+});
+
+export type OwnerCancelBookingInput = z.infer<typeof ownerCancelBookingSchema>;
+export type RequestRescheduleInput = z.infer<typeof requestRescheduleSchema>;
+export type ReportArrivalProblemInput = z.infer<typeof reportArrivalProblemSchema>;
+export type CustomerForceMajeureChoiceInput = z.infer<typeof customerForceMajeureChoiceSchema>;

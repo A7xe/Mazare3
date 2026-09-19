@@ -117,7 +117,7 @@ console.log('\n— Schemas —');
 expect('46 start schema', phoneOtpStartSchema.safeParse({ phone: '0791234567' }).success);
 expect('47 verify schema', phoneOtpVerifySchema.safeParse({ challengeId: 'x'.repeat(10), phone: '0791234567', code: '123456' }).success);
 expect('48 complete requires name', !phoneOtpCompleteSchema.safeParse({ continueToken: 'x'.repeat(20), phone: '0791234567' }).success);
-expect('49 signup still email/password', signupSchema.safeParse({ email: 'a@b.co', password: 'password1' }).success);
+expect('49 signup still email/password', signupSchema.safeParse({ email: 'a@b.co', password: 'password1', acceptedTermsVersionId: 't', acknowledgedPrivacyVersionId: 'p' }).success);
 
 console.log('\n— Regression / scope —');
 expect('50 phone OTP auth not Google OIDC client', !phoneAuth.includes('openid-client') && !phoneAuth.includes('google-oidc') && authRoutes.includes('/phone/start'));

@@ -5,7 +5,8 @@ import { useTranslations } from 'next-intl';
 import { Building2, CalendarCheck, CalendarClock, Percent, Wallet, Loader2 } from 'lucide-react';
 import type { OwnerDashboardSummary, OwnerPerformanceRange } from '@mazare3/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { fetchOwnerSummary, fetchOwnerPerformance } from '@/lib/api-owner';
+import { fetchOwnerSummary, fetchOwnerPerformance, fetchOwnerLegalCommercialSummary } from '@/lib/api-owner';
+import type { OwnerLegalCommercialSummary } from '@/lib/api-owner';
 import { OwnerPerformancePanel } from '@/components/owner/owner-performance-panel';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 import { useLocale } from 'next-intl';
@@ -14,6 +15,7 @@ export function OwnerDashboardView() {
   const t = useTranslations('owner');
   const locale = useLocale() as 'ar' | 'en';
   const [data, setData] = useState<OwnerDashboardSummary | null>(null);
+  const [commercial, setCommercial] = useState<OwnerLegalCommercialSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,8 +27,12 @@ export function OwnerDashboardView() {
   useEffect(() => {
     void (async () => {
       try {
-        const res = await fetchOwnerSummary();
-        setData(res.data);
+        const [summaryRes, commercialRes] = await Promise.all([
+          fetchOwnerSummary(),
+          fetchOwnerLegalCommercialSummary().catch(() => null),
+        ]);
+        setData(summaryRes.data);
+        setCommercial(commercialRes?.data ?? null);
       } catch (e) {
         setError(e instanceof Error ? e.message : t('loadError'));
       } finally {
@@ -115,6 +121,48 @@ export function OwnerDashboardView() {
           </CardContent>
         </Card>
       </div>
+      {commercial ? (
+        <Card
+          className="glass-panel overflow-hidden rounded-2xl border-primary/12"
+          data-testid="owner-commercial-terms"
+        >
+          <div className="gradient-primary h-1" />
+          <CardHeader>
+            <CardTitle className="text-base font-semibold text-navy">
+              {t('commercialTermsTitle')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted">
+            <p>
+              <span className="font-medium text-navy">{t('commercialAgreement')}:</span>{' '}
+              {commercial.ownerAgreement
+                ? `v${commercial.ownerAgreement.version}${
+                    commercial.ownerAgreement.acceptedAt
+                      ? ` · ${t('commercialAcceptedAt')} ${new Date(
+                          commercial.ownerAgreement.acceptedAt,
+                        ).toLocaleDateString(locale === 'ar' ? 'ar-JO' : 'en-GB')}`
+                      : ` · ${t('commercialNotAccepted')}`
+                  }`
+                : t('commercialNoAgreement')}
+            </p>
+            <p>
+              <span className="font-medium text-navy">{t('commercialCommission')}:</span>{' '}
+              {t(`commercialArrangement.${commercial.commission.arrangement}`)} ·{' '}
+              {commercial.commission.commissionPercent}%
+              {commercial.commission.effectiveFrom
+                ? ` · ${t('commercialEffectiveFrom')} ${new Date(
+                    commercial.commission.effectiveFrom,
+                  ).toLocaleDateString(locale === 'ar' ? 'ar-JO' : 'en-GB')}`
+                : null}
+            </p>
+            {commercial.customTermsAcceptanceMissing ? (
+              <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {t('commercialAcceptanceMissing')}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
       <OwnerPerformancePanel ns="owner" locale={locale} load={loadPerformance} />
     </div>
   );

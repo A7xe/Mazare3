@@ -83,7 +83,7 @@ console.log('\n— Schemas —');
     '16 reset ok password',
     resetPasswordSchema.safeParse({ token: 'x'.repeat(24), password: 'password1' }).success,
   );
-  expect('17 same min as signup', signupSchema.safeParse({ email: 'a@b.co', password: 'password' }).success);
+  expect('17 same min as signup', signupSchema.safeParse({ email: 'a@b.co', password: 'password', acceptedTermsVersionId: 't', acknowledgedPrivacyVersionId: 'p' }).success);
 }
 
 console.log('\n— Routes / enumeration —');

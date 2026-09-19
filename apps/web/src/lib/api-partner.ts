@@ -25,7 +25,15 @@ export type PartnerDocumentType =
   | 'management_authorization'
   | 'business_registration'
   | 'payout_proof'
-  | 'other';
+  | 'other'
+  | 'representation_authority'
+  | 'lease_or_sublease_authority';
+
+export type AccountHolderOperatorRelation =
+  | 'is_contracting_party'
+  | 'acts_for_entity'
+  | 'authorised_representative'
+  | 'authorised_manager';
 
 export type PartnerDocumentView = {
   id: string;
@@ -60,8 +68,19 @@ export type PartnerPayoutView = {
   beneficiaryNameMasked: string | null;
   bankNameMasked: string | null;
   ibanMasked: string | null;
-  reviewStatus: 'pending' | 'reviewed' | 'rejected' | null;
+  reviewStatus:
+    | 'pending'
+    | 'reviewed'
+    | 'rejected'
+    | 'action_required'
+    | 'reassessment_required'
+    | null;
   reviewReason: string | null;
+  reviewReasonCategory?: string | null;
+  beneficiaryRelationship?: string | null;
+  nameMatchHint?: string | null;
+  payoutCountry?: string | null;
+  payoutReadiness?: string | null;
   updatedAt: string | null;
 };
 
@@ -91,6 +110,7 @@ export type PartnerOnboardingView = {
   ownerStatus: string | null;
   verificationStatus: PartnerVerificationStatus | null;
   entityType: PartnerEntityType | null;
+  accountHolderRelation: AccountHolderOperatorRelation | null;
   legacyApproved: boolean;
   complianceNotice: boolean;
   displayName: string;

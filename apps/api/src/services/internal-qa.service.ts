@@ -1,5 +1,16 @@
-import { prisma, AvailabilitySlotStatus, AvailabilityPeriod } from '@mazare3/db';
+import {
+  prisma,
+  AvailabilitySlotStatus,
+  AvailabilityPeriod,
+  CheckInStatus,
+  BookingVisitOutcome,
+  PropertyAuthorityReviewStatus,
+  RegulatoryApplicability,
+  RegulatoryComplianceStatus,
+} from '@mazare3/db';
 import { AppError } from '../lib/errors.js';
+import { ensureRegulatoryAssessmentsForProperty } from './property-regulatory.service.js';
+import { evaluatePropertyBookability } from './property-bookability.service.js';
 
 function parseDateOnly(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -191,4 +202,94 @@ export async function qaBackdateBookingCreatedAt(bookingId: string, daysAgo = 40
     data: { createdAt },
   });
   return { bookingId, createdAt: createdAt.toISOString() };
+}
+
+/**
+ * QA only: mark a booking as a verified successful visit for review eligibility tests.
+ * Does not invent financial entries.
+ */
+export async function qaMarkVerifiedVisit(bookingId: string) {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { id: true, visitOutcome: true },
+  });
+  if (!booking) throw new AppError(404, 'NOT_FOUND', 'Booking not found');
+
+  const now = new Date();
+  const updated = await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      checkInStatus: CheckInStatus.verified,
+      checkInVerifiedAt: now,
+      visitOutcome: BookingVisitOutcome.completed,
+      visitOutcomeAt: now,
+      visitOutcomeSource: 'qa.mark_verified_visit',
+    },
+    select: {
+      id: true,
+      checkInStatus: true,
+      visitOutcome: true,
+      visitOutcomeAt: true,
+    },
+  });
+  return {
+    bookingId: updated.id,
+    checkInStatus: updated.checkInStatus,
+    visitOutcome: updated.visitOutcome,
+    visitOutcomeAt: updated.visitOutcomeAt?.toISOString() ?? null,
+  };
+}
+
+/**
+ * QA only: make a published Property eligible for NEW paid Booking locally.
+ * Sets authority approved + minimal regulatory readiness (N/A confirmed).
+ * Does not invent Customer PII or financial entries.
+ */
+export async function qaEnsurePropertyBookable(slug: string) {
+  const property = await prisma.property.findFirst({
+    where: { slug },
+    select: { id: true, status: true },
+  });
+  if (!property) throw new AppError(404, 'NOT_FOUND', 'Property not found');
+
+  await prisma.property.update({
+    where: { id: property.id },
+    data: {
+      authorityReviewStatus: PropertyAuthorityReviewStatus.approved,
+      authorityReviewedAt: new Date(),
+      authorityAttestedAt: new Date(),
+      authorityAttestationVersion: 'qa.local',
+    },
+  });
+
+  const activityCount = await prisma.propertyActivity.count({
+    where: { propertyId: property.id, active: true },
+  });
+  if (activityCount === 0) {
+    await prisma.propertyActivity.create({
+      data: {
+        propertyId: property.id,
+        activityCode: 'day_use',
+        active: true,
+      },
+    });
+  }
+
+  await ensureRegulatoryAssessmentsForProperty(property.id);
+  await prisma.propertyRegulatoryRequirement.updateMany({
+    where: { propertyId: property.id },
+    data: {
+      applicability: RegulatoryApplicability.not_applicable_confirmed,
+      complianceStatus: RegulatoryComplianceStatus.not_assessed,
+      reassessmentRequired: false,
+    },
+  });
+
+  const gate = await evaluatePropertyBookability(property.id, 'new_booking');
+  return {
+    propertyId: property.id,
+    slug,
+    eligible: gate.eligible,
+    blockers: gate.blockers,
+  };
 }

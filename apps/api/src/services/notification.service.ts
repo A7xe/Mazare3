@@ -468,6 +468,7 @@ export async function notifyDepositPaid(params: {
 
 export async function notifyBalanceOverdue(params: {
   customerUserId: string;
+  ownerUserId?: string | null;
   bookingId: string;
   publicCode: string;
   propertyTitleAr: string;
@@ -475,21 +476,38 @@ export async function notifyBalanceOverdue(params: {
 }) {
   const locale = await userLocale(params.customerUserId);
   await createForUser(params.customerUserId, {
-    type: 'booking.balance_overdue',
-    title: t(locale, 'تأخر دفع الرصيد', 'Balance payment overdue'),
+    type: 'booking.auto_cancelled_balance_unpaid',
+    title: t(locale, 'أُلغي الحجز — الرصيد غير مدفوع', 'Booking cancelled — balance unpaid'),
     message: t(
       locale,
-      `لم يُدفع الرصيد المتبقي للحجز ${params.publicCode} في الموعد. الحجز مؤكد والعربون محفوظ — تواصل مع المنصة.`,
-      `The remaining balance for booking ${params.publicCode} is overdue. The booking stays confirmed and the deposit is held — contact the platform.`,
+      `لم يُدفع الرصيد المتبقي للحجز ${params.publicCode} قبل الموعد النهائي. أُلغي الحجز تلقائياً، واحتُفظ بالعربون المحصّل وفق سياسة الحجز المعتمدة، ولم يُجمَع أي مبلغ إلغاء إضافي.`,
+      `The remaining balance for booking ${params.publicCode} was not paid by the deadline. The booking was automatically cancelled, the captured deposit was retained under the accepted booking policy, and no additional cancellation payment was collected.`,
     ),
     entityType: 'booking',
     entityId: params.bookingId,
     dedupe: true,
   });
+
+  if (params.ownerUserId) {
+    const ownerLocale = await userLocale(params.ownerUserId);
+    await createForUser(params.ownerUserId, {
+      type: 'booking.auto_cancelled_balance_unpaid',
+      title: t(ownerLocale, 'أُلغي حجز — رصيد العميل غير مدفوع', 'Booking cancelled — customer balance unpaid'),
+      message: t(
+        ownerLocale,
+        `أُلغي الحجز ${params.publicCode} تلقائياً لأن العميل لم يدفع الرصيد المتبقي قبل الموعد. الفترة متاحة مجدداً، والأرباح المحتفظ بها تتبع قواعد التسوية.`,
+        `Booking ${params.publicCode} was automatically cancelled because the customer did not pay the remaining balance by the deadline. The slot is available again, and any retained earnings follow settlement rules.`,
+      ),
+      entityType: 'booking',
+      entityId: params.bookingId,
+      dedupe: true,
+    });
+  }
+
   await createForAdmins({
-    type: 'booking.balance_overdue',
-    title: 'رصيد متأخر',
-    message: `الحجز ${params.publicCode} تجاوز موعد دفع الرصيد (عقار: ${params.propertyTitleAr}).`,
+    type: 'booking.auto_cancelled_balance_unpaid',
+    title: 'إلغاء تلقائي — رصيد غير مدفوع',
+    message: `الحجز ${params.publicCode} أُلغي تلقائياً لعدم دفع الرصيد (عقار: ${params.propertyTitleAr}).`,
     entityType: 'booking',
     entityId: params.bookingId,
     dedupe: true,
@@ -949,4 +967,422 @@ export async function notifySupportResponsePosted(params: {
     entityId: params.ticketId,
     dedupe: false,
   });
+}
+
+// --- Phase 2 marketplace fairness notifications ---
+
+export async function notifyCustomerOwnerCancelled(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  refundAmount: number;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.owner_cancelled',
+    title: t(locale, 'ألغى الشريك حجزك', 'Partner cancelled your booking'),
+    message: t(
+      locale,
+      `تم إلغاء الحجز ${params.publicCode}. استرداد متوقع: ${params.refundAmount} د.أ`,
+      `Booking ${params.publicCode} was cancelled by the partner. Expected refund: ${params.refundAmount} JOD`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyOwnerCancelledBooking(params: {
+  ownerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  penaltyJod: number;
+}) {
+  const locale = await userLocale(params.ownerUserId);
+  await createForUser(params.ownerUserId, {
+    type: 'booking.owner_cancel_confirmed',
+    title: t(locale, 'تم إلغاء الحجز', 'Booking cancelled'),
+    message: t(
+      locale,
+      `ألغيت الحجز ${params.publicCode}. لا دفعة لك. غرامة محتملة: ${params.penaltyJod} د.أ`,
+      `You cancelled ${params.publicCode}. No payout. Possible penalty: ${params.penaltyJod} JOD`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyCheckInAvailable(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.check_in_available',
+    title: t(locale, 'رمز الوصول جاهز', 'Check-in code ready'),
+    message: t(
+      locale,
+      `رمز الوصول للحجز ${params.publicCode} متاح الآن في صفحة حجوزاتي.`,
+      `Your check-in code for ${params.publicCode} is now available in My bookings.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyCheckInVerified(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.check_in_verified',
+    title: t(locale, 'تم تأكيد الوصول', 'Arrival confirmed'),
+    message: t(
+      locale,
+      `تم تأكيد وصولك للحجز ${params.publicCode}.`,
+      `Your arrival for ${params.publicCode} was confirmed.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyRescheduleRequested(params: {
+  bookingId: string;
+  publicCode: string;
+  requestedBy: 'customer' | 'owner';
+  propertySlug?: string;
+  customerUserId?: string;
+}) {
+  if (params.requestedBy === 'customer' && params.propertySlug) {
+    await createForAdmins({
+      type: 'booking.reschedule_requested',
+      title: 'طلب إعادة جدولة',
+      message: `Customer requested reschedule for ${params.publicCode}.`,
+      entityType: 'booking',
+      entityId: params.bookingId,
+    });
+  } else if (params.customerUserId) {
+    const locale = await userLocale(params.customerUserId);
+    await createForUser(params.customerUserId, {
+      type: 'booking.reschedule_proposed',
+      title: t(locale, 'اقتراح إعادة جدولة', 'Reschedule proposed'),
+      message: t(
+        locale,
+        `اقترح الشريك إعادة جدولة الحجز ${params.publicCode}.`,
+        `The partner proposed a new date for ${params.publicCode}.`,
+      ),
+      entityType: 'booking',
+      entityId: params.bookingId,
+    });
+  }
+}
+
+export async function notifyRescheduleResponded(params: {
+  bookingId: string;
+  publicCode: string;
+  accepted: boolean;
+  notifyUserId: string;
+}) {
+  const locale = await userLocale(params.notifyUserId);
+  await createForUser(params.notifyUserId, {
+    type: params.accepted ? 'booking.reschedule_accepted' : 'booking.reschedule_rejected',
+    title: t(
+      locale,
+      params.accepted ? 'تم قبول إعادة الجدولة' : 'تم رفض إعادة الجدولة',
+      params.accepted ? 'Reschedule accepted' : 'Reschedule rejected',
+    ),
+    message: t(
+      locale,
+      params.accepted
+        ? `تم قبول إعادة جدولة ${params.publicCode}.`
+        : `تم رفض إعادة جدولة ${params.publicCode}.`,
+      params.accepted
+        ? `Reschedule for ${params.publicCode} was accepted.`
+        : `Reschedule for ${params.publicCode} was rejected.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyReschedulePaymentRequired(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  amount: number;
+  currency: string;
+  deadline?: Date | null;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  const deadlineNote = params.deadline
+    ? t(
+        locale,
+        ` الموعد النهائي: ${params.deadline.toISOString()}.`,
+        ` Deadline: ${params.deadline.toISOString()}.`,
+      )
+    : '';
+  await createForUser(params.customerUserId, {
+    type: 'booking.reschedule_payment_required',
+    title: t(locale, 'مطلوب دفع فرق إعادة الجدولة', 'Reschedule difference payment required'),
+    message: t(
+      locale,
+      `يرجى دفع فرق السعر ${params.amount} ${params.currency} لإتمام إعادة جدولة ${params.publicCode}.${deadlineNote}`,
+      `Please pay the ${params.amount} ${params.currency} difference to complete reschedule of ${params.publicCode}.${deadlineNote}`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyReschedulePaymentSucceeded(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  amount: number;
+  currency: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.reschedule_payment_succeeded',
+    title: t(locale, 'تم دفع فرق إعادة الجدولة', 'Reschedule difference paid'),
+    message: t(
+      locale,
+      `تم استلام ${params.amount} ${params.currency} لفرق إعادة جدولة ${params.publicCode}.`,
+      `Received ${params.amount} ${params.currency} for reschedule difference on ${params.publicCode}.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyRescheduleCompleted(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.reschedule_completed',
+    title: t(locale, 'اكتملت إعادة الجدولة', 'Reschedule completed'),
+    message: t(
+      locale,
+      `تم تحديث موعد الحجز ${params.publicCode}.`,
+      `Booking ${params.publicCode} was rescheduled successfully.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyRescheduleExpired(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.reschedule_expired',
+    title: t(locale, 'انتهت صلاحية إعادة الجدولة', 'Reschedule expired'),
+    message: t(
+      locale,
+      `انتهت صلاحية طلب إعادة جدولة ${params.publicCode}.`,
+      `The reschedule request for ${params.publicCode} has expired.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyRescheduleRefundDifference(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  amount: number;
+  currency: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.reschedule_refund_difference',
+    title: t(locale, 'استرداد فرق إعادة الجدولة', 'Reschedule difference refund'),
+    message: t(
+      locale,
+      `تم بدء استرداد ${params.amount} ${params.currency} لفرق إعادة جدولة ${params.publicCode}.`,
+      `A refund of ${params.amount} ${params.currency} was initiated for reschedule of ${params.publicCode}.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyNoShowReported(params: {
+  bookingId: string;
+  publicCode: string;
+  reportedBy: string;
+}) {
+  await createForAdmins({
+    type: 'booking.no_show_reported',
+    title: 'بلاغ عدم حضور',
+    message: `${params.reportedBy} reported no-show for ${params.publicCode}.`,
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyArrivalIncidentReported(params: {
+  ownerUserId: string;
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  incidentType: string;
+}) {
+  const ownerLocale = await userLocale(params.ownerUserId);
+  await createForUser(params.ownerUserId, {
+    type: 'booking.arrival_incident_reported',
+    title: t(ownerLocale, 'بلاغ وصول', 'Arrival incident reported'),
+    message: t(
+      ownerLocale,
+      `بلاغ على الحجز ${params.publicCode}: ${params.incidentType}`,
+      `Incident on ${params.publicCode}: ${params.incidentType}`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+  await createForAdmins({
+    type: 'booking.arrival_incident_reported',
+    title: 'Arrival incident',
+    message: `${params.publicCode}: ${params.incidentType}`,
+    entityType: 'booking',
+    entityId: params.bookingId,
+  });
+}
+
+export async function notifyForceMajeureChoiceRequired(params: {
+  customerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const locale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.force_majeure_choice_required',
+    title: t(locale, 'تم اعتماد الحالة كقوة قاهرة', 'Force majeure confirmed'),
+    message: t(
+      locale,
+      `الحجز ${params.publicCode}: يمكنك اختيار استرداد كامل للمبالغ المؤهلة، أو اختيار موعد بديل مكافئ بدل الاسترداد (اختياري، وتخضع المواعيد للتوافر).`,
+      `Booking ${params.publicCode}: You may choose a full refund of eligible amounts, or optionally an equivalent replacement date instead (subject to availability).`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+    dedupe: true,
+  });
+}
+
+export async function notifyForceMajeureRefundProcessing(params: {
+  customerUserId: string;
+  ownerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const customerLocale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.force_majeure_refund_processing',
+    title: t(customerLocale, 'جاري معالجة الاسترداد الكامل', 'Full eligible refund is being processed'),
+    message: t(
+      customerLocale,
+      `الحجز ${params.publicCode}: يتم تجهيز استرداد كامل للمبالغ المؤهلة. قد يظهر الاسترداد كمُستحق حتى يكتمل لدى مزوّد الدفع.`,
+      `Booking ${params.publicCode}: A full refund of eligible captured payments is being prepared. It may remain refund-due until the payment provider completes it.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+    dedupe: true,
+  });
+
+  const ownerLocale = await userLocale(params.ownerUserId);
+  await createForUser(params.ownerUserId, {
+    type: 'booking.force_majeure_refund_processing',
+    title: t(ownerLocale, 'نتيجة قوة قاهرة: استرداد', 'Force majeure outcome: refund'),
+    message: t(
+      ownerLocale,
+      `الحجز ${params.publicCode}: تم اعتماد حل بالقوة القاهرة عبر استرداد. لا تُطبَّق غرامة شريك لهذه الحالة.`,
+      `Booking ${params.publicCode}: Force majeure resolved via refund. No partner penalty applies for this case.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+    dedupe: true,
+  });
+}
+
+export async function notifyForceMajeureRescheduleProceeding(params: {
+  customerUserId: string;
+  ownerUserId: string;
+  bookingId: string;
+  publicCode: string;
+}) {
+  const customerLocale = await userLocale(params.customerUserId);
+  await createForUser(params.customerUserId, {
+    type: 'booking.force_majeure_reschedule_proceeding',
+    title: t(customerLocale, 'جاري ترتيب الموعد البديل', 'Replacement booking is proceeding'),
+    message: t(
+      customerLocale,
+      `الحجز ${params.publicCode}: يتم المضي في الموعد البديل وفق اختيارك، مع مراعاة التوافر وإتمام العملية.`,
+      `Booking ${params.publicCode}: Your chosen replacement is proceeding, subject to availability and finalisation.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+    dedupe: true,
+  });
+
+  const ownerLocale = await userLocale(params.ownerUserId);
+  await createForUser(params.ownerUserId, {
+    type: 'booking.force_majeure_reschedule_proceeding',
+    title: t(ownerLocale, 'نتيجة قوة قاهرة: موعد بديل', 'Force majeure outcome: replacement date'),
+    message: t(
+      ownerLocale,
+      `الحجز ${params.publicCode}: اختار الضيف موعداً بديلاً بدل الاسترداد. لا تُطبَّق غرامة شريك لهذه الحالة.`,
+      `Booking ${params.publicCode}: The guest chose a replacement date instead of a refund. No partner penalty applies for this case.`,
+    ),
+    entityType: 'booking',
+    entityId: params.bookingId,
+    dedupe: true,
+  });
+}
+
+export async function notifyForceMajeureResolved(params: {
+  customerUserId: string;
+  ownerUserId: string;
+  bookingId: string;
+  publicCode: string;
+  outcome: string;
+}) {
+  const outcomeLabel =
+    params.outcome === 'full_refund'
+      ? { ar: 'استرداد كامل', en: 'full refund' }
+      : params.outcome === 'approve_reschedule'
+        ? { ar: 'موعد بديل', en: 'replacement date' }
+        : { ar: params.outcome, en: params.outcome };
+
+  for (const [userId, ar, en] of [
+    [
+      params.customerUserId,
+      'تم حل حالة القوة القاهرة',
+      'Force majeure case resolved',
+    ],
+    [params.ownerUserId, 'تم حل حالة القوة القاهرة', 'Force majeure case resolved'],
+  ] as const) {
+    const locale = await userLocale(userId);
+    await createForUser(userId, {
+      type: 'booking.force_majeure_resolved',
+      title: t(locale, ar, en),
+      message: t(
+        locale,
+        `الحجز ${params.publicCode}: ${outcomeLabel.ar}`,
+        `Booking ${params.publicCode}: ${outcomeLabel.en}`,
+      ),
+      entityType: 'booking',
+      entityId: params.bookingId,
+      dedupe: true,
+    });
+  }
 }

@@ -14,6 +14,10 @@
     "migrate": "dotenv -e ../../.env -- prisma migrate dev",
     "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "seed:legal": "dotenv -e ../../.env -- tsx prisma/seed-legal-bootstrap.ts",
+    "seed:legal-launch": "dotenv -e ../../.env -- tsx prisma/seed-legal-launch-candidate.ts",
+    "seed:legal-advisor-revised": "dotenv -e ../../.env -- tsx prisma/seed-legal-advisor-revised.ts",
+    "seed:legal-owner-advisor-revised": "dotenv -e ../../.env -- tsx prisma/seed-legal-owner-advisor-revised.ts",
     "seed:showcase": "dotenv -e ../../.env -- tsx prisma/seed-showcase-marketplace.ts",
     "cleanup:showcase": "dotenv -e ../../.env -- tsx prisma/cleanup-showcase-marketplace.ts",
     "cleanup:presentation-hygiene": "dotenv -e ../../.env -- tsx prisma/cleanup-showcase-presentation-hygiene.ts",
@@ -27,6 +31,7 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@mazare3/shared": "workspace:*",
     "@prisma/client": "^6.8.2",
     "bcryptjs": "^3.0.2",
     "dotenv": "^16.5.0"

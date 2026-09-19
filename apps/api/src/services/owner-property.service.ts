@@ -18,10 +18,57 @@ import {
   assertOwnerCanEditListingStatus,
   assertOwnerNotPendingReview,
 } from '../lib/owner-property-mutation-guards.js';
+import { assertOwnerListingSoftGate } from './legal/legal-reacceptance.service.js';
+import { assertPriorConsentActive } from './legal/data-processing-consent.service.js';
+import {
+  assertAuthorityPackageCompleteForSubmit,
+  markAuthorityUnderReviewOnPropertySubmit,
+} from './property-authority.service.js';
 
 function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
   if (value == null) return 0;
   return typeof value === 'number' ? value : value.toNumber();
+}
+
+/** Exact-location Personal Data (not approximate city/area/public approx coords). */
+function hasExactLocationPersonalData(fields: {
+  exactAddress?: string | null;
+  latitudeExact?: number | null;
+  longitudeExact?: number | null;
+  arrivalInstructionsAr?: string | null;
+  arrivalInstructionsEn?: string | null;
+}): boolean {
+  if (typeof fields.exactAddress === 'string' && fields.exactAddress.trim().length > 0) {
+    return true;
+  }
+  if (fields.latitudeExact != null || fields.longitudeExact != null) return true;
+  if (
+    typeof fields.arrivalInstructionsAr === 'string' &&
+    fields.arrivalInstructionsAr.trim().length > 0
+  ) {
+    return true;
+  }
+  if (
+    typeof fields.arrivalInstructionsEn === 'string' &&
+    fields.arrivalInstructionsEn.trim().length > 0
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function assertExactLocationPriorConsentIfNeeded(
+  userId: string,
+  fields: {
+    exactAddress?: string | null;
+    latitudeExact?: number | null;
+    longitudeExact?: number | null;
+    arrivalInstructionsAr?: string | null;
+    arrivalInstructionsEn?: string | null;
+  },
+) {
+  if (!hasExactLocationPersonalData(fields)) return;
+  await assertPriorConsentActive(userId, 'property_and_exact_location_processing');
 }
 
 async function resolveAmenityIds(keys: string[]): Promise<string[]> {
@@ -95,7 +142,10 @@ async function loadPropertyForEdit(propertyId: string, ownerProfileId: string) {
   const p = await prisma.property.findFirst({
     where: { id: propertyId, ownerId: ownerProfileId },
     include: {
-      media: { orderBy: { sortOrder: 'asc' } },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' as const },
+      },
       amenities: { include: { amenity: true } },
       rules: { orderBy: { sortOrder: 'asc' } },
     },
@@ -116,6 +166,18 @@ export async function createOwnerProperty(
   if (scope.isAdmin) {
     throw new AppError(403, 'FORBIDDEN', 'Use admin tools to create properties');
   }
+
+  await assertOwnerListingSoftGate(userId);
+
+  // Approximate city/area/approx coords do not require this purpose.
+  // Exact address / exact coords / arrival instructions do.
+  await assertExactLocationPriorConsentIfNeeded(userId, {
+    exactAddress: input.exactAddress,
+    latitudeExact: input.latitudeExact ?? null,
+    longitudeExact: input.longitudeExact ?? null,
+    arrivalInstructionsAr: input.arrivalInstructionsAr ?? null,
+    arrivalInstructionsEn: input.arrivalInstructionsEn ?? null,
+  });
 
   const slug = await uniquePropertySlug(input.titleEn ?? input.titleAr);
   const amenityIds = await resolveAmenityIds(input.amenityKeys ?? []);
@@ -175,7 +237,10 @@ export async function createOwnerProperty(
       },
     },
     include: {
-      media: { orderBy: { sortOrder: 'asc' } },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' as const },
+      },
       amenities: { include: { amenity: true } },
       rules: { orderBy: { sortOrder: 'asc' } },
     },
@@ -211,6 +276,8 @@ export async function createOwnerPropertyDraft(
     throw new AppError(403, 'FORBIDDEN', 'Approved owner profile required');
   }
 
+  await assertOwnerListingSoftGate(userId);
+
   const slug = await uniquePropertySlug(input.titleEn ?? input.titleAr);
 
   const property = await prisma.property.create({
@@ -235,7 +302,10 @@ export async function createOwnerPropertyDraft(
       status: PropertyStatus.draft,
     },
     include: {
-      media: { orderBy: { sortOrder: 'asc' } },
+      media: {
+        where: { removedFromListingAt: null },
+        orderBy: { sortOrder: 'asc' as const },
+      },
       amenities: { include: { amenity: true } },
       rules: { orderBy: { sortOrder: 'asc' } },
     },
@@ -303,11 +373,34 @@ export async function updateOwnerProperty(
   // Location-only must not bypass the canonical listing edit gate.
   assertOwnerCanEditListingStatus(existing.status);
 
+  // Gate only when this update writes exact-location Personal Data (not approx).
+  if (
+    input.exactAddress !== undefined ||
+    input.latitudeExact !== undefined ||
+    input.longitudeExact !== undefined ||
+    input.arrivalInstructionsAr !== undefined ||
+    input.arrivalInstructionsEn !== undefined
+  ) {
+    await assertExactLocationPriorConsentIfNeeded(userId, {
+      exactAddress: input.exactAddress,
+      latitudeExact: input.latitudeExact,
+      longitudeExact: input.longitudeExact,
+      arrivalInstructionsAr: input.arrivalInstructionsAr,
+      arrivalInstructionsEn: input.arrivalInstructionsEn,
+    });
+  }
+
   const amenityIds =
     input.amenityKeys !== undefined ? await resolveAmenityIds(input.amenityKeys) : undefined;
 
   const poolsCount = input.poolsCount ?? existing.poolsCount;
   const amenityKeys = input.amenityKeys ?? existing.amenities.map((a) => a.amenity.key);
+
+  const locationChanged =
+    (input.city !== undefined && input.city.trim() !== (existing.city ?? '')) ||
+    (input.area !== undefined && input.area.trim() !== (existing.area ?? '')) ||
+    (input.exactAddress !== undefined &&
+      input.exactAddress.trim() !== (existing.exactAddress ?? ''));
 
   await prisma.$transaction(async (tx) => {
     await tx.property.update({
@@ -352,7 +445,11 @@ export async function updateOwnerProperty(
     });
 
     if (input.imageUrls !== undefined) {
-      await tx.propertyMedia.deleteMany({ where: { propertyId } });
+      // Soft-remove existing live media (retain for Booking listing snapshots)
+      await tx.propertyMedia.updateMany({
+        where: { propertyId, removedFromListingAt: null },
+        data: { removedFromListingAt: new Date() },
+      });
       if (input.imageUrls.length) {
         await tx.propertyMedia.createMany({
           data: input.imageUrls.map((url, i) => ({
@@ -396,6 +493,34 @@ export async function updateOwnerProperty(
     req,
   });
 
+  if (locationChanged) {
+    try {
+      const { onPropertyRegulatoryReassessmentTrigger } = await import(
+        './property-regulatory.service.js'
+      );
+      await onPropertyRegulatoryReassessmentTrigger(
+        propertyId,
+        userId,
+        'property_location_changed',
+        req,
+      );
+    } catch (err) {
+      console.error('[3c4d4a] regulatory reassessment on location change', err);
+    }
+  }
+
+  // Phase 3C.4D.5 — sync swimming_pool activity from poolsCount / pool amenities
+  if (input.poolsCount !== undefined || input.amenityKeys !== undefined) {
+    try {
+      const { syncSwimmingPoolActivityFromListingSignals } = await import(
+        './property-pool-safety.service.js'
+      );
+      await syncSwimmingPoolActivityFromListingSignals(propertyId, userId, req);
+    } catch (err) {
+      console.error('[3c4d5] pool activity sync on property update', err);
+    }
+  }
+
   const updated = await loadPropertyForEdit(propertyId, scope.ownerProfileId!);
   return mapPropertyEdit(updated);
 }
@@ -426,6 +551,17 @@ export async function submitOwnerPropertyForReview(
   assertMediaForSubmitReview(existing.media);
   assertPropertyListingComplete(existing);
 
+  await assertOwnerListingSoftGate(userId);
+
+  // Phase 3C.4D.3 — authority package required to submit; approval not required yet
+  await assertAuthorityPackageCompleteForSubmit(propertyId, scope.ownerProfileId!);
+
+  // Phase 3C.4D.5 — pool safety profile + attestation when offering swimming pool
+  const { assertPoolSafetyCompleteForSubmit, syncSwimmingPoolActivityFromListingSignals } =
+    await import('./property-pool-safety.service.js');
+  await syncSwimmingPoolActivityFromListingSignals(propertyId, userId, req);
+  await assertPoolSafetyCompleteForSubmit(propertyId);
+
   await prisma.property.update({
     where: { id: propertyId },
     data: {
@@ -434,6 +570,8 @@ export async function submitOwnerPropertyForReview(
       reviewChangeRequestedAt: null,
     },
   });
+
+  await markAuthorityUnderReviewOnPropertySubmit(propertyId, userId, req);
 
   await createAuditLog({
     actorUserId: userId,

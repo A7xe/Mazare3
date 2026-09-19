@@ -2,6 +2,7 @@ import {
   prisma,
   RefundRequestStatus,
   DisputeStatus,
+  BookingIncidentStatus,
 } from '@mazare3/db';
 import {
   BLOCKING_DISPUTE_STATUSES,
@@ -16,7 +17,7 @@ export async function getBookingOperationsBlocks(
   for (const id of unique) result.set(id, { blocked: false, reason: null });
   if (unique.length === 0) return result;
 
-  const [refunds, disputes] = await Promise.all([
+  const [refunds, disputes, incidents] = await Promise.all([
     prisma.refundRequest.findMany({
       where: {
         bookingId: { in: unique },
@@ -36,6 +37,18 @@ export async function getBookingOperationsBlocks(
       },
       select: { bookingId: true, status: true },
     }),
+    prisma.bookingIncident.findMany({
+      where: {
+        bookingId: { in: unique },
+        status: {
+          in: [
+            BookingIncidentStatus.open,
+            BookingIncidentStatus.under_review,
+          ],
+        },
+      },
+      select: { bookingId: true, status: true, type: true },
+    }),
   ]);
 
   for (const refund of refunds) {
@@ -53,6 +66,15 @@ export async function getBookingOperationsBlocks(
       result.set(dispute.bookingId, {
         blocked: true,
         reason: `dispute_${dispute.status}`,
+      });
+    }
+  }
+  for (const incident of incidents) {
+    const current = result.get(incident.bookingId);
+    if (current && !current.blocked) {
+      result.set(incident.bookingId, {
+        blocked: true,
+        reason: `incident_${incident.type}_${incident.status}`,
       });
     }
   }

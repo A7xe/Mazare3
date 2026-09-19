@@ -4,7 +4,11 @@ import { AppError } from '../lib/errors.js';
 import { loadPublicPropertyCardsByIds } from './property-search.service.js';
 
 const favoritePropertyInclude = {
-  media: { orderBy: { sortOrder: 'asc' as const }, take: 1 },
+  media: {
+    where: { removedFromListingAt: null },
+    orderBy: { sortOrder: 'asc' as const },
+    take: 1,
+  },
   amenities: { include: { amenity: true } },
   owner: { select: { status: true } },
 } as const;

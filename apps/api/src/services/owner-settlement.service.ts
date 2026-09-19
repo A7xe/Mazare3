@@ -30,6 +30,10 @@ import type { UserRole } from '@mazare3/db';
 import { getSettlementCycleDays } from '../config/settlement-cycle-config.js';
 import { getDueSettlementPeriod } from '../lib/settlement-cycle.js';
 import { isInternalQaRoutesEnabled } from '../lib/qa-mode.js';
+import {
+  applyPendingAdjustmentsToSettlement,
+  sumPendingAdjustmentsForOwner,
+} from './owner-reliability.service.js';
 
 function decimalToNumber(value: { toNumber(): number } | number): number {
   return typeof value === 'number' ? value : value.toNumber();
@@ -67,6 +71,7 @@ const paymentInclude = {
       paymentState: true,
       bookingStartAt: true,
       publicCode: true,
+      cancellationReasonCode: true,
       property: { select: { ownerId: true, slug: true } },
       slot: { select: { date: true } },
     },
@@ -156,6 +161,7 @@ function classifyRow(
     refundStatus: p.refundStatus,
     slotDate,
     bookingStartAt: p.booking.bookingStartAt ?? null,
+    cancellationReasonCode: p.booking.cancellationReasonCode ?? null,
     payoutAvailableAt: p.payoutAvailableAt ?? computePayoutAvailableAt(slotDate),
     ownerPayoutRecordStatus: p.payoutRecord?.status ?? null,
     ownerNetPayoutAmount: ownerNet,
@@ -211,7 +217,9 @@ export async function previewOwnerSettlement(
   const grossBookingAmount = roundMoney(eligible.reduce((s, i) => s + i.bookingTotalAmount, 0));
   const platformCommissionTotal = roundMoney(eligible.reduce((s, i) => s + i.platformCommissionAmount, 0));
   const refundAdjustmentTotal = roundMoney(eligible.reduce((s, i) => s + i.refundAdjustmentAmount, 0));
-  const ownerNetAmount = roundMoney(eligible.reduce((s, i) => s + i.ownerNetPayoutAmount, 0));
+  const grossOwnerNet = roundMoney(eligible.reduce((s, i) => s + i.ownerNetPayoutAmount, 0));
+  const pendingPenalties = await sumPendingAdjustmentsForOwner(ownerId);
+  const ownerNetAmount = roundMoney(Math.max(0, grossOwnerNet - pendingPenalties));
   const dates = eligible.map((i) => i.bookingDate).sort();
 
   return {
@@ -416,6 +424,22 @@ export async function createOwnerSettlement(
             };
           }),
         });
+
+        const penaltyApplied = await applyPendingAdjustmentsToSettlement({
+          ownerProfileId: ownerId,
+          settlementId: created.id,
+          maxDeductible: preview.ownerNetAmount,
+          tx,
+        });
+        if (penaltyApplied > 0) {
+          await tx.ownerSettlement.update({
+            where: { id: created.id },
+            data: {
+              ownerNetAmount: roundMoney(preview.ownerNetAmount - penaltyApplied),
+              refundAdjustmentTotal: roundMoney(preview.refundAdjustmentTotal + penaltyApplied),
+            },
+          });
+        }
 
         return tx.ownerSettlement.findUniqueOrThrow({
           where: { id: created.id },

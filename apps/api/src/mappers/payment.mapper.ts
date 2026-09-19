@@ -54,6 +54,7 @@ export function toPaymentSummary(
     redirectUrl?: string | null;
     managedFormOutcome?: PaymentSummary['managedFormOutcome'];
     savedCardOutcome?: PaymentSummary['savedCardOutcome'];
+    paymentPlanRevalidated?: PaymentSummary['paymentPlanRevalidated'];
   },
 ): PaymentSummary {
   return {
@@ -84,6 +85,7 @@ export function toPaymentSummary(
     succeededAt: p.succeededAt?.toISOString() ?? null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
+    paymentPlanRevalidated: extras?.paymentPlanRevalidated ?? null,
   };
 }
 

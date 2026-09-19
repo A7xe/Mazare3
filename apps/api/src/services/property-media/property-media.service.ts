@@ -9,7 +9,6 @@ import { resolveOwnerScope } from '../owner-access.js';
 import { assertOwnerNotPendingReview } from '../../lib/owner-property-mutation-guards.js';
 import {
   assertMediaProviderReady,
-  deleteStoredPropertyMedia,
   getActiveStorageProvider,
 } from './storage/get-storage-provider.js';
 import { loadMediaConfig } from '../../config/media-config.js';
@@ -109,7 +108,7 @@ function toPropertyMediaItem(
 
 async function loadOrderedMedia(propertyId: string): Promise<PropertyMediaItem[]> {
   const rows = await prisma.propertyMedia.findMany({
-    where: { propertyId },
+    where: { propertyId, removedFromListingAt: null },
     orderBy: { sortOrder: 'asc' },
   });
   return rows.map((m) =>
@@ -150,7 +149,7 @@ async function assertCanManageProperty(params: {
 
 async function getNextSortOrder(propertyId: string): Promise<number> {
   const maxRow = await prisma.propertyMedia.findFirst({
-    where: { propertyId },
+    where: { propertyId, removedFromListingAt: null },
     orderBy: { sortOrder: 'desc' },
     select: { sortOrder: true },
   });
@@ -179,7 +178,9 @@ export async function addPropertyMediaUrl(params: {
 
   validateImageUrl(params.url, allowedMimes);
 
-  const count = await prisma.propertyMedia.count({ where: { propertyId: params.propertyId } });
+  const count = await prisma.propertyMedia.count({
+    where: { propertyId: params.propertyId, removedFromListingAt: null },
+  });
   if (count >= MAX_MEDIA_PER_PROPERTY) {
     throw new AppError(400, 'MEDIA_LIMIT_REACHED', `Max ${MAX_MEDIA_PER_PROPERTY} images per property`);
   }
@@ -235,7 +236,9 @@ export async function addPropertyMediaFile(params: {
 
   assertMediaProviderReady();
 
-  const count = await prisma.propertyMedia.count({ where: { propertyId: params.propertyId } });
+  const count = await prisma.propertyMedia.count({
+    where: { propertyId: params.propertyId, removedFromListingAt: null },
+  });
   if (count >= MAX_MEDIA_PER_PROPERTY) {
     throw new AppError(400, 'MEDIA_LIMIT_REACHED', `Max ${MAX_MEDIA_PER_PROPERTY} images per property`);
   }
@@ -318,28 +321,20 @@ export async function deletePropertyMedia(params: {
   });
 
   const existing = await prisma.propertyMedia.findFirst({
-    where: { id: params.mediaId, propertyId: params.propertyId },
+    where: { id: params.mediaId, propertyId: params.propertyId, removedFromListingAt: null },
     select: { id: true, storageKey: true },
   });
   if (!existing) throw new AppError(404, 'NOT_FOUND', 'Media not found');
 
-  // External URL imports have storageKey=null — never delete from object storage.
-  // Dispatch by key shape so R2 / local / Cloudinary objects are not mixed.
-  if (existing.storageKey) {
-    try {
-      await deleteStoredPropertyMedia(existing.storageKey);
-    } catch (err) {
-      console.error('[media] remote delete failed (DB delete continues)', {
-        mediaId: params.mediaId,
-        message: err instanceof Error ? err.message : 'unknown',
-      });
-    }
-  }
-
+  // Phase 3C.4D.6 — soft-remove from live listing; retain row/storage for Booking snapshots.
+  // Do NOT delete object storage here — historical snapshot URLs/keys must remain recoverable.
   await prisma.$transaction(async (tx) => {
-    await tx.propertyMedia.delete({ where: { id: params.mediaId } });
+    await tx.propertyMedia.update({
+      where: { id: params.mediaId },
+      data: { removedFromListingAt: new Date() },
+    });
     const remaining = await tx.propertyMedia.findMany({
-      where: { propertyId: params.propertyId },
+      where: { propertyId: params.propertyId, removedFromListingAt: null },
       orderBy: { sortOrder: 'asc' },
       select: { id: true, sortOrder: true },
     });
@@ -353,10 +348,10 @@ export async function deletePropertyMedia(params: {
 
   await createAuditLog({
     actorUserId: params.actorUserId,
-    action: 'property.media_deleted',
+    action: 'property.media_removed_from_listing',
     entityType: 'property',
     entityId: params.propertyId,
-    metadata: { mediaId: params.mediaId },
+    metadata: { mediaId: params.mediaId, softRemoved: true },
     req: params.req,
   });
 
@@ -377,7 +372,7 @@ export async function setPropertyMediaCover(params: {
   });
 
   const ordered = await prisma.propertyMedia.findMany({
-    where: { propertyId: params.propertyId },
+    where: { propertyId: params.propertyId, removedFromListingAt: null },
     orderBy: { sortOrder: 'asc' },
     select: { id: true, sortOrder: true },
   });
@@ -423,7 +418,7 @@ export async function reorderPropertyMedia(params: {
   });
 
   const ordered = await prisma.propertyMedia.findMany({
-    where: { propertyId: params.propertyId },
+    where: { propertyId: params.propertyId, removedFromListingAt: null },
     orderBy: { sortOrder: 'asc' },
     select: { id: true },
   });
@@ -432,7 +427,7 @@ export async function reorderPropertyMedia(params: {
     throw new AppError(
       400,
       'MEDIA_REORDER_INVALID',
-      'Reorder must include all property media items',
+      'Reorder must include all live property media items',
     );
   }
 

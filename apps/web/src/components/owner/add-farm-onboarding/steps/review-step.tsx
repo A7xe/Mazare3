@@ -31,6 +31,9 @@ import {
 } from '@/lib/api-owner';
 import type { AddFarmFormState } from '../add-farm-wizard';
 import { jordanCityLabel } from './location-step';
+import { PropertyAuthorityPanel } from '@/components/owner/property-authority-panel';
+import { PropertyRegulatoryPanel } from '@/components/owner/property-regulatory-panel';
+import { PropertyPoolSafetyPanel } from '@/components/owner/property-pool-safety-panel';
 
 type PeriodPriceRow = { period: AvailabilityPeriod; price: number };
 
@@ -562,6 +565,10 @@ export function ReviewStep({
           </div>
         )}
       </ReviewSection>
+
+      {propertyId ? <PropertyAuthorityPanel propertyId={propertyId} /> : null}
+      {propertyId ? <PropertyRegulatoryPanel propertyId={propertyId} /> : null}
+      {propertyId ? <PropertyPoolSafetyPanel propertyId={propertyId} /> : null}
 
       {/* What happens next */}
       <section

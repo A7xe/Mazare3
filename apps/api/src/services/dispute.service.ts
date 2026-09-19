@@ -15,6 +15,7 @@ import type {
 import { BLOCKING_DISPUTE_STATUSES } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { assertPriorConsentActive } from './legal/data-processing-consent.service.js';
 import { notifyDisputeOpened } from './notification.service.js';
 import { syncPayoutStatusForPayment } from './payment-payout.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
@@ -61,6 +62,9 @@ export async function createDispute(
   input: CreateDisputeInput,
   req?: AuthenticatedRequest,
 ): Promise<DisputeSummary> {
+  // Marketplace dispute (not privacy complaint / DSR).
+  await assertPriorConsentActive(userId, 'support_and_dispute_processing');
+
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
     include: {

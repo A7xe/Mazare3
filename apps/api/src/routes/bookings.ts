@@ -7,6 +7,7 @@ import {
   requireRole,
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
+import { requireTermsAcceptance } from '../middleware/require-terms-acceptance.js';
 import { AppError } from '../lib/errors.js';
 import { createBooking } from '../services/booking.service.js';
 
@@ -17,6 +18,7 @@ bookingsRouter.post(
   requireAuth,
   attachUser,
   requireRole('customer'),
+  requireTermsAcceptance,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const parsed = createBookingSchema.safeParse(req.body);
     if (!parsed.success) {

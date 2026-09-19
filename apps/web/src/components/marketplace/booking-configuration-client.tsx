@@ -61,7 +61,7 @@ export function BookingConfigurationClient({
   if (property.bookingDisabled) {
     return (
       <div className="mx-auto max-w-lg rounded-3xl border border-primary/15 bg-surface p-6 text-center">
-        <p className="font-medium text-navy">{t('rebookUnavailable')}</p>
+        <p className="font-medium text-navy">{t('bookingUnavailable')}</p>
         <Button asChild className="mt-4">
           <Link href={`/properties/${property.slug}`}>{t('bookingConfigBack')}</Link>
         </Button>

@@ -16,7 +16,10 @@ import { paymentsRouter } from './routes/payments.js';
 import { paymentsPublicRouter } from './routes/payments-public.js';
 import { paymentWebhooksRouter } from './routes/payment-webhooks.js';
 import { internalRouter } from './routes/internal.js';
+import { opsJobsRouter } from './routes/ops-jobs.js';
 import { supportRouter } from './routes/support.js';
+import { legalRouter } from './routes/legal.js';
+import { adminLegalRouter } from './routes/admin-legal.js';
 import { isInternalQaRoutesEnabled } from './lib/qa-mode.js';
 
 export function createApp(): Express {
@@ -78,11 +81,15 @@ export function createApp(): Express {
   app.use(`${api}/bookings`, bookingsRouter);
   app.use(`${api}/me`, meRouter);
   app.use(`${api}/support`, supportRouter);
+  app.use(`${api}/legal`, legalRouter);
   app.use(`${api}/owner`, ownerRouter);
+  app.use(`${api}/admin/legal`, adminLegalRouter);
   app.use(`${api}/admin`, adminRouter);
   app.use(`${api}/payments/webhooks`, paymentWebhooksRouter);
   app.use(`${api}/payments`, paymentsPublicRouter);
   app.use(`${api}/payments`, paymentsRouter);
+  // Phase 3C.4E.2C — always mounted; mutating routes require INTERNAL_JOB_SECRET.
+  app.use(`${api}/ops`, opsJobsRouter);
   if (isInternalQaRoutesEnabled()) {
     app.use(`${api}/internal`, internalRouter);
   }

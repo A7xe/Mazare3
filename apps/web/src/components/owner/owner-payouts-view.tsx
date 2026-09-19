@@ -7,7 +7,13 @@ import { Loader2 } from 'lucide-react';
 import type { OwnerPayoutSummaryRow, OwnerSettlementSummary } from '@mazare3/shared';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { fetchOwnerPayouts, fetchOwnerSettlements } from '@/lib/api-owner-payouts';
+import { Link } from '@/i18n/navigation';
+import {
+  fetchOwnerPayouts,
+  fetchOwnerSettlements,
+  fetchOwnerFinancialAdjustments,
+  type OwnerFinancialAdjustmentRow,
+} from '@/lib/api-owner-payouts';
 import { PriceDisplay } from '@/components/marketplace/price-display';
 
 export function OwnerPayoutsView() {
@@ -17,6 +23,7 @@ export function OwnerPayoutsView() {
   const focus = searchParams.get('settlement');
   const [rows, setRows] = useState<OwnerPayoutSummaryRow[]>([]);
   const [settlements, setSettlements] = useState<OwnerSettlementSummary[]>([]);
+  const [adjustments, setAdjustments] = useState<OwnerFinancialAdjustmentRow[]>([]);
   const [openId, setOpenId] = useState<string | null>(focus);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,9 +31,14 @@ export function OwnerPayoutsView() {
   useEffect(() => {
     void (async () => {
       try {
-        const [payouts, stmts] = await Promise.all([fetchOwnerPayouts(), fetchOwnerSettlements()]);
+        const [payouts, stmts, adjs] = await Promise.all([
+          fetchOwnerPayouts(),
+          fetchOwnerSettlements(),
+          fetchOwnerFinancialAdjustments(),
+        ]);
         setRows(payouts.data);
         setSettlements(stmts.data);
+        setAdjustments(adjs.data);
         if (focus) setOpenId(focus);
       } catch (e) {
         setError(e instanceof Error ? e.message : t('loadError'));
@@ -107,6 +119,52 @@ export function OwnerPayoutsView() {
             </Card>
           ))
         )}
+      </section>
+
+      <section data-testid="owner-financial-adjustments" className="space-y-3">
+        <h2 className="text-lg font-bold text-navy">{t('adjustments.title')}</h2>
+        <p className="text-sm text-muted">{t('adjustments.subtitle')}</p>
+        {adjustments.length === 0 ? (
+          <Card className="glass-panel rounded-2xl border-primary/12">
+            <CardContent className="py-8 text-center text-muted">{t('adjustments.empty')}</CardContent>
+          </Card>
+        ) : (
+          adjustments.map((adj) => (
+            <Card
+              key={adj.id}
+              data-testid={`owner-adjustment-${adj.id}`}
+              className="glass-panel rounded-2xl border-primary/12"
+            >
+              <CardContent className="space-y-1 p-4 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-navy">
+                    {adj.bookingPublicCode ?? adj.bookingId}
+                  </p>
+                  <Badge variant="muted">{t(`adjustments.status.${adj.status}`)}</Badge>
+                </div>
+                <p className="text-muted">
+                  {adj.type === 'owner_cancel_penalty' ||
+                  adj.type === 'owner_no_show_penalty' ||
+                  adj.type === 'access_denied_penalty' ||
+                  adj.type === 'other'
+                    ? t(`adjustments.type.${adj.type}`)
+                    : adj.type}
+                </p>
+                <PriceDisplay amount={adj.amount} currency={adj.currency} locale={locale} />
+                <p className="text-muted">{adj.reason}</p>
+                <p className="text-xs text-muted">
+                  {t('adjustments.createdAt')}: {new Date(adj.createdAt).toLocaleString(locale)}
+                </p>
+              </CardContent>
+            </Card>
+          ))
+        )}
+        <p className="text-sm text-muted">
+          {t('adjustments.reviewHint')}{' '}
+          <Link href="/contact" className="text-primary underline-offset-2 hover:underline">
+            {t('adjustments.contactLink')}
+          </Link>
+        </p>
       </section>
 
       <p className="text-sm text-muted">{t('payoutsSubtitle')}</p>

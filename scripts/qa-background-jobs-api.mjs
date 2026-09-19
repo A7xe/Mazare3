@@ -48,6 +48,26 @@ async function login(creds) {
   return (await api('POST', '/auth/login', creds, false)).status === 200;
 }
 
+async function ensureCustomerTermsAccepted() {
+  const status = await api('GET', '/me/legal/status');
+  const termsGate = (status.json.data?.customer?.gates ?? []).find(
+    (g) => g.documentType === 'terms_and_conditions',
+  );
+  if (termsGate && termsGate.status !== 'missing' && termsGate.status !== 'reacceptance_required') {
+    return true;
+  }
+  if (!termsGate && status.json.data?.customer?.requiresAction === false) return true;
+  const doc = await api('GET', '/legal/documents/terms_and_conditions?lang=en', null, false);
+  const versionId = doc.json.data?.id;
+  if (!versionId) return false;
+  const accept = await api('POST', '/me/legal/accept', {
+    documentVersionId: versionId,
+    context: 'login_reacceptance',
+    sourceSurface: 'qa.background-jobs',
+  });
+  return accept.status === 201 || accept.status === 200;
+}
+
 async function ensureSlot() {
   const r = await api('POST', `/internal/properties/${SLUG}/ensure-available-slot`, {}, false);
   if (r.status === 200 && r.json.data?.date) return r.json.data;
@@ -58,10 +78,19 @@ async function main() {
   console.log('\n📦 Phase 10H.4 Background Jobs QA\n');
 
   const catalog = await api('GET', '/internal/jobs', null, false);
-  if (catalog.status === 200 && Array.isArray(catalog.json.data?.jobs) && catalog.json.data.jobs.length >= 4) {
+  if (catalog.status === 200 && Array.isArray(catalog.json.data?.jobs) && catalog.json.data.jobs.length >= 5) {
     pass('internal jobs catalog lists registered jobs');
   } else {
     fail('jobs catalog', `${catalog.status} ${JSON.stringify(catalog.json)}`);
+  }
+  if (
+    catalog.status === 200 &&
+    Array.isArray(catalog.json.data?.jobs) &&
+    catalog.json.data.jobs.includes('auto-cancel-unpaid-balances')
+  ) {
+    pass('auto-cancel-unpaid-balances job is registered');
+  } else {
+    fail('auto-cancel job registered', JSON.stringify(catalog.json.data?.jobs));
   }
 
   await login(CUSTOMER);
@@ -88,6 +117,10 @@ async function main() {
 
   const slot = await ensureSlot();
   await login(CUSTOMER);
+  if (!(await ensureCustomerTermsAccepted())) {
+    fail('customer terms accept', 'failed');
+    process.exit(1);
+  }
   const created = await api('POST', '/bookings', {
     propertySlug: SLUG,
     date: slot.date,
@@ -150,6 +183,7 @@ async function main() {
     bookingId: holdId,
     method: 'card',
     purpose: 'deposit',
+    contactPhone: '+962790000001',
   });
   const payId = holdIntent.json.data?.id;
   if (!payId || holdIntent.status !== 201) {
@@ -177,6 +211,10 @@ async function main() {
   }
 
   await login(CUSTOMER);
+  if (!(await ensureCustomerTermsAccepted())) {
+    fail('customer terms accept (paid)', 'failed');
+    process.exit(1);
+  }
   const paidSlot = await ensureSlot();
   const paidBook = await api('POST', '/bookings', {
     propertySlug: SLUG,
@@ -189,13 +227,13 @@ async function main() {
     fail('paid booking', `${paidBook.status} ${JSON.stringify(paidBook.json)}`);
     process.exit(1);
   }
-  const dep = await api('POST', '/payments/create-intent', { bookingId: paidId, method: 'card', purpose: 'deposit' });
+  const dep = await api('POST', '/payments/create-intent', { bookingId: paidId, method: 'card', purpose: 'deposit', contactPhone: '+962790000001' });
   if (!dep.json.data?.id || dep.status !== 201) {
     fail('paid deposit intent', `${dep.status} ${JSON.stringify(dep.json)}`);
     process.exit(1);
   }
   await api('POST', `/payments/${dep.json.data.id}/simulate-success`, {});
-  const bal = await api('POST', '/payments/create-intent', { bookingId: paidId, method: 'card', purpose: 'balance' });
+  const bal = await api('POST', '/payments/create-intent', { bookingId: paidId, method: 'card', purpose: 'balance', contactPhone: '+962790000001' });
   if (!bal.json.data?.id || bal.status !== 201) {
     fail('paid balance intent', `${bal.status} ${JSON.stringify(bal.json)}`);
     process.exit(1);
@@ -253,10 +291,54 @@ async function main() {
   }
 
   const runDue = await api('POST', '/internal/jobs/run-due', {}, false);
-  if (runDue.status === 200 && Array.isArray(runDue.json.data?.jobs) && runDue.json.data.jobs.length >= 4) {
+  if (runDue.status === 200 && Array.isArray(runDue.json.data?.jobs) && runDue.json.data.jobs.length >= 5) {
     pass('run-due executes all registered jobs with structured report');
   } else {
     fail('run-due', `${runDue.status} jobs=${runDue.json.data?.jobs?.length}`);
+  }
+
+  // Phase 3C.4A.1 — unpaid balance auto-cancel job (deposit paid, balance due past)
+  const balSlot = await ensureSlot();
+  await login(CUSTOMER);
+  const balBook = await api('POST', '/bookings', {
+    propertySlug: SLUG,
+    date: balSlot.date,
+    period: balSlot.period,
+    guestsCount: 2,
+  });
+  const balId = balBook.json.data?.id;
+  if (!balId || balBook.status !== 201) {
+    fail('balance auto-cancel booking', `${balBook.status}`);
+  } else {
+    const dep = await api('POST', '/payments/create-intent', {
+      bookingId: balId,
+      method: 'card',
+      purpose: 'deposit',
+      contactPhone: '+962790000001',
+    });
+    await api('POST', `/payments/${dep.json.data.id}/simulate-success`, {});
+    await api('POST', `/internal/bookings/${balId}/backdate-balance-due`, {}, false);
+    const balJob = await api('POST', '/internal/jobs/auto-cancel-unpaid-balances/run', {}, false);
+    const balRow = await api('GET', `/me/bookings/${balId}`);
+    if (
+      balJob.status === 200 &&
+      (balJob.json.data?.summary?.cancelled ?? 0) >= 1 &&
+      balRow.json.data?.status === 'cancelled' &&
+      balRow.json.data?.cancellationReasonCode === 'BALANCE_NOT_PAID'
+    ) {
+      pass('auto-cancel-unpaid-balances job cancels overdue deposit booking');
+    } else {
+      fail(
+        'auto-cancel unpaid balances',
+        `${balJob.status} ${JSON.stringify(balJob.json.data)} status=${balRow.json.data?.status}`,
+      );
+    }
+    const balJob2 = await api('POST', '/internal/jobs/auto-cancel-unpaid-balances/run', {}, false);
+    if (balJob2.status === 200 && (balJob2.json.data?.summary?.cancelled ?? -1) === 0) {
+      pass('auto-cancel-unpaid-balances job idempotent on second run');
+    } else {
+      fail('auto-cancel idempotent', JSON.stringify(balJob2.json.data?.summary));
+    }
   }
 
   printSummary();

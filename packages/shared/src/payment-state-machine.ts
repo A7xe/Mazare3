@@ -51,9 +51,22 @@ export function assertPaymentStateTransition(
 
 export function paymentStateAfterCapture(params: {
   collectionMode: 'full' | 'deposit_balance' | string;
-  purpose: 'full' | 'deposit' | 'balance' | string;
+  purpose: 'full' | 'deposit' | 'balance' | 'reschedule_difference' | string;
   remainingAfterFils: number;
+  /** Used for reschedule_difference so we do not force fully_paid incorrectly. */
+  currentState?: BookingPaymentState | string;
 }): BookingPaymentState {
+  // Reschedule delta: do not treat purpose as a normal installment that forces fully_paid.
+  // Prefer keep current state; payment.service may override after finalize.
+  if (params.purpose === 'reschedule_difference') {
+    if (params.currentState === 'fully_paid' || params.remainingAfterFils <= 0) {
+      return 'fully_paid';
+    }
+    if (params.currentState && params.currentState in PAYMENT_STATE_TRANSITIONS) {
+      return params.currentState as BookingPaymentState;
+    }
+    return 'fully_paid';
+  }
   if (params.purpose === 'full' || params.collectionMode === 'full' || params.remainingAfterFils <= 0) {
     return 'fully_paid';
   }

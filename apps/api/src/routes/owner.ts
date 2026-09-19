@@ -18,6 +18,11 @@ import {
   updatePropertyPromotionSchema,
   createPropertyCouponSchema,
   createSponsoredOrderSchema,
+  ownerCancelBookingSchema,
+  reportCustomerNoShowSchema,
+  verifyCheckInSchema,
+  requestRescheduleSchema,
+  respondRescheduleSchema,
 } from '@mazare3/shared';
 import {
   attachUser,
@@ -26,6 +31,7 @@ import {
   requireCustomerOnly,
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
+import { requireTermsAcceptance } from '../middleware/require-terms-acceptance.js';
 import { AppError, formatZodErrors } from '../lib/errors.js';
 import { asyncHandler } from '../middleware/error-handler.js';
 import {
@@ -49,8 +55,20 @@ import {
   getOwnerSettlementForOwner,
   listOwnerSettlementsForOwner,
 } from '../services/owner-settlement.service.js';
+import { listOwnerFinancialAdjustmentsForOwner } from '../services/owner-reliability.service.js';
 import { listOwnerReviews } from '../services/review.service.js';
 import { acceptOwnerBooking, rejectOwnerBooking } from '../services/booking.service.js';
+import {
+  cancelConfirmedBookingByOwner,
+  previewOwnerCancellation,
+} from '../services/owner-cancellation.service.js';
+import { reportCustomerNoShow } from '../services/no-show.service.js';
+import { verifyCheckInByOwner, getCheckInStatusForOwner } from '../services/check-in.service.js';
+import {
+  requestOwnerReschedule,
+  respondToRescheduleRequest,
+  previewReschedulePricing,
+} from '../services/reschedule.service.js';
 import { getOwnerPerformance } from '../services/owner-performance.service.js';
 import {
   getMyOwnerApplication,
@@ -69,6 +87,7 @@ import {
   uploadPartnerDocument,
   deletePartnerDocument,
 } from '../services/partner-onboarding.service.js';
+import { getOwnerLegalCommercialSummary } from '../services/legal/commercial-terms-acceptance.service.js';
 import { readPartnerDocumentFile } from '../services/partner-documents/private-storage.js';
 import { partnerDocumentUpload } from '../middleware/partner-document-upload.js';
 import {
@@ -83,6 +102,31 @@ import {
   submitOwnerPropertyForReview,
   updateOwnerProperty,
 } from '../services/owner-property.service.js';
+import {
+  listOperatorParties,
+  upsertOperatorParty,
+  patchAccountHolderRelation,
+  getPropertyAuthorityPackage,
+  patchPropertyAuthority,
+  recordPropertyAuthorityAttestation,
+  uploadPropertyAuthorityEvidence,
+  getOwnerAccessibleAuthorityDocument,
+} from '../services/property-authority.service.js';
+import {
+  upsertOperatorPartySchema,
+  patchAccountHolderRelationSchema,
+  patchPropertyAuthoritySchema,
+  recordAuthorityAttestationSchema,
+  AUTHORITY_DOCUMENT_TYPES,
+  putPropertyActivitiesSchema,
+} from '@mazare3/shared';
+import type { PartnerDocumentType } from '@mazare3/db';
+import {
+  putPropertyActivities,
+  getPropertyRegulatoryPackage,
+  uploadRegulatoryEvidence,
+  getOwnerAccessibleRegulatoryEvidence,
+} from '../services/property-regulatory.service.js';
 import {
   createOwnerPromotion,
   listOwnerPromotions,
@@ -117,6 +161,7 @@ ownerRouter.post(
   '/apply',
   ...requireCustomerOnly,
   attachUser,
+  requireTermsAcceptance,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const parsed = ownerApplySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -291,6 +336,36 @@ ownerRouter.get(
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const view = await getPartnerOnboarding(req.session!.userId);
     res.json({ data: view.commercialTerms });
+  }),
+);
+
+ownerRouter.get(
+  '/legal-commercial-summary',
+  ...ownerOnboardingAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const view = await getPartnerOnboarding(req.session!.userId);
+    if (!view.ownerProfileId) {
+      res.json({
+        data: {
+          ownerAgreement: null,
+          commission: {
+            arrangement: 'standard_18' as const,
+            source: 'platform_default' as const,
+            commissionPercent: 18,
+            termsId: null,
+            version: null,
+            effectiveFrom: null,
+            effectiveTo: null,
+            status: null,
+          },
+          customTermsAcceptanceMissing: false,
+          latestCustomAcceptance: null,
+        },
+      });
+      return;
+    }
+    const data = await getOwnerLegalCommercialSummary(view.ownerProfileId);
+    res.json({ data });
   }),
 );
 
@@ -592,10 +667,358 @@ ownerRouter.post(
   }),
 );
 
+/** Phase 3C.4D.3 — operator parties (contracting / declared owner) */
+ownerRouter.get(
+  '/operator-parties',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listOperatorParties(req.session!.userId, req.session!.role);
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/operator-parties',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = upsertOperatorPartySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await upsertOperatorParty(
+      req.session!.userId,
+      req.session!.role,
+      parsed.data,
+      req,
+    );
+    res.status(201).json({ data });
+  }),
+);
+
+ownerRouter.patch(
+  '/onboarding/account-holder-relation',
+  ...ownerOnboardingAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = patchAccountHolderRelationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await patchAccountHolderRelation(
+      req.session!.userId,
+      req.session!.role,
+      parsed.data.accountHolderRelation,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/properties/:id/authority',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const data = await getPropertyAuthorityPackage(
+      req.session!.userId,
+      req.session!.role,
+      id,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.patch(
+  '/properties/:id/authority',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const parsed = patchPropertyAuthoritySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await patchPropertyAuthority(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/properties/:id/authority/attest',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const parsed = recordAuthorityAttestationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await recordPropertyAuthorityAttestation(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data.sourceSurface,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/properties/:id/authority/documents',
+  partnerDocumentUpload.single('file'),
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    }
+    const file = req.file;
+    if (!file) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'File is required');
+    }
+    const documentType = typeof req.body?.documentType === 'string' ? req.body.documentType : '';
+    if (!(AUTHORITY_DOCUMENT_TYPES as readonly string[]).includes(documentType)) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid authority document type');
+    }
+    const data = await uploadPropertyAuthorityEvidence({
+      userId: req.session!.userId,
+      role: req.session!.role,
+      propertyId: id,
+      documentType: documentType as PartnerDocumentType,
+      originalFileName: file.originalname,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+      buffer: file.buffer,
+      req,
+    });
+    res.status(201).json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/properties/:id/authority/documents/:docId/file',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const docId = req.params.docId;
+    if (!docId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Document id is required');
+    }
+    const { doc, buffer } = await getOwnerAccessibleAuthorityDocument(
+      req.session!.userId,
+      req.session!.role,
+      docId,
+    );
+    res.setHeader('Content-Type', doc.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(doc.originalFileName)}"`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  }),
+);
+
+/** Phase 3C.4D.4A — Property activity + regulatory package */
+ownerRouter.get(
+  '/properties/:id/regulatory',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const data = await getPropertyRegulatoryPackage(
+      req.session!.userId,
+      req.session!.role,
+      id,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.put(
+  '/properties/:id/activities',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const parsed = putPropertyActivitiesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await putPropertyActivities(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/properties/:id/regulatory/requirements/:requirementId/evidence',
+  partnerDocumentUpload.single('file'),
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    const requirementId = req.params.requirementId;
+    if (!id || !requirementId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Property and requirement ids are required');
+    }
+    const file = req.file;
+    if (!file) throw new AppError(400, 'VALIDATION_ERROR', 'File is required');
+    const data = await uploadRegulatoryEvidence({
+      userId: req.session!.userId,
+      role: req.session!.role,
+      propertyId: id,
+      requirementId,
+      originalFileName: file.originalname,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+      buffer: file.buffer,
+      label: typeof req.body?.label === 'string' ? req.body.label : undefined,
+      documentNumber:
+        typeof req.body?.documentNumber === 'string' ? req.body.documentNumber : undefined,
+      issuerName: typeof req.body?.issuerName === 'string' ? req.body.issuerName : undefined,
+      issueDate: typeof req.body?.issueDate === 'string' ? req.body.issueDate : undefined,
+      expiresAt: typeof req.body?.expiresAt === 'string' ? req.body.expiresAt : undefined,
+      req,
+    });
+    res.status(201).json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/properties/:id/regulatory/evidence/:evidenceId/file',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const evidenceId = req.params.evidenceId;
+    if (!evidenceId) throw new AppError(400, 'VALIDATION_ERROR', 'Evidence id is required');
+    const { evidence, buffer } = await getOwnerAccessibleRegulatoryEvidence(
+      req.session!.userId,
+      req.session!.role,
+      evidenceId,
+    );
+    res.setHeader('Content-Type', evidence.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(evidence.originalFileName)}"`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
+  }),
+);
+
+/** Phase 3C.4D.5 — Pool safety profile + attestation */
+ownerRouter.get(
+  '/properties/:id/pool-safety',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { getPoolSafetyPackage, listSafetyDisclosures } = await import(
+      '../services/property-pool-safety.service.js'
+    );
+    const data = await getPoolSafetyPackage(req.session!.userId, req.session!.role, id);
+    const disclosures = await listSafetyDisclosures(id);
+    res.json({ data: { ...data, safetyDisclosures: disclosures } });
+  }),
+);
+
+ownerRouter.put(
+  '/properties/:id/pool-safety',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { putPoolSafetyProfileSchema } = await import('@mazare3/shared');
+    const parsed = putPoolSafetyProfileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const { putPoolSafetyProfile } = await import('../services/property-pool-safety.service.js');
+    const data = await putPoolSafetyProfile(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/properties/:id/pool-safety/attest',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { recordPoolSafetyAttestationSchema } = await import('@mazare3/shared');
+    const parsed = recordPoolSafetyAttestationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const { recordPoolSafetyAttestation } = await import(
+      '../services/property-pool-safety.service.js'
+    );
+    const data = await recordPoolSafetyAttestation(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data.sourceSurface,
+      req,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/properties/:id/safety-disclosures',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Property id is required');
+    const { putSafetyDisclosureSchema } = await import('@mazare3/shared');
+    const parsed = putSafetyDisclosureSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const { upsertSafetyDisclosure } = await import('../services/property-pool-safety.service.js');
+    const data = await upsertSafetyDisclosure(
+      req.session!.userId,
+      req.session!.role,
+      id,
+      parsed.data,
+      undefined,
+      req,
+    );
+    res.status(201).json({ data });
+  }),
+);
+
 ownerRouter.get(
   '/bookings',
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const data = await listOwnerBookings(req.session!.userId, req.session!.role);
+    res.json({ data });
+  }),
+);
+
+/** Phase 3C.4D.6 — Owner view of Booking-time listing snapshot (what they accepted). */
+ownerRouter.get(
+  '/bookings/:id/listing-snapshot',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Booking id is required');
+    }
+    const { getOwnerBookingListingSnapshot } = await import(
+      '../services/booking-listing-snapshot.service.js'
+    );
+    const data = await getOwnerBookingListingSnapshot(
+      req.session!.userId,
+      req.session!.role,
+      id,
+    );
     res.json({ data });
   }),
 );
@@ -609,6 +1032,140 @@ ownerRouter.post(
       return;
     }
     const data = await acceptOwnerBooking(req.session!.userId, req.session!.role, id, req);
+    res.json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/bookings/:id/cancel-preview',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    const reasonCode = String(req.query.reasonCode ?? 'OTHER');
+    const preview = await previewOwnerCancellation(
+      req.session!.userId,
+      req.session!.role,
+      id!,
+      reasonCode as import('@mazare3/shared').OwnerCancellationReasonCode,
+    );
+    res.json({ data: preview });
+  }),
+);
+
+ownerRouter.post(
+  '/bookings/:id/cancel',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Booking id required');
+    const parsed = ownerCancelBookingSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await cancelConfirmedBookingByOwner({
+      ownerUserId: req.session!.userId,
+      role: req.session!.role,
+      bookingId: id,
+      reasonCode: parsed.data.reasonCode,
+      note: parsed.data.note,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/bookings/:id/report-no-show',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) throw new AppError(400, 'VALIDATION_ERROR', 'Booking id required');
+    const parsed = reportCustomerNoShowSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await reportCustomerNoShow({
+      ownerUserId: req.session!.userId,
+      role: req.session!.role,
+      bookingId: id,
+      evidence: parsed.data.evidence,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/bookings/:id/check-in',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await getCheckInStatusForOwner(
+      req.session!.userId,
+      req.session!.role,
+      req.params.id!,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/bookings/:id/verify-check-in',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = verifyCheckInSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await verifyCheckInByOwner({
+      ownerUserId: req.session!.userId,
+      role: req.session!.role,
+      bookingId: req.params.id!,
+      pin: parsed.data.pin,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/bookings/:id/reschedule-preview',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const toSlotId = String(req.query.toSlotId ?? '').trim();
+    if (!toSlotId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'toSlotId is required');
+    }
+    const data = await previewReschedulePricing(req.params.id!, toSlotId, 'owner');
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/bookings/:id/reschedule',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = requestRescheduleSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await requestOwnerReschedule({
+      ownerUserId: req.session!.userId,
+      role: req.session!.role,
+      bookingId: req.params.id!,
+      toSlotId: parsed.data.toSlotId,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+ownerRouter.post(
+  '/reschedule-requests/:id/respond',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = respondRescheduleSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await respondToRescheduleRequest({
+      responderUserId: req.session!.userId,
+      role: req.session!.role,
+      requestId: req.params.id!,
+      accept: parsed.data.accept,
+      req,
+    });
     res.json({ data });
   }),
 );
@@ -659,6 +1216,17 @@ ownerRouter.get(
       req.session!.userId,
       req.session!.role,
       req.params.id!,
+    );
+    res.json({ data });
+  }),
+);
+
+ownerRouter.get(
+  '/financial-adjustments',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listOwnerFinancialAdjustmentsForOwner(
+      req.session!.userId,
+      req.session!.role,
     );
     res.json({ data });
   }),

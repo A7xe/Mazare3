@@ -17,6 +17,7 @@ import { OPEN_SUPPORT_TICKET_STATUSES } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { createAuditLog } from './audit.service.js';
+import { assertPriorConsentActive } from './legal/data-processing-consent.service.js';
 import {
   notifySupportResponsePosted,
   notifySupportStatusChanged,
@@ -112,6 +113,9 @@ export async function createBookingSupportTicket(
   input: CreateBookingSupportTicketInput,
   req?: AuthenticatedRequest,
 ): Promise<SupportTicketSummary> {
+  // Marketplace support (not DSR / privacy complaint) — purpose-specific Prior Consent.
+  await assertPriorConsentActive(userId, 'support_and_dispute_processing');
+
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
     select: { id: true, publicCode: true, status: true, paymentState: true },
@@ -183,6 +187,12 @@ export async function createGeneralSupportTicket(
   const subject = input.subject.trim();
   const message = input.message.trim();
   const category = input.category ?? 'other';
+
+  // Authenticated marketplace support requires Prior Consent; guests have no user consent row.
+  // DSR / privacy complaints must NOT use this path.
+  if (actor?.userId) {
+    await assertPriorConsentActive(actor.userId, 'support_and_dispute_processing');
+  }
 
   if (actor?.userId) {
     const recent = await prisma.supportTicket.findFirst({

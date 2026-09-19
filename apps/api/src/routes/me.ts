@@ -6,6 +6,10 @@ import {
   createDisputeSchema,
   createReviewSchema,
   createBookingSupportTicketSchema,
+  requestRescheduleSchema,
+  respondRescheduleSchema,
+  reportArrivalProblemSchema,
+  customerForceMajeureChoiceSchema,
 } from '@mazare3/shared';
 import { AppError, formatZodErrors } from '../lib/errors.js';
 import {
@@ -45,6 +49,49 @@ import {
   setDefaultSavedPaymentMethod,
 } from '../services/saved-payment-method.service.js';
 import { getCustomerHomePersonalization } from '../services/home-personalization.service.js';
+import { ensureCheckInCodeForCustomer } from '../services/check-in.service.js';
+import {
+  requestCustomerReschedule,
+  respondToRescheduleRequest,
+  previewReschedulePricing,
+  mapPendingRescheduleByBookingIds,
+} from '../services/reschedule.service.js';
+import { reportOwnerArrivalProblem } from '../services/no-show.service.js';
+import { customerElectForceMajeureResolution } from '../services/force-majeure.service.js';
+import {
+  bookingLegalAckSchema,
+  createDataSubjectRequestSchema,
+  grantPrivacyConsentSchema,
+  grantDataProcessingConsentSchema,
+  dataProcessingConsentPurposeSchema,
+  privacyConsentPurposeSchema,
+  recordLegalAcceptanceSchema,
+} from '@mazare3/shared';
+import { recordAcceptance, getAcceptanceStatus } from '../services/legal/legal-acceptance.service.js';
+import {
+  evaluateCustomerReacceptanceGates,
+  evaluateOwnerReacceptanceGates,
+} from '../services/legal/legal-reacceptance.service.js';
+import {
+  grantConsent,
+  withdrawConsent,
+  listConsentsForUser,
+} from '../services/legal/privacy-consent.service.js';
+import {
+  grantDataProcessingConsent,
+  withdrawDataProcessingConsent,
+  listPriorConsentStatusForUser,
+  listPriorConsentHistoryForUser,
+} from '../services/legal/data-processing-consent.service.js';
+import {
+  createDataSubjectRequest,
+  listDataSubjectRequestsForUser,
+} from '../services/legal/data-subject-request.service.js';
+import {
+  createSnapshotForBooking,
+  getCustomerLegalSnapshotSummary,
+} from '../services/legal/booking-legal-snapshot.service.js';
+import { LegalDocumentType } from '@mazare3/db';
 
 export const meRouter = Router();
 
@@ -159,6 +206,41 @@ meRouter.get(
       res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' });
       return;
     }
+    res.json({ data });
+  }),
+);
+
+/** Customer-safe legal snapshot — titles/versions/dates only (no content hashes). */
+meRouter.get(
+  '/bookings/:id/legal-snapshot',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Booking id is required');
+    }
+    const booking = await getMyBookingById(req.session!.userId, id);
+    if (!booking) {
+      throw new AppError(404, 'NOT_FOUND', 'Booking not found');
+    }
+    const data = await getCustomerLegalSnapshotSummary(id);
+    res.json({ data });
+  }),
+);
+
+/** Phase 3C.4D.6 — Customer Booking-time listing snapshot (immutable evidence). */
+meRouter.get(
+  '/bookings/:id/listing-snapshot',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id;
+    if (!id) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Booking id is required');
+    }
+    const { getCustomerBookingListingSnapshot } = await import(
+      '../services/booking-listing-snapshot.service.js'
+    );
+    const data = await getCustomerBookingListingSnapshot(req.session!.userId, id);
     res.json({ data });
   }),
 );
@@ -322,6 +404,117 @@ meRouter.post(
   }),
 );
 
+meRouter.get(
+  '/bookings/:id/check-in-code',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await ensureCheckInCodeForCustomer(req.session!.userId, req.params.id!);
+    res.json({ data });
+  }),
+);
+
+meRouter.get(
+  '/bookings/:id/reschedule-preview',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const toSlotId = String(req.query.toSlotId ?? '').trim();
+    if (!toSlotId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'toSlotId is required');
+    }
+    // Ownership check via booking lookup inside preview after verifying user booking
+    const booking = await getMyBookingById(req.session!.userId, req.params.id!);
+    if (!booking) throw new AppError(404, 'NOT_FOUND', 'Booking not found');
+    const forceMajeure =
+      req.query.forceMajeure === '1' ||
+      req.query.forceMajeure === 'true' ||
+      booking.forceMajeureResolution?.awaitingCustomerChoice === true;
+    const voluntaryUpgrade =
+      req.query.voluntaryUpgrade === '1' || req.query.voluntaryUpgrade === 'true';
+    const data = await previewReschedulePricing(req.params.id!, toSlotId, 'customer', {
+      forceMajeure,
+      voluntaryUpgrade,
+    });
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/bookings/:id/reschedule',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = requestRescheduleSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await requestCustomerReschedule({
+      customerUserId: req.session!.userId,
+      bookingId: req.params.id!,
+      toSlotId: parsed.data.toSlotId,
+      req,
+    });
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.post(
+  '/reschedule-requests/:id/respond',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = respondRescheduleSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await respondToRescheduleRequest({
+      responderUserId: req.session!.userId,
+      role: req.session!.role,
+      requestId: req.params.id!,
+      accept: parsed.data.accept,
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/bookings/:id/report-arrival-problem',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = reportArrivalProblemSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await reportOwnerArrivalProblem({
+      customerUserId: req.session!.userId,
+      bookingId: req.params.id!,
+      type: parsed.data.type,
+      description: parsed.data.description,
+      req,
+    });
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.post(
+  '/bookings/:id/force-majeure/choose',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = customerForceMajeureChoiceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await customerElectForceMajeureResolution({
+      customerUserId: req.session!.userId,
+      bookingId: req.params.id!,
+      choice: parsed.data.choice,
+      toSlotId: parsed.data.toSlotId,
+      voluntaryUpgrade: parsed.data.voluntaryUpgrade,
+      source: parsed.data.source ?? 'customer_my_bookings',
+      req,
+    });
+    res.json({ data });
+  }),
+);
+
 /** CB-5A — list saved payment methods (masked metadata only; never providerToken). */
 meRouter.get(
   '/payment-methods',
@@ -357,5 +550,194 @@ meRouter.delete(
     }
     const data = await revokeSavedPaymentMethod(req.session!.userId, id, req);
     res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/legal/accept',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = recordLegalAcceptanceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await recordAcceptance(req.session!.userId, parsed.data, { req });
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.get(
+  '/legal/status',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const userId = req.session!.userId;
+    const customer = await evaluateCustomerReacceptanceGates(userId);
+    const owner = await evaluateOwnerReacceptanceGates(userId);
+    const terms = await getAcceptanceStatus(userId, LegalDocumentType.terms_and_conditions);
+    const privacy = await getAcceptanceStatus(userId, LegalDocumentType.privacy_policy);
+    const cancellation = await getAcceptanceStatus(
+      userId,
+      LegalDocumentType.cancellation_refund_policy,
+    );
+    const bookingTerms = await getAcceptanceStatus(userId, LegalDocumentType.booking_terms);
+    const priorConsent = await listPriorConsentStatusForUser(userId);
+    res.json({
+      data: {
+        customer,
+        owner,
+        priorConsent,
+        byType: {
+          terms_and_conditions: terms,
+          privacy_policy: privacy,
+          cancellation_refund_policy: cancellation,
+          booking_terms: bookingTerms,
+          owner_agreement: owner.gates[0] ?? null,
+        },
+      },
+    });
+  }),
+);
+
+meRouter.post(
+  '/privacy-consents',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = grantPrivacyConsentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await grantConsent(req.session!.userId, parsed.data, req);
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.post(
+  '/privacy-consents/:purpose/withdraw',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const purpose = privacyConsentPurposeSchema.safeParse(req.params.purpose);
+    if (!purpose.success) {
+      throw new AppError(400, 'INVALID_PURPOSE', 'Unknown privacy consent purpose');
+    }
+    const data = await withdrawConsent(req.session!.userId, purpose.data, req);
+    res.json({ data });
+  }),
+);
+
+meRouter.get(
+  '/privacy-consents',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listConsentsForUser(req.session!.userId);
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/prior-consents',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = grantDataProcessingConsentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await grantDataProcessingConsent(req.session!.userId, parsed.data, req);
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.post(
+  '/prior-consents/:purpose/withdraw',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const purpose = dataProcessingConsentPurposeSchema.safeParse(req.params.purpose);
+    if (!purpose.success) {
+      throw new AppError(400, 'INVALID_PURPOSE', 'Unknown Prior Consent purpose');
+    }
+    const data = await withdrawDataProcessingConsent(req.session!.userId, purpose.data, req);
+    res.json({ data });
+  }),
+);
+
+meRouter.get(
+  '/prior-consents',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listPriorConsentStatusForUser(req.session!.userId);
+    res.json({ data });
+  }),
+);
+
+meRouter.get(
+  '/prior-consents/history',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listPriorConsentHistoryForUser(req.session!.userId);
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/data-subject-requests',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const parsed = createDataSubjectRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const data = await createDataSubjectRequest(req.session!.userId, parsed.data, req);
+    res.status(201).json({ data });
+  }),
+);
+
+meRouter.get(
+  '/data-subject-requests',
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const data = await listDataSubjectRequestsForUser(req.session!.userId);
+    res.json({ data });
+  }),
+);
+
+meRouter.post(
+  '/bookings/:id/legal-ack',
+  requireCustomerRole,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const bookingId = req.params.id;
+    if (!bookingId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Booking id is required');
+    }
+    const parsed = bookingLegalAckSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Invalid body', formatZodErrors(parsed.error));
+    }
+    const booking = await getMyBookingById(req.session!.userId, bookingId);
+    if (!booking) {
+      throw new AppError(404, 'NOT_FOUND', 'Booking not found');
+    }
+
+    const ids = parsed.data.acceptedDocumentVersionIds;
+    const acceptances = [];
+    const pairs: Array<{ id?: string; context: 'checkout' }> = [
+      { id: ids.terms, context: 'checkout' },
+      { id: ids.cancellation, context: 'checkout' },
+      { id: ids.bookingTerms, context: 'checkout' },
+      { id: ids.privacy, context: 'checkout' },
+    ];
+    for (const pair of pairs) {
+      if (!pair.id) continue;
+      acceptances.push(
+        await recordAcceptance(
+          req.session!.userId,
+          {
+            documentVersionId: pair.id,
+            context: pair.context,
+            sourceSurface: 'me.bookings.legal-ack',
+            relatedBookingId: bookingId,
+          },
+          { req },
+        ),
+      );
+    }
+
+    const snapshot = await createSnapshotForBooking(bookingId, {
+      versionIds: {
+        termsVersionId: ids.terms,
+        cancellationPolicyVersionId: ids.cancellation,
+        bookingTermsVersionId: ids.bookingTerms,
+        privacyNoticeVersionId: ids.privacy,
+      },
+    });
+
+    res.status(201).json({ data: { acceptances, snapshot } });
   }),
 );

@@ -141,6 +141,12 @@ export type NormalizedGatewayEvent = {
   providerPaymentId: string | null;
   /** Provider event id for webhook idempotency (optional). */
   providerEventId: string | null;
+  /** Phase 3C.4E.2B — provider-reported capture amount (JOD), when present. */
+  amount?: number | null;
+  /** Phase 3C.4E.2B — provider-reported currency, when present. */
+  currency?: string | null;
+  /** Purpose parsed from cart_id when present. */
+  cartPurpose?: string | null;
   raw: unknown;
 };
 
@@ -196,6 +202,12 @@ export function providerIdempotencyKey(paymentId: string, purpose: string): stri
   return `mazare3_pay_${paymentId}_${purpose}`;
 }
 
-export function providerRefundIdempotencyKey(refundRequestId: string): string {
-  return `mazare3_refund_${refundRequestId}`;
+export function providerRefundIdempotencyKey(
+  refundRequestId: string,
+  paymentOrAllocationKey?: string,
+): string {
+  // Phase 3C.4E.2A — per-capture key when paymentId (or allocation discriminator) provided.
+  return paymentOrAllocationKey
+    ? `mazare3_refund_${refundRequestId}_${paymentOrAllocationKey}`
+    : `mazare3_refund_${refundRequestId}`;
 }

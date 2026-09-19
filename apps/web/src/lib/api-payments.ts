@@ -135,3 +135,20 @@ export async function fetchCheckoutBooking(bookingId: string) {
     `/me/bookings/${bookingId}/checkout`,
   );
 }
+
+export type CreateRescheduleDifferencePaymentInput = {
+  rescheduleRequestId: string;
+  method: import('@mazare3/shared').PaymentMethod;
+  idempotencyKey?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+};
+
+export async function createRescheduleDifferencePayment(
+  input: CreateRescheduleDifferencePaymentInput,
+) {
+  return paymentFetch<{ data: PaymentSummary }>('/payments/reschedule-difference', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

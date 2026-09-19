@@ -11,7 +11,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuthSession } from '@/components/auth/auth-session';
-import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+import {
+  LegalAcceptanceCheckboxes,
+  type LegalAcceptanceState,
+} from '@/components/legal/legal-acceptance-checkboxes';
 import {
   AuthApiError,
   completeIdentityLink,
@@ -25,6 +28,8 @@ import {
   type AuthCapabilities,
   type AuthUser,
 } from '@/lib/api-auth';
+import { acceptLegalDocument, fetchMyLegalStatus, grantPrivacyConsent } from '@/lib/api-legal';
+import { customerFirstRunLegalRequired, legalAcceptHref } from '@/components/legal/legal-reacceptance';
 
 type AuthStep =
   | 'chooser'
@@ -119,6 +124,8 @@ export function UnifiedAuthView() {
   const [resendAfter, setResendAfter] = useState(0);
   const [continueToken, setContinueToken] = useState<string | null>(null);
   const [profileName, setProfileName] = useState('');
+  const [emailLegal, setEmailLegal] = useState<LegalAcceptanceState | null>(null);
+  const [phoneLegal, setPhoneLegal] = useState<LegalAcceptanceState | null>(null);
 
   const errorId = useId();
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -140,8 +147,24 @@ export function UnifiedAuthView() {
   useEffect(() => {
     if (!ready || !user) return;
     if (pendingLink) return;
-    const dest = resolveSafeReturnUrl(rawReturn, defaultDestination(user));
-    navigateAfterAuth(dest);
+    let cancelled = false;
+    void (async () => {
+      const dest = resolveSafeReturnUrl(rawReturn, defaultDestination(user));
+      try {
+        const res = await fetchMyLegalStatus();
+        if (cancelled) return;
+        if (customerFirstRunLegalRequired(res.data)) {
+          navigateAfterAuth(legalAcceptHref(dest));
+          return;
+        }
+      } catch {
+        // Status unknown — do not invent acceptance; continue and let gates/API enforce.
+      }
+      if (!cancelled) navigateAfterAuth(dest);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [ready, user, rawReturn, pendingLink, locale, router]);
 
   useEffect(() => {
@@ -247,13 +270,26 @@ export function UnifiedAuthView() {
           linked.data.returnUrl ?? rawReturn,
           defaultDestination(linked.data.user),
         );
-        navigateAfterAuth(dest);
+        await navigateAfterAuthWithLegalGate(dest);
         return;
       } catch {
         setPendingLink(false);
       }
     }
     const dest = resolveSafeReturnUrl(rawReturn, defaultDestination(authUser));
+    await navigateAfterAuthWithLegalGate(dest);
+  }
+
+  async function navigateAfterAuthWithLegalGate(dest: string) {
+    try {
+      const res = await fetchMyLegalStatus();
+      if (customerFirstRunLegalRequired(res.data)) {
+        navigateAfterAuth(legalAcceptHref(dest));
+        return;
+      }
+    } catch {
+      // Do not invent acceptance; allow browse and rely on gates/API soft-blocks.
+    }
     navigateAfterAuth(dest);
   }
 
@@ -336,12 +372,40 @@ export function UnifiedAuthView() {
     }
   }
 
+  async function recordPostAuthLegal(state: LegalAcceptanceState | null) {
+    if (!state?.isValid || !state.acceptedTermsVersionId || !state.acknowledgedPrivacyVersionId) {
+      return;
+    }
+    await acceptLegalDocument({
+      documentVersionId: state.acceptedTermsVersionId,
+      context: 'registration',
+      sourceSurface: 'auth.phone-profile',
+    });
+    await acceptLegalDocument({
+      documentVersionId: state.acknowledgedPrivacyVersionId,
+      context: 'registration',
+      sourceSurface: 'auth.phone-profile',
+    });
+    if (state.marketingEmail) {
+      await grantPrivacyConsent({
+        purposeCode: 'marketing_email',
+        consentVersion: 'v1',
+        noticeVersionId: state.acknowledgedPrivacyVersionId,
+        sourceSurface: 'auth.phone-profile',
+      });
+    }
+  }
+
   async function handleProfileComplete(e: React.FormEvent) {
     e.preventDefault();
     if (actingRef.current || loading || !continueToken) return;
     const name = profileName.trim();
     if (name.length < 2) {
       setError(t('errorNameMin'));
+      return;
+    }
+    if (!phoneLegal?.isValid) {
+      setError(t('errorLegalRequired'));
       return;
     }
     actingRef.current = true;
@@ -354,6 +418,14 @@ export function UnifiedAuthView() {
         name,
         locale,
       });
+      try {
+        await recordPostAuthLegal(phoneLegal);
+      } catch {
+        // Do not invent acceptance — send user to explicit legal-accept page.
+        await refresh();
+        navigateAfterAuth(legalAcceptHref(resolveSafeReturnUrl(rawReturn, defaultDestination(res.data.user))));
+        return;
+      }
       await afterAuthSuccess(res.data.user);
     } catch (err) {
       setError(mapServerError(err));
@@ -393,11 +465,39 @@ export function UnifiedAuthView() {
     actingRef.current = true;
     setLoading(true);
     try {
-      const res =
-        emailMode === 'signup'
-          ? await signup({ email, password, name: name || undefined, locale })
-          : await login({ email, password });
-      await afterAuthSuccess(res.data.user);
+      if (emailMode === 'signup') {
+        if (
+          !emailLegal?.isValid ||
+          !emailLegal.acceptedTermsVersionId ||
+          !emailLegal.acknowledgedPrivacyVersionId
+        ) {
+          setError(t('errorLegalRequired'));
+          return;
+        }
+        const res = await signup({
+          email,
+          password,
+          name: name || undefined,
+          locale,
+          acceptedTermsVersionId: emailLegal.acceptedTermsVersionId,
+          acknowledgedPrivacyVersionId: emailLegal.acknowledgedPrivacyVersionId,
+          priorConsentAccount: true,
+          priorConsentLanguage: locale === 'en' ? 'en' : 'ar',
+          ...(emailLegal.marketingEmail
+            ? {
+                marketingConsent: {
+                  email: true,
+                  consentVersion: 'v1',
+                  noticeVersionId: emailLegal.acknowledgedPrivacyVersionId,
+                },
+              }
+            : {}),
+        });
+        await afterAuthSuccess(res.data.user);
+      } else {
+        const res = await login({ email, password });
+        await afterAuthSuccess(res.data.user);
+      }
     } catch (err) {
       setError(mapServerError(err));
     } finally {
@@ -546,16 +646,24 @@ export function UnifiedAuthView() {
                 </Button>
               )}
               {googleAvailable && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  data-testid="auth-continue-google"
-                  className={pillBtn}
-                  onClick={startGoogle}
-                >
-                  <GoogleMark />
-                  {t('continueGoogle')}
-                </Button>
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    data-testid="auth-continue-google"
+                    className={pillBtn}
+                    onClick={startGoogle}
+                  >
+                    <GoogleMark />
+                    {t('continueGoogle')}
+                  </Button>
+                  <p
+                    className="px-1 text-center text-[11px] leading-relaxed text-[#8A97A8]"
+                    data-testid="auth-google-legal-note"
+                  >
+                    {t('googleLegalNote')}
+                  </p>
+                </div>
               )}
               <Button
                 type="button"
@@ -704,11 +812,17 @@ export function UnifiedAuthView() {
               disabled={loading}
             />
           </div>
+          <LegalAcceptanceCheckboxes
+            testIdPrefix="auth-profile-legal"
+            showMarketing
+            disabled={loading}
+            onChange={setPhoneLegal}
+          />
           <Button
             type="submit"
             data-testid="auth-profile-submit"
             className="h-12 w-full text-base"
-            disabled={loading}
+            disabled={loading || !phoneLegal?.isValid}
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {t('profileSubmit')}
@@ -851,13 +965,20 @@ export function UnifiedAuthView() {
             )}
           </div>
 
-          {emailMode === 'signup' && <LegalCommitmentNotice testId="auth-legal-notice" />}
+          {emailMode === 'signup' && (
+            <LegalAcceptanceCheckboxes
+              testIdPrefix="auth-legal"
+              showMarketing
+              disabled={loading}
+              onChange={setEmailLegal}
+            />
+          )}
 
           <Button
             type="submit"
             data-testid="auth-submit"
             className="h-12 w-full text-base shadow-soft"
-            disabled={loading}
+            disabled={loading || (emailMode === 'signup' && !emailLegal?.isValid)}
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {emailMode === 'signup' ? t('signupSubmit') : t('loginSubmit')}

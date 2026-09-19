@@ -15,7 +15,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthApiError, login, signup, type AuthUser } from '@/lib/api-auth';
 import { useAuthSession } from '@/components/auth/auth-session';
-import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+import {
+  LegalAcceptanceCheckboxes,
+  type LegalAcceptanceState,
+} from '@/components/legal/legal-acceptance-checkboxes';
 
 type AuthMode = 'login' | 'signup';
 
@@ -42,6 +45,7 @@ export function AuthForm({ mode }: AuthFormProps) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [legalAcceptance, setLegalAcceptance] = useState<LegalAcceptanceState | null>(null);
 
   const errorId = useId();
   const emailHintId = useId();
@@ -127,7 +131,34 @@ export function AuthForm({ mode }: AuthFormProps) {
     try {
       let authed: AuthUser;
       if (mode === 'signup') {
-        const res = await signup({ email, password, name, locale });
+        if (
+          !legalAcceptance?.isValid ||
+          !legalAcceptance.acceptedTermsVersionId ||
+          !legalAcceptance.acknowledgedPrivacyVersionId
+        ) {
+          setError(t('errorLegalRequired'));
+          setLoading(false);
+          return;
+        }
+        const res = await signup({
+          email,
+          password,
+          name,
+          locale,
+          acceptedTermsVersionId: legalAcceptance.acceptedTermsVersionId,
+          acknowledgedPrivacyVersionId: legalAcceptance.acknowledgedPrivacyVersionId,
+          priorConsentAccount: true,
+          priorConsentLanguage: locale === 'en' ? 'en' : 'ar',
+          ...(legalAcceptance.marketingEmail
+            ? {
+                marketingConsent: {
+                  email: true,
+                  consentVersion: 'v1',
+                  noticeVersionId: legalAcceptance.acknowledgedPrivacyVersionId,
+                },
+              }
+            : {}),
+        });
         authed = res.data.user;
       } else {
         const res = await login({ email, password });
@@ -292,12 +323,21 @@ export function AuthForm({ mode }: AuthFormProps) {
             </div>
           ) : null}
 
+          {mode === 'signup' ? (
+            <LegalAcceptanceCheckboxes
+              testIdPrefix="signup-legal"
+              showMarketing
+              disabled={loading}
+              onChange={setLegalAcceptance}
+            />
+          ) : null}
+
           <Button
             type="submit"
             data-testid="auth-submit"
             className="h-12 w-full rounded-xl text-base font-bold shadow-soft"
             size="lg"
-            disabled={loading}
+            disabled={loading || (mode === 'signup' && !legalAcceptance?.isValid)}
             aria-describedby={error ? errorId : undefined}
           >
             {loading ? (
@@ -312,12 +352,6 @@ export function AuthForm({ mode }: AuthFormProps) {
             )}
           </Button>
         </form>
-
-        {mode === 'signup' ? (
-          <div className="mt-4">
-            <LegalCommitmentNotice testId="signup-legal-notice" />
-          </div>
-        ) : null}
 
         <p className="mt-6 text-center text-sm text-[#6B7A8D]">
           {mode === 'login' ? t('noAccount') : t('hasAccount')}{' '}

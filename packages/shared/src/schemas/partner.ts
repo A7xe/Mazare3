@@ -19,10 +19,20 @@ export const partnerDocumentTypeSchema = z.enum([
   'business_registration',
   'payout_proof',
   'other',
+  'representation_authority',
+  'lease_or_sublease_authority',
 ]);
 
 export const patchPartnerOnboardingProfileSchema = z.object({
   entityType: partnerEntityTypeSchema.optional(),
+  accountHolderRelation: z
+    .enum([
+      'is_contracting_party',
+      'acts_for_entity',
+      'authorised_representative',
+      'authorised_manager',
+    ])
+    .optional(),
   displayName: z.string().min(2).max(120).optional(),
   businessName: z.string().max(120).nullable().optional(),
   phone: z.string().min(8).max(20).optional(),
@@ -42,6 +52,19 @@ export const putPartnerPayoutProfileSchema = z.object({
   bankName: z.string().min(2).max(160),
   iban: z.string().min(8).max(40),
   optionalNotes: z.string().max(500).optional(),
+  /** Relationship to Contracting OperatorParty — required for NEW saves in 3C.4D.7A */
+  beneficiaryRelationship: z.enum([
+    'operator_self',
+    'operator_legal_entity',
+    'authorised_third_party',
+    'other_review_required',
+  ]),
+  payoutCountry: z
+    .string()
+    .length(2)
+    .regex(/^[A-Za-z]{2}$/)
+    .optional()
+    .default('JO'),
 });
 
 export const acceptPartnerAgreementSchema = z.object({
@@ -68,8 +91,9 @@ export const approvePartnerSchema = z.object({
 });
 
 export const reviewPartnerPayoutSchema = z.object({
-  status: z.enum(['reviewed', 'rejected']),
+  status: z.enum(['reviewed', 'rejected', 'action_required', 'reassessment_required']),
   reason: z.string().max(1000).optional(),
+  reasonCategory: z.string().max(80).optional(),
 });
 
 export const createPartnerCommercialTermsSchema = z.object({

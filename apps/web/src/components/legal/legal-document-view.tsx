@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import {
   ArrowLeft,
@@ -18,6 +18,8 @@ import { Link } from '@/i18n/navigation';
 import { LEGAL_PAGE_SLUGS, type LegalDocument, type LegalPageSlug } from '@/lib/legal/types';
 import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
 import { cn } from '@/lib/utils';
+import { fetchActiveLegalDocument, fetchLegalDocumentVersions } from '@/lib/api-legal';
+import type { PublicLegalVersionMeta } from '@/lib/api-legal';
 
 const PATHS: Record<LegalPageSlug, string> = {
   about: '/about',
@@ -26,6 +28,19 @@ const PATHS: Record<LegalPageSlug, string> = {
   privacy: '/privacy',
   'cancellation-refund': '/cancellation-refund',
   'booking-payment': '/booking-payment',
+  verification: '/verification',
+  'cookie-policy': '/cookie-policy',
+  'community-reviews': '/community-reviews',
+};
+
+const SLUG_TO_DOC_TYPE: Partial<Record<LegalPageSlug, string>> = {
+  terms: 'terms_and_conditions',
+  privacy: 'privacy_policy',
+  'cancellation-refund': 'cancellation_refund_policy',
+  'booking-payment': 'booking_terms',
+  verification: 'verification_policy',
+  'cookie-policy': 'cookie_policy',
+  'community-reviews': 'community_review_policy',
 };
 
 const POLICY_TABS: {
@@ -70,6 +85,68 @@ function sectionIcon(index: number) {
   return icons[index % icons.length] ?? FileText;
 }
 
+/** Parse a simple GFM pipe table into header + body rows. */
+function parsePipeTable(markdown: string): { headers: string[]; rows: string[][] } | null {
+  const lines = markdown
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+  const splitRow = (line: string) =>
+    line
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim());
+  const headers = splitRow(lines[0]!);
+  const sep = lines[1]!;
+  if (!/^\|?[\s:-]+\|/.test(sep) && !/^[\s|:-]+$/.test(sep)) return null;
+  const rows = lines.slice(2).map(splitRow).filter((r) => r.some((c) => c.length > 0));
+  if (!headers.length) return null;
+  return { headers, rows };
+}
+
+function LegalMarkdownTable({ markdown }: { markdown: string }) {
+  const parsed = parsePipeTable(markdown);
+  if (!parsed) {
+    return (
+      <pre className="mt-3 overflow-x-auto rounded-lg border border-[#E4EAF3] bg-[#F8FAFC] p-3 text-[12px] leading-6 text-[#53637A]">
+        {markdown}
+      </pre>
+    );
+  }
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg border border-[#E4EAF3]">
+      <table className="w-full min-w-[28rem] border-collapse text-start text-[13px] leading-6 text-[#53637A] sm:text-[14px]">
+        <thead className="bg-[#F3F7FF]">
+          <tr>
+            {parsed.headers.map((h, i) => (
+              <th
+                key={`h-${i}`}
+                scope="col"
+                className="border-b border-[#E4EAF3] px-3 py-2 font-semibold text-[#0D2046]"
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {parsed.rows.map((row, ri) => (
+            <tr key={`r-${ri}`} className="odd:bg-white even:bg-[#FAFBFD]">
+              {parsed.headers.map((_, ci) => (
+                <td key={`c-${ri}-${ci}`} className="border-b border-[#EEF2F7] px-3 py-2 align-top">
+                  {row[ci] ?? ''}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function LegalDocumentView({
   doc,
   locale,
@@ -86,6 +163,49 @@ export function LegalDocumentView({
   const t = useTranslations('legal');
   const currentLocale = useLocale();
   const [activeSection, setActiveSection] = useState(doc.sections[0]?.id ?? '');
+  const [apiMeta, setApiMeta] = useState<{
+    version: string;
+    effectiveAt: string | null;
+    publishedAt: string | null;
+    language: string;
+    status: string;
+  } | null>(null);
+  const [versionHistory, setVersionHistory] = useState<PublicLegalVersionMeta[] | null>(null);
+
+  const isProductionBuild =
+    process.env.NODE_ENV === 'production' ||
+    process.env.NEXT_PUBLIC_APP_ENV === 'production';
+
+  useEffect(() => {
+    const docType = SLUG_TO_DOC_TYPE[doc.slug];
+    if (!docType) return;
+    let cancelled = false;
+    const lang = currentLocale === 'en' ? 'en' : 'ar';
+    void (async () => {
+      try {
+        const [active, versions] = await Promise.all([
+          fetchActiveLegalDocument(docType, lang),
+          fetchLegalDocumentVersions(docType, lang).catch(() => [] as PublicLegalVersionMeta[]),
+        ]);
+        if (cancelled) return;
+        if (active) {
+          setApiMeta({
+            version: active.version,
+            effectiveAt: active.effectiveAt,
+            publishedAt: active.publishedAt,
+            language: active.language,
+            status: active.status,
+          });
+        }
+        setVersionHistory(versions);
+      } catch {
+        // Soft enhance only — keep static content if API is down.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.slug, currentLocale]);
 
   const dateLabel = useMemo(
     () =>
@@ -96,6 +216,32 @@ export function LegalDocumentView({
       }),
     [locale, updatedOn],
   );
+
+  const effectiveLabel = useMemo(() => {
+    if (!apiMeta?.effectiveAt) return null;
+    return new Date(apiMeta.effectiveAt).toLocaleDateString(
+      locale === 'ar' ? 'ar-JO' : 'en-GB',
+      { year: 'numeric', month: 'long', day: 'numeric' },
+    );
+  }, [apiMeta?.effectiveAt, locale]);
+
+  const publishedLabel = useMemo(() => {
+    if (!apiMeta?.publishedAt) return null;
+    return new Date(apiMeta.publishedAt).toLocaleDateString(
+      locale === 'ar' ? 'ar-JO' : 'en-GB',
+      { year: 'numeric', month: 'long', day: 'numeric' },
+    );
+  }, [apiMeta?.publishedAt, locale]);
+
+  const showDraftBadge =
+    !isProductionBuild &&
+    (doc.slug === 'privacy' ||
+      apiMeta?.status === 'draft' ||
+      versionHistory?.some((v) => v.status === 'draft') === true);
+
+  const historyCount = versionHistory?.filter((v) =>
+    isProductionBuild ? v.status === 'active' || v.status === 'superseded' : true,
+  ).length;
 
   const showPolicyTabs = POLICY_TABS.some((tab) => tab.slug === doc.slug) || doc.slug === 'about';
   const showToc = doc.sections.length > 3;
@@ -171,10 +317,47 @@ export function LegalDocumentView({
                   <h1 className="text-xl font-bold text-[#0D2046] sm:text-2xl">{doc.title}</h1>
                   <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[#7A879B]">{doc.intro}</p>
                 </div>
-                <span className="inline-flex items-center gap-1.5 rounded-xl bg-[#F5F8FC] px-3 py-2 text-[12px] font-medium text-[#7A879B]">
-                  <CalendarDays className="h-3.5 w-3.5" aria-hidden />
-                  {t('lastUpdated')} {dateLabel}
-                </span>
+                <div className="flex flex-col items-end gap-1.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-xl bg-[#F5F8FC] px-3 py-2 text-[12px] font-medium text-[#7A879B]">
+                    <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+                    {t('lastUpdated')} {dateLabel}
+                  </span>
+                  {apiMeta ? (
+                    <div className="flex flex-col items-end gap-1" data-testid="legal-version-meta">
+                      <span
+                        className="inline-flex items-center rounded-xl bg-[#EAF2FF] px-3 py-1.5 text-[11px] font-medium text-[#2F6EF6]"
+                        data-testid="legal-active-version-badge"
+                      >
+                        {t('activeVersionBadge', { version: apiMeta.version })}
+                        <span className="ms-1.5 rounded-md bg-[#2F6EF6] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
+                          {t('currentBadge')}
+                        </span>
+                      </span>
+                      <span className="text-[11px] text-[#7A879B]">
+                        {[
+                          apiMeta.language ? t('languageLabel', { lang: apiMeta.language }) : null,
+                          effectiveLabel ? `${t('effectiveLabel')} ${effectiveLabel}` : null,
+                          publishedLabel ? `${t('publishedLabel')} ${publishedLabel}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                      {showDraftBadge ? (
+                        <span
+                          className="inline-flex items-center rounded-xl bg-amber-100 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900"
+                          data-testid="legal-draft-badge"
+                        >
+                          {t('draftLaunchCandidateBadge')}
+                        </span>
+                      ) : null}
+                      <span className="text-[11px] text-[#7A879B]" data-testid="legal-version-history-note">
+                        {historyCount && historyCount > 1
+                          ? t('versionHistoryAvailable', { count: historyCount })
+                          : t('currentVersionOnly')}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               {children}
@@ -205,6 +388,9 @@ export function LegalDocumentView({
                           {p}
                         </p>
                       ))}
+                      {section.tableMarkdown ? (
+                        <LegalMarkdownTable markdown={section.tableMarkdown} />
+                      ) : null}
                       {section.bullets && section.bullets.length > 0 ? (
                         <ul className="mt-3 space-y-2">
                           {section.bullets.map((item, i) => (

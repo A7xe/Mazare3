@@ -15,6 +15,9 @@ import {
 } from '@mazare3/shared';
 import { PropertyMediaQualityBox } from '@/components/property/property-media-quality-box';
 import { AdminPropertyPlacementsPanel } from '@/components/admin/admin-property-placements-panel';
+import { AdminPropertyAuthorityPanel } from '@/components/admin/admin-property-authority-panel';
+import { AdminPropertyRegulatoryPanel } from '@/components/admin/admin-property-regulatory-panel';
+import { AdminPropertyPoolSafetyPanel } from '@/components/admin/admin-property-pool-safety-panel';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -236,6 +239,9 @@ export function AdminPropertyDetailView({ propertyId }: { propertyId: string }) 
             media={media.map((m) => ({ sortOrder: m.sortOrder }))}
             namespace="admin"
           />
+          <AdminPropertyAuthorityPanel propertyId={propertyId} />
+          <AdminPropertyRegulatoryPanel propertyId={propertyId} />
+          <AdminPropertyPoolSafetyPanel propertyId={propertyId} />
           {property.availabilityHealth && (
             <div
               data-testid="admin-availability-health"

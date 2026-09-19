@@ -1,4 +1,4 @@
-import { prisma, PropertyStatus, OwnerStatus } from '@mazare3/db';
+import { prisma, PropertyStatus } from '@mazare3/db';
 import type { PropertySearchQuery } from '@mazare3/shared';
 import { toPublicPropertyDetail, applyLiveRating } from '../mappers/public-property.mapper.js';
 import { searchPublishedProperties, loadPublicPropertyCardsByIds } from './property-search.service.js';
@@ -7,7 +7,10 @@ import { loadLivePromotionsByProperty, buildActivePromotionSummary } from './pro
 import { applyPlacementFlags, loadLivePlacementsByPropertyIds } from './placement.service.js';
 
 const publishedInclude = {
-  media: { orderBy: { sortOrder: 'asc' as const } },
+  media: {
+    where: { removedFromListingAt: null },
+    orderBy: { sortOrder: 'asc' as const },
+  },
   amenities: { include: { amenity: true } },
   rules: { orderBy: { sortOrder: 'asc' as const } },
 } as const;
@@ -33,7 +36,12 @@ export async function getPublishedPropertyBySlug(slug: string) {
     [applyLiveRating(toPublicPropertyDetail(row), stats.get(row.id))],
     placeMap,
   )[0]!;
-  const bookable = row.owner.status === OwnerStatus.approved;
+  // Phase 3C.4D.4B — public canBook from central evaluator (generic reason only)
+  const { evaluatePropertyBookability, customerUnavailableBookingMessage } = await import(
+    './property-bookability.service.js'
+  );
+  const bookability = await evaluatePropertyBookability(row.id, 'public_display');
+  const bookable = bookability.canBook;
   const offers = promoMap.get(row.id) ?? [];
   const summary = buildActivePromotionSummary(detail.basePrice, offers);
   return {
@@ -51,10 +59,15 @@ export async function getPublishedPropertyBySlug(slug: string) {
       startsAt: o.startsAt,
       endsAt: o.endsAt,
     })),
+    canBook: bookable,
     bookingDisabled: !bookable,
-    bookingDisabledReason: bookable
-      ? null
-      : 'This property is not accepting new bookings',
+    bookingDisabledReason: bookable ? null : customerUnavailableBookingMessage('en'),
+    poolSafetyDisclosure: await (async () => {
+      const { getPublicPoolSafetyDisclosure } = await import(
+        './property-pool-safety.service.js'
+      );
+      return getPublicPoolSafetyDisclosure(row.id);
+    })(),
   };
 }
 

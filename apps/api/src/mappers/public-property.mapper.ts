@@ -98,8 +98,8 @@ export function applyLiveRating<T extends { rating: number; reviewCount: number 
       reviewCount: stats.reviewCount,
     };
   }
-  // Keep denormalized Property.ratingAvg / reviewCount when no published reviews yet.
-  return row;
+  // Never expose legacy seeded Property.ratingAvg / reviewCount as customer reviews.
+  return { ...row, rating: 0, reviewCount: 0 };
 }
 
 export function toPublicPropertySummary(property: PublicPropertyRow): PublicPropertySummary {

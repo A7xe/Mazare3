@@ -106,9 +106,15 @@ export async function resolveBookingPricing(params: {
     throw new AppError(
       409,
       'PARTNER_NOT_BOOKABLE',
-      'This property is not accepting new bookings',
+      'This Property is currently unavailable for Booking.',
     );
   }
+
+  // Phase 3C.4D.4B — authority + regulatory READY for NEW Booking commitment
+  const { assertPropertyEligibleForNewPaidBooking } = await import(
+    './property-bookability.service.js'
+  );
+  await assertPropertyEligibleForNewPaidBooking(property.id, 'new_booking');
 
   if (params.guestsCount < 1) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Guest count must be at least 1');

@@ -18,9 +18,14 @@ export async function ContactIdentity({
   const addFarmHref = resolveAddFarmHref(sessionUser);
   const addFarmLabel = tAddFarmCta(resolveAddFarmLabelKey({ user: sessionUser }));
   const product = locale === 'ar' ? identity.productNameAr : identity.productNameEn;
-  const rows: { label: string; value: string }[] = [];
+  const rows: { label: string; value: string; multiline?: boolean }[] = [];
+
   if (identity.legalEntityName) {
     rows.push({ label: t('identityLegalName'), value: identity.legalEntityName });
+  }
+  const legalForm = locale === 'ar' ? identity.legalFormAr : identity.legalFormEn;
+  if (legalForm) {
+    rows.push({ label: t('identityLegalForm'), value: legalForm });
   }
   if (identity.registrationNumber) {
     rows.push({ label: t('identityRegistration'), value: identity.registrationNumber });
@@ -29,17 +34,25 @@ export async function ContactIdentity({
     rows.push({ label: t('identityTax'), value: identity.taxNumber });
   }
   if (identity.registeredAddress) {
-    rows.push({ label: t('identityAddress'), value: identity.registeredAddress });
+    rows.push({
+      label: t('identityAddress'),
+      value: identity.registeredAddress,
+      multiline: true,
+    });
   }
-  if (identity.supportEmail) {
-    rows.push({ label: t('identitySupportEmail'), value: identity.supportEmail });
+  if (identity.legalContactEmail) {
+    rows.push({ label: t('identityLegalEmail'), value: identity.legalContactEmail });
+  }
+  if (identity.projectOperationalEmail) {
+    rows.push({
+      label: t('identityOperationalEmail'),
+      value: identity.projectOperationalEmail,
+    });
   }
   if (identity.privacyEmail) {
     rows.push({ label: t('identityPrivacyEmail'), value: identity.privacyEmail });
   }
-  if (identity.supportPhone) {
-    rows.push({ label: t('identityPhone'), value: identity.supportPhone });
-  }
+  // Do NOT show partnershipContactPhone on general contact identity.
 
   return (
     <div
@@ -56,7 +69,7 @@ export async function ContactIdentity({
           {rows.map((row) => (
             <div key={row.label}>
               <dt className="text-muted">{row.label}</dt>
-              <dd className="font-medium text-navy">
+              <dd className="font-medium text-navy whitespace-pre-line">
                 {row.value.includes('@') ? (
                   <a className="text-primary hover:underline" href={`mailto:${row.value}`}>
                     {row.value}

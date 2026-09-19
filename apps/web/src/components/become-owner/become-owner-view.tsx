@@ -16,10 +16,12 @@ import {
   type PartnerOnboardingView,
   type PartnerRequirementRow,
 } from '@/lib/api-partner';
+import { grantPriorConsent, fetchPriorConsentStatus } from '@/lib/api-legal';
 import { fetchOwnerProperties } from '@/lib/api-owner';
 import { rememberPartnerVerificationStatus } from '@/lib/add-farm-entry';
 import { Button } from '@/components/ui/button';
 import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
+import { FirstRunLegalGate } from '@/components/legal/first-run-legal-gate';
 import { PartnerEntryLanding } from './partner-onboarding/partner-entry-landing';
 import { PartnerOnboardingShell } from './partner-onboarding/partner-onboarding-shell';
 import { PartnerStatusPanel } from './partner-onboarding/partner-status-panel';
@@ -49,6 +51,7 @@ import {
 
 const INITIAL_FORM: PartnerWizardFormState = {
   entityType: '',
+  accountHolderRelation: '',
   displayName: '',
   businessName: '',
   phone: '',
@@ -77,6 +80,8 @@ export function BecomeOwnerView() {
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [kycPriorConsent, setKycPriorConsent] = useState(false);
+  const [needKycPriorConsent, setNeedKycPriorConsent] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -102,6 +107,7 @@ export function BecomeOwnerView() {
     setForm((prev) => ({
       ...prev,
       entityType: view.entityType ?? prev.entityType,
+      accountHolderRelation: view.accountHolderRelation ?? prev.accountHolderRelation,
       displayName:
         emptyIfPartnerPlaceholder(view.displayName, PLACEHOLDER_PARTNER_NAME) || prev.displayName,
       businessName: view.businessName ?? prev.businessName,
@@ -129,6 +135,25 @@ export function BecomeOwnerView() {
   const loadRequirements = useCallback(async () => {
     const res = await fetchPartnerRequirements();
     setRequirements(res.data);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchPriorConsentStatus();
+        if (cancelled) return;
+        const kyc = res.data.purposes.find(
+          (p) => p.purposeKey === 'owner_identity_and_authority_verification',
+        );
+        setNeedKycPriorConsent(kyc?.validity !== 'CONSENT_STILL_VALID');
+      } catch {
+        if (!cancelled) setNeedKycPriorConsent(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -317,6 +342,7 @@ export function BecomeOwnerView() {
       } else if (currentStep === 'contact') {
         const contactPayload: Parameters<typeof saveProfile>[0] = {
           entityType: form.entityType || undefined,
+          accountHolderRelation: form.accountHolderRelation || undefined,
           bio: form.bio.trim(),
           phone: form.phone.trim(),
           legalName: (form.legalName || form.displayName).trim(),
@@ -355,9 +381,22 @@ export function BecomeOwnerView() {
       setError(t('docs.errors.size'));
       return;
     }
+    if (needKycPriorConsent && !kycPriorConsent) {
+      setError(t('docs.priorConsentRequired'));
+      return;
+    }
     setSaveOk(false);
     setUploadingId(requirementId);
     try {
+      if (needKycPriorConsent) {
+        await grantPriorConsent({
+          purposeKey: 'owner_identity_and_authority_verification',
+          language: locale === 'en' ? 'en' : 'ar',
+          explicitConsent: true,
+          sourceSurface: 'partner.kyc-upload',
+        });
+        setNeedKycPriorConsent(false);
+      }
       await uploadPartnerDocument(file, requirementId);
       await loadRequirements();
       const res = await fetchPartnerOnboarding();
@@ -520,6 +559,7 @@ export function BecomeOwnerView() {
 
   return (
     <MarketplacePageShell data-testid="become-owner-page" className="py-6 sm:py-10">
+      <FirstRunLegalGate enforceOnPaths={['/become-owner', '/partner']} />
       {!loggedIn ? (
         <PartnerEntryLanding returnUrl={pathname} mode="guest" />
       ) : null}
@@ -673,6 +713,9 @@ export function BecomeOwnerView() {
               saving={saving}
               acceptedTerms={acceptedTerms}
               setAcceptedTerms={setAcceptedTerms}
+              needKycPriorConsent={needKycPriorConsent}
+              kycPriorConsent={kycPriorConsent}
+              setKycPriorConsent={setKycPriorConsent}
               handleUpload={(id, file) => void handleUpload(id, file)}
               handleAcceptAgreement={() => void handleAcceptAgreement()}
               handleSubmit={() => void handleSubmit()}

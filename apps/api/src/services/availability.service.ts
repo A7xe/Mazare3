@@ -85,6 +85,8 @@ export async function listPropertyAvailability(
       conflictReason = 'blocked';
     } else if (s.status === 'booked') {
       conflictReason = 'booked';
+    } else if (s.status === 'held') {
+      conflictReason = 'held';
     } else if (s.status === 'available') {
       if (
         interval &&
@@ -106,6 +108,7 @@ export async function listPropertyAvailability(
     const money = slotMoney(payable, property.depositPercent?.toNumber() ?? null);
 
     return {
+      id: s.id,
       date: formatDateOnlyUtc(s.date),
       period: s.period,
       price: payable,

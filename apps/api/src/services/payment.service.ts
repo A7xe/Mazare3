@@ -2,14 +2,15 @@ import {
   prisma,
   AvailabilitySlotStatus,
   BookingPaymentState,
+  BookingRescheduleRequestStatus,
   BookingStatus,
   PaymentCollectionMode,
+  PaymentProvider,
   PaymentPurpose,
   PaymentStatus,
   PayoutStatus,
   Prisma,
   type PaymentMethod,
-  type PaymentProvider,
 } from '@mazare3/db';
 import type {
   CreateManagedFormPaymentInput,
@@ -21,8 +22,13 @@ import {
   PAYMENT_HOLD_MINUTES,
   assertPaymentStateTransition,
   jodToFils,
+  filsToJod,
   paymentStateAfterCapture,
+  validateProviderCaptureAgainstPayment,
+  resolvePaymentPlan,
+  FULL_PAYMENT_WITHIN_HOURS,
 } from '@mazare3/shared';
+import type { InitialPaymentChoice } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { isDevPaymentSimulateAllowed, SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
 import { derivePayFlags, succeededInstallmentFils } from '../lib/booking-ledger.js';
@@ -32,8 +38,13 @@ import {
   notifyBookingConfirmed,
   notifyDepositPaid,
   notifyPaymentSucceeded,
+  notifyRescheduleCompleted,
+  notifyReschedulePaymentSucceeded,
 } from './notification.service.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { finalizeReschedule } from './reschedule.service.js';
+import { syncLivePaymentPlanForBooking } from './booking.service.js';
+import { hoursUntilBookingStart } from './payment-policy.service.js';
 import { loadPaymentConfig, assertProviderCanCreateIntent } from '../config/payment-config.js';
 import {
   loadPaytabsConfig,
@@ -80,7 +91,6 @@ import {
   isInitialPaymentChoiceAllowed,
   type BookingAmountsForChoice,
 } from '../lib/initial-payment-choice.js';
-import type { InitialPaymentChoice } from '@mazare3/shared';
 
 function decimalToNumber(value: { toNumber(): number } | number | null | undefined): number {
   if (value == null) return 0;
@@ -176,9 +186,11 @@ export async function expireStalePaymentIntents(): Promise<{ processed: number; 
   const candidates = await prisma.payment.findMany({
     where: {
       status: { in: ACTIVE_PAYMENT_STATUSES },
-      expiresAt: { lt: new Date() },
+      expiresAt: { lte: new Date() },
     },
     select: { id: true },
+    orderBy: { expiresAt: 'asc' },
+    take: 50,
   });
 
   let expired = 0;
@@ -189,19 +201,97 @@ export async function expireStalePaymentIntents(): Promise<{ processed: number; 
   return { processed: candidates.length, expired };
 }
 
+/**
+ * Phase 3C.4E.2C — bounded PayTabs recovery for unresolved recent payments
+ * (missed/delayed webhook, local timeout). Does not poll forever.
+ */
+export async function reconcileUnresolvedPayments(options?: {
+  lookbackHours?: number;
+  batchSize?: number;
+}): Promise<{
+  processed: number;
+  succeeded: number;
+  failed: number;
+  deferred: number;
+  skipped: number;
+}> {
+  const lookbackHours = options?.lookbackHours ?? 72;
+  const batchSize = options?.batchSize ?? 40;
+  const since = new Date(Date.now() - lookbackHours * 3_600_000);
+  const candidates = await prisma.payment.findMany({
+    where: {
+      provider: PaymentProvider.paytabs,
+      providerRef: { not: null },
+      status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+      createdAt: { gte: since },
+    },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+    take: batchSize,
+  });
+
+  let succeeded = 0;
+  let failed = 0;
+  let deferred = 0;
+  let skipped = 0;
+
+  const { reconcilePayTabsPayment } = await import('./paytabs-reconciliation.service.js');
+
+  for (const { id } of candidates) {
+    try {
+      const result = await reconcilePayTabsPayment(id, {
+        actorUserId: null,
+        source: 'scheduled_job',
+      });
+      if (result.result === 'finalized' || result.result === 'already_succeeded') {
+        succeeded += 1;
+      } else if (result.result === 'pending' || result.result === 'manual_intervention') {
+        deferred += 1;
+      } else if (result.result === 'failed' || result.result === 'mismatch') {
+        failed += 1;
+      } else {
+        skipped += 1;
+      }
+    } catch (err) {
+      const code = err instanceof AppError ? err.code : '';
+      const msg = err instanceof Error ? err.message : String(err);
+      const uncertain =
+        code === 'PAYMENT_PROVIDER_ERROR' ||
+        /timeout|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|503|502|504|network|unavailable|PAYTABS_HTTP/i.test(
+          msg,
+        );
+      if (uncertain) deferred += 1;
+      else failed += 1;
+      console.warn(`[reconcile-pending-payments] payment=${id}`, msg);
+    }
+  }
+
+  return {
+    processed: candidates.length,
+    succeeded,
+    failed,
+    deferred,
+    skipped,
+  };
+}
+
 export async function expireStaleUnpaidBookingHolds(): Promise<{
   paymentsProcessed: number;
   paymentsExpired: number;
   holdsProcessed: number;
   holdsExpired: number;
+  reschedulesExpired: number;
 }> {
   const payments = await expireStalePaymentIntents();
   const holds = await expireStaleBookingHolds();
+  const { expireRescheduleRequests } = await import('./reschedule.service.js');
+  const reschedules = await expireRescheduleRequests();
   return {
     paymentsProcessed: payments.processed,
     paymentsExpired: payments.expired,
     holdsProcessed: holds.processed,
     holdsExpired: holds.expired,
+    reschedulesExpired: reschedules.expired,
   };
 }
 
@@ -211,17 +301,21 @@ export async function expireStalePayments(): Promise<{
   holdsExpired: number;
   overdueMarked: number;
   ownerApprovalsExpired: number;
+  reschedulesExpired: number;
 }> {
   const payments = await expireStalePaymentIntents();
   const holds = await expireStaleBookingHolds();
   const overdue = await markStaleBalanceOverdue();
   const approvals = await expireStaleOwnerApprovals();
+  const { expireRescheduleRequests } = await import('./reschedule.service.js');
+  const reschedules = await expireRescheduleRequests();
   return {
     processed: payments.processed,
     expired: payments.expired,
     holdsExpired: holds.expired,
     overdueMarked: overdue.marked,
     ownerApprovalsExpired: approvals.expired,
+    reschedulesExpired: reschedules.expired,
   };
 }
 
@@ -260,7 +354,14 @@ function installmentForPurpose(
     customerServiceFeeAmount: { toNumber(): number } | number;
     customerPayableTotal: { toNumber(): number } | number;
   },
+  rescheduleDeltaOverride?: number,
 ): number {
+  if (purpose === PaymentPurpose.reschedule_difference) {
+    if (rescheduleDeltaOverride == null || !(rescheduleDeltaOverride > 0)) {
+      throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'No reschedule difference due');
+    }
+    return rescheduleDeltaOverride;
+  }
   if (purpose === PaymentPurpose.full) {
     return decimalToNumber(booking.customerPayableTotal);
   }
@@ -268,6 +369,43 @@ function installmentForPurpose(
     return decimalToNumber(booking.depositAmount) + decimalToNumber(booking.customerServiceFeeAmount);
   }
   return decimalToNumber(booking.remainingAmount);
+}
+
+/** Phase 3A convenience — charge customerPayableDelta for an accepted_pending_payment request. */
+export async function createRescheduleDifferencePaymentIntent(
+  userId: string,
+  rescheduleRequestId: string,
+  method: CreatePaymentIntentInput['method'],
+  req?: AuthenticatedRequest,
+  options?: {
+    paymentToken?: string;
+    saveCard?: boolean;
+    idempotencyKey?: string;
+    contactEmail?: string;
+    contactPhone?: string;
+  },
+): Promise<PaymentSummary> {
+  const request = await prisma.bookingRescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+  });
+  if (!request) throw new AppError(404, 'NOT_FOUND', 'Reschedule request not found');
+  return createPaymentIntent(
+    userId,
+    {
+      bookingId: request.bookingId,
+      method,
+      purpose: 'reschedule_difference',
+      rescheduleRequestId,
+      idempotencyKey: options?.idempotencyKey,
+      contactEmail: options?.contactEmail,
+      contactPhone: options?.contactPhone,
+    },
+    req,
+    {
+      paymentToken: options?.paymentToken,
+      saveCard: options?.saveCard,
+    },
+  );
 }
 
 export async function createPaymentIntent(
@@ -317,6 +455,14 @@ export async function createPaymentIntent(
     paytabsCustomer = resolved;
   }
 
+  // Phase 3C.4E.2B — revalidate 72h payment plan before any NEW/reuse first-payment session.
+  // Does not apply to balance on already-confirmed deposit Bookings (sync no-ops after capture).
+  const planSync = await syncLivePaymentPlanForBooking(input.bookingId, {
+    actorUserId: userId,
+    req,
+    audit: true,
+  });
+
   const prepared = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM "Booking" WHERE id = ${input.bookingId} FOR UPDATE`);
 
@@ -344,6 +490,126 @@ export async function createPaymentIntent(
       );
     }
 
+    // Phase 3A — reschedule difference payment (confirmed booking only).
+    const wantsRescheduleDelta =
+      input.purpose === PaymentPurpose.reschedule_difference ||
+      Boolean(input.rescheduleRequestId);
+    if (wantsRescheduleDelta) {
+      if (booking.status !== BookingStatus.confirmed) {
+        throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Reschedule difference requires a confirmed booking');
+      }
+      const rescheduleRequest = await tx.bookingRescheduleRequest.findFirst({
+        where: {
+          ...(input.rescheduleRequestId
+            ? { id: input.rescheduleRequestId }
+            : { bookingId: booking.id }),
+          bookingId: booking.id,
+          status: BookingRescheduleRequestStatus.accepted_pending_payment,
+        },
+      });
+      if (!rescheduleRequest) {
+        throw new AppError(404, 'NOT_FOUND', 'No reschedule awaiting difference payment');
+      }
+      const delta = decimalToNumber(rescheduleRequest.customerPayableDelta);
+      if (!(delta > 0)) {
+        throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'No reschedule difference due');
+      }
+
+      const purpose = PaymentPurpose.reschedule_difference;
+      const succeededSamePurpose = booking.payments.find(
+        (p) =>
+          p.status === PaymentStatus.succeeded &&
+          p.purpose === purpose &&
+          p.rescheduleRequestId === rescheduleRequest.id,
+      );
+      if (succeededSamePurpose) {
+        throw new AppError(400, 'ALREADY_PAID', 'This installment is already paid');
+      }
+
+      const activePayment = booking.payments.find(
+        (p) =>
+          ACTIVE_PAYMENT_STATUSES.includes(p.status) &&
+          p.purpose === purpose &&
+          p.rescheduleRequestId === rescheduleRequest.id,
+      );
+      if (activePayment) {
+        if (!activePayment.expiresAt || activePayment.expiresAt > new Date()) {
+          return { reusePaymentId: activePayment.id };
+        }
+        await tx.payment.update({
+          where: { id: activePayment.id },
+          data: { status: PaymentStatus.expired },
+        });
+      }
+
+      if (input.idempotencyKey) {
+        const existing = await tx.payment.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+        });
+        if (existing && existing.bookingId === booking.id) {
+          return { reusePaymentId: existing.id };
+        }
+      }
+
+      const expiresAt = paymentHoldExpiry(rescheduleRequest.targetSlotHeldUntil);
+      const installment = installmentForPurpose(purpose, booking, delta);
+
+      let payment;
+      try {
+        payment = await tx.payment.create({
+          data: {
+            bookingId: booking.id,
+            userId,
+            amount: installment,
+            bookingTotalAmount: decimalToNumber(booking.totalAmount),
+            customerPayableAmount: installment,
+            platformCommissionAmount: decimalToNumber(booking.platformCommissionAmount),
+            customerServiceFeeAmount: 0,
+            ownerGrossAmount: decimalToNumber(booking.totalAmount),
+            ownerNetPayoutAmount: decimalToNumber(booking.ownerNetPayoutAmount),
+            currency: booking.currency,
+            method: input.method as PaymentMethod,
+            purpose,
+            provider: providerNameEarly,
+            status: PaymentStatus.initiated,
+            payoutStatus: PayoutStatus.not_ready,
+            idempotencyKey: input.idempotencyKey ?? null,
+            expiresAt,
+            rescheduleRequestId: rescheduleRequest.id,
+          },
+        });
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code === 'P2002' && input.idempotencyKey) {
+          const existing = await tx.payment.findUnique({
+            where: { idempotencyKey: input.idempotencyKey },
+          });
+          if (existing && existing.bookingId === booking.id) {
+            return { reusePaymentId: existing.id };
+          }
+        }
+        throw err;
+      }
+
+      await tx.bookingRescheduleRequest.update({
+        where: { id: rescheduleRequest.id },
+        data: {
+          deltaPaymentId: payment.id,
+          targetSlotHeldUntil: expiresAt,
+        },
+      });
+
+      return {
+        paymentId: payment.id,
+        installment,
+        purpose,
+        method: input.method as PaymentMethod,
+        providerName: providerNameEarly,
+        currency: booking.currency,
+        bookingId: booking.id,
+      };
+    }
+
     if (
       (booking.status === BookingStatus.pending_payment ||
         booking.paymentCollectionMode !== 'full') &&
@@ -356,6 +622,53 @@ export async function createPaymentIntent(
 
     // CB-6 — apply Deposit vs Full at payment-initiation boundary (not on radio click).
     let working = booking;
+    const hoursUntilStart = hoursUntilBookingStart(working.bookingStartAt, working.slot.date);
+    const livePlan = resolvePaymentPlan({
+      hoursUntilStart,
+      customerPayable: decimalToNumber(working.customerPayableTotal),
+    });
+    const fullPaymentRequired = livePlan.fullPaymentRequired;
+
+    // Stale deposit choice after crossing into <=72h: do not create a 30% session.
+    if (
+      fullPaymentRequired &&
+      (input.initialPaymentChoice === 'deposit' || input.purpose === PaymentPurpose.deposit) &&
+      jodToFils(decimalToNumber(working.depositAmount)) <
+        jodToFils(decimalToNumber(working.customerPayableTotal))
+    ) {
+      throw new AppError(
+        409,
+        'PAYMENT_PLAN_UPDATED',
+        'This Booking is now within 72 hours of the start time, so full payment is required',
+        {
+          code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H',
+          fullPaymentRequired: true,
+          dueNowAmount: decimalToNumber(working.customerPayableTotal),
+          fullPaymentWithinHours: FULL_PAYMENT_WITHIN_HOURS,
+        },
+      );
+    }
+
+    if (
+      fullPaymentRequired &&
+      planSync?.changed &&
+      planSync.previousDepositPercent < 100 &&
+      (input.initialPaymentChoice === 'deposit' || input.purpose === PaymentPurpose.deposit)
+    ) {
+      throw new AppError(
+        409,
+        'PAYMENT_PLAN_UPDATED',
+        'This Booking is now within 72 hours of the start time, so full payment is required',
+        {
+          code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H',
+          fullPaymentRequired: true,
+          dueNowAmount: planSync.customerPayableTotal,
+          previousDepositPercent: planSync.previousDepositPercent,
+          currentDepositPercent: planSync.currentDepositPercent,
+        },
+      );
+    }
+
     const choiceInput = input.initialPaymentChoice as InitialPaymentChoice | undefined;
     const amountsForChoice: BookingAmountsForChoice = {
       status: working.status,
@@ -366,6 +679,7 @@ export async function createPaymentIntent(
       remainingAmount: decimalToNumber(working.remainingAmount),
       customerServiceFeeAmount: decimalToNumber(working.customerServiceFeeAmount),
       customerPayableTotal: decimalToNumber(working.customerPayableTotal),
+      fullPaymentRequired,
       payments: working.payments.map((p) => ({
         status: p.status,
         purpose: p.purpose,
@@ -402,7 +716,19 @@ export async function createPaymentIntent(
         choice === 'deposit' &&
         working.paymentCollectionMode === PaymentCollectionMode.full
       ) {
-        // Safe switch-back only before any successful capture.
+        // Safe switch-back only before any successful capture — and only while >72h.
+        if (fullPaymentRequired) {
+          throw new AppError(
+            409,
+            'PAYMENT_PLAN_UPDATED',
+            'This Booking is now within 72 hours of the start time, so full payment is required',
+            {
+              code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H',
+              fullPaymentRequired: true,
+              dueNowAmount: decimalToNumber(working.customerPayableTotal),
+            },
+          );
+        }
         const anySucceeded = working.payments.some((p) => p.status === PaymentStatus.succeeded);
         if (anySucceeded) {
           throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Cannot switch to deposit after payment');
@@ -430,6 +756,7 @@ export async function createPaymentIntent(
       payments: working.payments,
       customerPayableTotal: working.customerPayableTotal,
       remainingSnapshotFils: 0,
+      balanceDueAt: working.balanceDueAt ?? null,
     });
 
     if (flags.isFullyPaid) {
@@ -438,8 +765,14 @@ export async function createPaymentIntent(
 
     let purpose: PaymentPurpose;
     // initialPaymentChoice is authoritative over client purpose when present.
-    if (effectiveChoice === 'full') {
+    if (effectiveChoice === 'full' || (fullPaymentRequired && working.paymentCollectionMode === PaymentCollectionMode.full)) {
       purpose = PaymentPurpose.full;
+    } else if (fullPaymentRequired && !choiceBuilt.options) {
+      // <=72h with synced 100% deposit economics — charge full payable once.
+      purpose =
+        working.paymentCollectionMode === PaymentCollectionMode.full
+          ? PaymentPurpose.full
+          : PaymentPurpose.deposit;
     } else if (effectiveChoice === 'deposit' && choiceBuilt.options) {
       purpose = PaymentPurpose.deposit;
     } else if (input.purpose) {
@@ -448,6 +781,56 @@ export async function createPaymentIntent(
       purpose = flags.duePurpose as PaymentPurpose;
     } else {
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Booking is not awaiting payment');
+    }
+
+    if (fullPaymentRequired && purpose === PaymentPurpose.deposit) {
+      // After sync, depositAmount must equal full payable; otherwise refuse.
+      if (
+        jodToFils(decimalToNumber(working.depositAmount)) <
+        jodToFils(decimalToNumber(working.customerPayableTotal))
+      ) {
+        throw new AppError(
+          409,
+          'PAYMENT_PLAN_UPDATED',
+          'This Booking is now within 72 hours of the start time, so full payment is required',
+          {
+            code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H',
+            fullPaymentRequired: true,
+            dueNowAmount: decimalToNumber(working.customerPayableTotal),
+          },
+        );
+      }
+    }
+
+    // Phase 3C.4E.2C — balanceDueAt is a hard server cutoff (cron latency ≠ grace).
+    // In-flight sessions started before the deadline may be reused; NEW intents are rejected.
+    if (
+      purpose === PaymentPurpose.balance &&
+      working.balanceDueAt &&
+      working.balanceDueAt <= new Date()
+    ) {
+      const activeBalance = working.payments.find(
+        (p) =>
+          ACTIVE_PAYMENT_STATUSES.includes(p.status) && p.purpose === PaymentPurpose.balance,
+      );
+      if (activeBalance) {
+        const activeAmountFils = jodToFils(decimalToNumber(activeBalance.amount));
+        const installmentPreview = installmentForPurpose(purpose, working);
+        const requiredFils = jodToFils(installmentPreview);
+        const stillValid =
+          (!activeBalance.expiresAt || activeBalance.expiresAt > new Date()) &&
+          activeAmountFils === requiredFils &&
+          activeBalance.currency.toUpperCase() === working.currency.toUpperCase();
+        if (stillValid) {
+          return { reusePaymentId: activeBalance.id, planRevalidated: null };
+        }
+      }
+      throw new AppError(
+        409,
+        'BALANCE_PAYMENT_DEADLINE_PASSED',
+        'The remaining balance payment deadline has passed',
+        { balanceDueAt: working.balanceDueAt.toISOString() },
+      );
     }
 
     if (working.paymentCollectionMode === PaymentCollectionMode.full && purpose !== PaymentPurpose.full) {
@@ -470,6 +853,11 @@ export async function createPaymentIntent(
       throw new AppError(400, 'BOOKING_NOT_PAYABLE', 'Full payment is not available for this booking');
     }
 
+    // Balance on a confirmed deposit Booking is never reclassified as first full payment.
+    if (purpose === PaymentPurpose.balance && working.status === BookingStatus.confirmed) {
+      /* intentional: 72h first-payment revalidation does not apply */
+    }
+
     const installment = installmentForPurpose(purpose, working);
     const paid = succeededInstallmentFils(working.payments);
     const payableFils = jodToFils(decimalToNumber(working.customerPayableTotal));
@@ -488,9 +876,29 @@ export async function createPaymentIntent(
       (p) => ACTIVE_PAYMENT_STATUSES.includes(p.status) && p.purpose === purpose,
     );
     if (activePayment) {
-      if (!activePayment.expiresAt || activePayment.expiresAt > new Date()) {
-        return { reusePaymentId: activePayment.id };
+      const activeAmountFils = jodToFils(decimalToNumber(activePayment.amount));
+      const requiredFils = jodToFils(installment);
+      const stillValid =
+        (!activePayment.expiresAt || activePayment.expiresAt > new Date()) &&
+        activeAmountFils === requiredFils &&
+        activePayment.currency.toUpperCase() === working.currency.toUpperCase();
+      if (stillValid) {
+        // Existing PSP session matches current obligation — reuse.
+        return {
+          reusePaymentId: activePayment.id,
+          planRevalidated:
+            planSync?.changed && planSync.fullPaymentRequired
+              ? {
+                  code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H' as const,
+                  previousDepositPercent: planSync.previousDepositPercent,
+                  currentDepositPercent: planSync.currentDepositPercent,
+                  dueNowAmount: installment,
+                  fullPaymentRequired: true as const,
+                }
+              : null,
+        };
       }
+      // Stale amount/purpose session — supersede locally (provider session may remain remote).
       await tx.payment.update({
         where: { id: activePayment.id },
         data: { status: PaymentStatus.expired },
@@ -504,6 +912,20 @@ export async function createPaymentIntent(
       if (existing && existing.bookingId === working.id) {
         return { reusePaymentId: existing.id };
       }
+    }
+
+    // Phase 3C.4D.6 — NEW first payment requires listing snapshot.
+    // Phase 3C.4D.4B — NEW first payment (deposit/full) re-checks bookability.
+    // Balance on already-confirmed Booking is intentionally NOT gated here.
+    if (purpose === PaymentPurpose.deposit || purpose === PaymentPurpose.full) {
+      const { assertBookingHasInitialListingSnapshot } = await import(
+        './booking-listing-snapshot.service.js'
+      );
+      await assertBookingHasInitialListingSnapshot(working.id);
+      const { assertPropertyEligibleForNewPaidBooking } = await import(
+        './property-bookability.service.js'
+      );
+      await assertPropertyEligibleForNewPaidBooking(working.propertyId, 'first_payment');
     }
 
     const providerName = providerNameEarly;
@@ -576,8 +998,21 @@ export async function createPaymentIntent(
       providerName,
       currency: working.currency,
       bookingId: working.id,
+      planRevalidated:
+        planSync?.changed && planSync.fullPaymentRequired
+          ? {
+              code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H' as const,
+              previousDepositPercent: planSync.previousDepositPercent,
+              currentDepositPercent: planSync.currentDepositPercent,
+              dueNowAmount: installment,
+              fullPaymentRequired: true as const,
+            }
+          : null,
     };
-  });
+  }, { timeout: 20_000, maxWait: 10_000 });
+
+  const planNotice =
+    'planRevalidated' in prepared ? prepared.planRevalidated ?? null : null;
 
   if ('reusePaymentId' in prepared && prepared.reusePaymentId) {
     const existing = await prisma.payment.findUniqueOrThrow({
@@ -591,6 +1026,7 @@ export async function createPaymentIntent(
         return toPaymentSummary(existing, {
           redirectUrl,
           savedCardOutcome: priorSaved,
+          paymentPlanRevalidated: planNotice,
         });
       }
       await prisma.payment.update({
@@ -631,6 +1067,7 @@ export async function createPaymentIntent(
         return toPaymentSummary(existing, {
           redirectUrl,
           managedFormOutcome: priorManaged,
+          paymentPlanRevalidated: planNotice,
         });
       }
       // Stale HPP / simulate intent without Managed Form — expire and create a fresh attempt.
@@ -646,7 +1083,7 @@ export async function createPaymentIntent(
         where: { id: existing.bookingId },
         select: { publicCode: true },
       });
-      return finalizeManagedOrHostedGatewayCall({
+      const reused = await finalizeManagedOrHostedGatewayCall({
         userId,
         req,
         paymentToken,
@@ -663,9 +1100,11 @@ export async function createPaymentIntent(
         bookingMeta: bookingMetaReuse,
         paytabsCustomer,
       });
+      if (planNotice) reused.paymentPlanRevalidated = planNotice;
+      return reused;
     }
     const redirectUrl = await loadStoredRedirectUrl(existing.id);
-    return toPaymentSummary(existing, { redirectUrl });
+    return toPaymentSummary(existing, { redirectUrl, paymentPlanRevalidated: planNotice });
   }
 
   const created = prepared as {
@@ -683,7 +1122,7 @@ export async function createPaymentIntent(
     select: { publicCode: true },
   });
 
-  return finalizeManagedOrHostedGatewayCall({
+  const summary = await finalizeManagedOrHostedGatewayCall({
     userId,
     req,
     paymentToken,
@@ -693,6 +1132,8 @@ export async function createPaymentIntent(
     bookingMeta,
     paytabsCustomer,
   });
+  if (planNotice) summary.paymentPlanRevalidated = planNotice;
+  return summary;
 }
 
 async function finalizeManagedOrHostedGatewayCall(args: {
@@ -818,6 +1259,9 @@ async function finalizeManagedOrHostedGatewayCall(args: {
         paymentId: created.paymentId,
         providerPaymentId: intent.providerRef,
         providerEventId: `mf_immediate_${intent.providerRef}`,
+        amount: created.installment,
+        currency: created.currency,
+        cartPurpose: created.purpose,
         raw: intent.providerRaw ?? {
           source: 'managed_form_immediate',
           managedFormOutcome: 'authorised',
@@ -1056,6 +1500,9 @@ async function finalizeSavedCardGatewayCall(args: {
         paymentId: created.paymentId,
         providerPaymentId: intent.providerRef,
         providerEventId: `sc_immediate_${intent.providerRef}`,
+        amount: created.installment,
+        currency: created.currency,
+        cartPurpose: created.purpose,
         raw: intent.providerRaw ?? { source: 'saved_card_immediate', savedCardOutcome: 'authorised' },
       },
       userId,
@@ -1512,7 +1959,9 @@ async function finalizePaymentSuccess(
       (p) =>
         p.id !== paymentId &&
         p.status === PaymentStatus.succeeded &&
-        p.purpose === payment.purpose,
+        p.purpose === payment.purpose &&
+        (payment.purpose !== PaymentPurpose.reschedule_difference ||
+          p.rescheduleRequestId === payment.rescheduleRequestId),
     );
     if (duplicatePurpose) {
       throw new AppError(409, 'ALREADY_PAID', 'This installment is already paid');
@@ -1521,9 +1970,30 @@ async function finalizePaymentSuccess(
     const installment = decimalToNumber(payment.amount);
     const paid = succeededInstallmentFils(booking.payments.filter((p) => p.id !== paymentId));
     const payableFils = jodToFils(decimalToNumber(booking.customerPayableTotal));
-    if (paid.total + jodToFils(installment) > payableFils) {
-      throw new AppError(400, 'PAYMENT_EXCEEDS_BALANCE', 'Payment would exceed the amount due');
+
+    // Reschedule delta is additive to existing payable — skip exceeds-old-payable check.
+    if (payment.purpose !== PaymentPurpose.reschedule_difference) {
+      if (paid.total + jodToFils(installment) > payableFils) {
+        throw new AppError(400, 'PAYMENT_EXCEEDS_BALANCE', 'Payment would exceed the amount due');
+      }
     }
+
+    // Phase 3C.4E.2B — stale first-payment session completed after 72h crossing:
+    // record provider capture, but do not pretend full first-payment obligation is satisfied.
+    const hoursUntilStart = hoursUntilBookingStart(booking.bookingStartAt, booking.slot.date);
+    const livePlan = resolvePaymentPlan({
+      hoursUntilStart,
+      customerPayable: decimalToNumber(booking.customerPayableTotal),
+    });
+    const isFirstCapture =
+      paid.total === 0 &&
+      (payment.purpose === PaymentPurpose.deposit || payment.purpose === PaymentPurpose.full) &&
+      booking.status === BookingStatus.pending_payment;
+    const capturedFilsAfter = paid.total + jodToFils(installment);
+    const shortfallFils =
+      isFirstCapture && livePlan.fullPaymentRequired
+        ? Math.max(0, payableFils - capturedFilsAfter)
+        : 0;
 
     const captured = await tx.payment.updateMany({
       where: {
@@ -1543,7 +2013,27 @@ async function finalizePaymentSuccess(
       throw new AppError(409, 'ALREADY_PAID', 'Payment was already processed');
     }
 
-    const remainingAfterFils = payableFils - paid.total - jodToFils(installment);
+    if (payment.purpose === PaymentPurpose.reschedule_difference) {
+      if (payment.rescheduleRequestId) {
+        await tx.bookingRescheduleRequest.updateMany({
+          where: { id: payment.rescheduleRequestId },
+          data: { deltaPaymentId: paymentId },
+        });
+      }
+      // Keep booking paymentState; finalizeReschedule reconciles after this tx.
+      return {
+        kind: 'captured' as const,
+        purpose: payment.purpose,
+        installment,
+        completesBooking: false,
+        bookingId: payment.bookingId,
+        userId: payment.userId,
+        rescheduleRequestId: payment.rescheduleRequestId,
+      };
+    }
+
+    const remainingAfterFils =
+      shortfallFils > 0 ? shortfallFils : payableFils - paid.total - jodToFils(installment);
     const nextState = paymentStateAfterCapture({
       collectionMode: booking.paymentCollectionMode,
       purpose: payment.purpose,
@@ -1552,7 +2042,7 @@ async function finalizePaymentSuccess(
     assertPaymentStateTransition(paymentState, nextState);
 
     const now = new Date();
-    const completesBooking = nextState === 'fully_paid';
+    const completesBooking = nextState === 'fully_paid' && remainingAfterFils <= 0;
     const payoutAvailableAt = completesBooking
       ? computePayoutAvailableAt(booking.slot.date)
       : null;
@@ -1565,18 +2055,51 @@ async function finalizePaymentSuccess(
       },
     });
 
-    await tx.booking.update({
-      where: { id: payment.bookingId },
-      data: {
-        status: BookingStatus.confirmed,
-        paymentState: nextState as BookingPaymentState,
-        depositPaidAt:
-          payment.purpose === PaymentPurpose.deposit || payment.purpose === PaymentPurpose.full
-            ? (booking.depositPaidAt ?? now)
-            : booking.depositPaidAt,
-        fullyPaidAt: completesBooking ? now : booking.fullyPaidAt,
-      },
-    });
+    // If stale partial capture under full-required: confirm Booking but require remaining.
+    if (shortfallFils > 0) {
+      await tx.booking.update({
+        where: { id: payment.bookingId },
+        data: {
+          status: BookingStatus.confirmed,
+          paymentState: BookingPaymentState.deposit_paid,
+          depositPaidAt: booking.depositPaidAt ?? now,
+          remainingAmount: filsToJod(shortfallFils),
+          depositAmount: installment,
+          depositPercent: Math.round(
+            (jodToFils(installment) / Math.max(1, payableFils)) * 10000,
+          ) / 100,
+          balanceDueAt: now,
+        },
+      });
+      await createAuditLog({
+        actorUserId: actorUserId,
+        action: 'payment.stale_session_shortfall',
+        entityType: 'payment',
+        entityId: paymentId,
+        metadata: {
+          bookingId: payment.bookingId,
+          category: 'FIRST_PAYMENT_OBLIGATION_SHORTFALL',
+          capturedAmount: installment,
+          remainingAmount: filsToJod(shortfallFils),
+          fullPaymentRequired: true,
+          hoursUntilStart,
+        },
+        req,
+      });
+    } else {
+      await tx.booking.update({
+        where: { id: payment.bookingId },
+        data: {
+          status: BookingStatus.confirmed,
+          paymentState: nextState as BookingPaymentState,
+          depositPaidAt:
+            payment.purpose === PaymentPurpose.deposit || payment.purpose === PaymentPurpose.full
+              ? (booking.depositPaidAt ?? now)
+              : booking.depositPaidAt,
+          fullyPaidAt: completesBooking ? now : booking.fullyPaidAt,
+        },
+      });
+    }
 
     if (payment.purpose === PaymentPurpose.deposit || payment.purpose === PaymentPurpose.full) {
       await redeemCouponInTx(tx, payment.bookingId);
@@ -1590,10 +2113,24 @@ async function finalizePaymentSuccess(
       completesBooking,
       bookingId: payment.bookingId,
       userId: payment.userId,
+      shortfall: shortfallFils > 0,
     };
   }, { timeout: 20_000, maxWait: 10_000 });
 
   if (outcome.kind === 'already') {
+    // Idempotent webhook: if delta already succeeded but reschedule not finalized, finish it.
+    if (
+      outcome.payment.purpose === PaymentPurpose.reschedule_difference &&
+      outcome.payment.rescheduleRequestId
+    ) {
+      try {
+        await finalizeReschedule(outcome.payment.rescheduleRequestId, actorUserId, req, {
+          afterSuccessfulDeltaPayment: true,
+        });
+      } catch (err) {
+        console.error('[reschedule] idempotent finalize after duplicate webhook', err);
+      }
+    }
     return toPaymentSummary(outcome.payment);
   }
 
@@ -1615,6 +2152,41 @@ async function finalizePaymentSuccess(
     },
     req,
   });
+
+  if (
+    outcome.purpose === PaymentPurpose.reschedule_difference &&
+    'rescheduleRequestId' in outcome &&
+    outcome.rescheduleRequestId
+  ) {
+    try {
+      await finalizeReschedule(outcome.rescheduleRequestId, actorUserId, req, {
+        afterSuccessfulDeltaPayment: true,
+      });
+      const bookingRow = await prisma.booking.findUnique({
+        where: { id: outcome.bookingId },
+        select: { publicCode: true, currency: true },
+      });
+      if (bookingRow) {
+        await notifyReschedulePaymentSucceeded({
+          customerUserId: outcome.userId,
+          bookingId: outcome.bookingId,
+          publicCode: bookingRow.publicCode,
+          amount: outcome.installment,
+          currency: bookingRow.currency,
+        });
+        await notifyRescheduleCompleted({
+          customerUserId: outcome.userId,
+          bookingId: outcome.bookingId,
+          publicCode: bookingRow.publicCode,
+        });
+      }
+    } catch (err) {
+      console.error('[reschedule] finalize after difference payment', err);
+      throw err;
+    }
+    const updated = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    return toPaymentSummary(updated);
+  }
 
   const bookingRow = await prisma.booking.findUnique({
     where: { id: outcome.bookingId },
@@ -1847,6 +2419,87 @@ export async function applyNormalizedGatewayEvent(
     throw new AppError(404, 'NOT_FOUND', 'Payment not found for gateway event');
   }
 
+  // Idempotent success: never re-validate or double-apply.
+  if (event.type === 'payment_succeeded' && payment.status === PaymentStatus.succeeded) {
+    if (event.providerEventId) {
+      await appendPaymentEvent(payment.id, 'gateway.event', payment.status, {
+        type: event.type,
+        providerEventId: event.providerEventId,
+        duplicate: true,
+      });
+    }
+    return {
+      handled: true,
+      message: 'Duplicate gateway event ignored',
+      paymentId: payment.id,
+    };
+  }
+
+  // Phase 3C.4E.2B — financial validation before treating capture as success (same rules as reconcile).
+  if (event.type === 'payment_succeeded') {
+    const validation = validateProviderCaptureAgainstPayment({
+      expectedAmountJod: decimalToNumber(payment.amount),
+      expectedCurrency: payment.currency,
+      expectedProviderRef: payment.providerRef,
+      expectedPurpose: payment.purpose,
+      providerAmountJod: event.amount,
+      providerCurrency: event.currency,
+      providerRef: event.providerPaymentId,
+      cartPurpose: event.cartPurpose,
+      requireAmountCurrency: true,
+    });
+    if (!validation.ok) {
+      await appendPaymentEvent(payment.id, 'gateway.capture_validation_failed', payment.status, {
+        category: validation.category,
+        message: validation.message,
+        providerEventId: event.providerEventId,
+        providerPaymentId: event.providerPaymentId,
+        providerAmount: event.amount ?? null,
+        providerCurrency: event.currency ?? null,
+        cartPurpose: event.cartPurpose ?? null,
+      });
+      await createAuditLog({
+        actorUserId: actorUserId ?? payment.userId,
+        action: 'payment.capture_mismatch',
+        entityType: 'payment',
+        entityId: payment.id,
+        metadata: {
+          category: validation.category,
+          message: validation.message,
+          bookingId: payment.bookingId,
+          expectedAmount: decimalToNumber(payment.amount),
+          expectedCurrency: payment.currency,
+          providerAmount: event.amount ?? null,
+          providerCurrency: event.currency ?? null,
+          providerPaymentId: event.providerPaymentId,
+        },
+        req,
+      });
+      // Provider truth is recorded; do NOT finalize as successful obligation.
+      throw new AppError(409, validation.category, validation.message, {
+        paymentId: payment.id,
+        bookingId: payment.bookingId,
+        category: validation.category,
+      });
+    }
+  }
+
+  // Stale failure must not downgrade an authoritative successful capture.
+  if (
+    event.type === 'payment_failed' &&
+    payment.status === PaymentStatus.succeeded
+  ) {
+    await appendPaymentEvent(payment.id, 'gateway.stale_failure_ignored', payment.status, {
+      providerEventId: event.providerEventId,
+      providerPaymentId: event.providerPaymentId,
+    });
+    return {
+      handled: true,
+      message: 'Stale payment_failed ignored; payment already succeeded',
+      paymentId: payment.id,
+    };
+  }
+
   if (event.providerEventId) {
     const recent = await prisma.paymentEvent.findMany({
       where: { paymentId: payment.id, action: 'gateway.event' },
@@ -1937,13 +2590,26 @@ export async function applyNormalizedGatewayEvent(
   }
 
   if (event.type === 'refund_succeeded' || event.type === 'refund_failed') {
-    // Refund request state machine remains admin-driven; gateway ack is recorded only.
+    const { applyProviderRefundEventToAllocations } = await import(
+      './multi-capture-refund.service.js'
+    );
+    const applied = await applyProviderRefundEventToAllocations({
+      paymentId: payment.id,
+      succeeded: event.type === 'refund_succeeded',
+      providerRefundRef:
+        typeof event.providerPaymentId === 'string' ? event.providerPaymentId : null,
+      providerEventId: event.providerEventId,
+    });
     await appendPaymentEvent(payment.id, `gateway.${event.type}`, payment.status, {
       providerEventId: event.providerEventId,
+      updatedAllocationIds: applied.updatedAllocationIds,
+      requestCompleted: applied.requestCompleted,
     });
     return {
       handled: true,
-      message: `${event.type} recorded (refund machine unchanged)`,
+      message: applied.updatedAllocationIds.length
+        ? `${event.type} applied to allocation(s); requestCompleted=${applied.requestCompleted}`
+        : `${event.type} recorded (no open allocation for payment)`,
       paymentId: payment.id,
     };
   }

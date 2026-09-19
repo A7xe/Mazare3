@@ -229,6 +229,25 @@ export function classifyReviewEligibility(row: {
   if (row.status !== BookingStatus.confirmed) {
     return { eligible: false as const, reason: 'not_confirmed' };
   }
+  const visitOutcome =
+    'visitOutcome' in row ? (row as { visitOutcome?: string | null }).visitOutcome : null;
+  const cancellationReasonCode =
+    'cancellationReasonCode' in row
+      ? (row as { cancellationReasonCode?: string | null }).cancellationReasonCode
+      : null;
+  if (
+    visitOutcome === 'customer_no_show' ||
+    visitOutcome === 'owner_no_show' ||
+    visitOutcome === 'access_denied' ||
+    visitOutcome === 'force_majeure' ||
+    visitOutcome === 'disputed' ||
+    cancellationReasonCode === 'CUSTOMER_NO_SHOW' ||
+    cancellationReasonCode === 'OWNER_NO_SHOW' ||
+    cancellationReasonCode === 'ACCESS_DENIED' ||
+    cancellationReasonCode === 'FORCE_MAJEURE'
+  ) {
+    return { eligible: false as const, reason: 'not_successful_visit' };
+  }
   if (
     !isBookingFullyPaidFromLedger({
       paymentState: row.paymentState,
@@ -250,6 +269,16 @@ export function classifyReviewEligibility(row: {
     })
   ) {
     return { eligible: false as const, reason: 'visit_not_ended' };
+  }
+  const checkInStatus =
+    'checkInStatus' in row ? (row as { checkInStatus?: string | null }).checkInStatus : null;
+  if (
+    visitOutcome !== 'completed' &&
+    visitOutcome !== 'checked_in' &&
+    checkInStatus !== 'verified'
+  ) {
+    // Successful-visit reviews require positive visit evidence (3C.4E.4C).
+    return { eligible: false as const, reason: 'no_check_in' };
   }
   return { eligible: true as const, reason: null };
 }
@@ -399,7 +428,11 @@ export async function createBookingReview(
               ? 'NOT_FULLY_PAID'
               : verdict.reason === 'fully_refunded'
                 ? 'FULLY_REFUNDED'
-                : 'NOT_ELIGIBLE';
+                : verdict.reason === 'no_check_in'
+                  ? 'NO_CHECK_IN'
+                  : verdict.reason === 'not_successful_visit'
+                    ? 'NOT_SUCCESSFUL_VISIT'
+                    : 'NOT_ELIGIBLE';
     throw new AppError(status, code, 'This booking cannot be reviewed');
   }
 

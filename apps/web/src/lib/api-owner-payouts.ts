@@ -22,3 +22,22 @@ export async function fetchOwnerPayouts() {
 export async function fetchOwnerSettlements() {
   return ownerFetch<{ data: OwnerSettlementSummary[] }>('/owner/settlements');
 }
+
+export type OwnerFinancialAdjustmentRow = {
+  id: string;
+  bookingId: string;
+  bookingPublicCode: string | null;
+  type: string;
+  status: string;
+  amount: number;
+  currency: string;
+  reason: string;
+  createdAt: string;
+  appliedAt: string | null;
+  waivedAt: string | null;
+  settlementId: string | null;
+};
+
+export async function fetchOwnerFinancialAdjustments() {
+  return ownerFetch<{ data: OwnerFinancialAdjustmentRow[] }>('/owner/financial-adjustments');
+}

@@ -279,13 +279,29 @@ export function AdminPartnerDetailView({ ownerId }: { ownerId: string }) {
           <CardTitle>{t('partnerPayout')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Payout beneficiary (separate from KYC / authority / regulatory)
+          </p>
           <p className="text-sm text-navy" data-testid="partner-iban-masked">
             {partner.payout.ibanMasked ?? '—'}
           </p>
+          {partner.payout.beneficiaryRelationship ? (
+            <p className="text-sm text-muted" data-testid="partner-payout-relationship">
+              Relationship: {partner.payout.beneficiaryRelationship}
+            </p>
+          ) : null}
+          {partner.payout.nameMatchHint ? (
+            <p className="text-sm text-muted" data-testid="partner-payout-name-match">
+              Name match hint: {partner.payout.nameMatchHint} (not legal identity proof)
+            </p>
+          ) : null}
           <p className="text-sm text-muted">
             {partner.payout.reviewStatus
               ? t(`payoutReview.${partner.payout.reviewStatus}`)
               : t('payoutReview.pending')}
+            {partner.payout.payoutReadiness
+              ? ` · readiness: ${partner.payout.payoutReadiness}`
+              : ''}
           </p>
           {partner.payout.reviewReason ? (
             <p className="text-sm text-danger">{partner.payout.reviewReason}</p>
@@ -304,12 +320,31 @@ export function AdminPartnerDetailView({ ownerId }: { ownerId: string }) {
             <Button
               size="sm"
               variant="outline"
+              data-testid="admin-payout-action-required"
+              disabled={saving || !partner.payout.complete}
+              onClick={() =>
+                void run(() =>
+                  reviewAdminPartnerPayout(ownerId, {
+                    status: 'action_required',
+                    reason: t('defaultRejectReason'),
+                    reasonCategory: 'action_required',
+                  }),
+                )
+              }
+            >
+              Action required
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="admin-payout-rejected"
               disabled={saving || !partner.payout.complete}
               onClick={() =>
                 void run(() =>
                   reviewAdminPartnerPayout(ownerId, {
                     status: 'rejected',
-                    reason: actionReason || t('defaultRejectReason'),
+                    reason: t('defaultRejectReason'),
+                    reasonCategory: 'rejected',
                   }),
                 )
               }

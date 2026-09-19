@@ -14,11 +14,13 @@ import {
   Wallet,
   RotateCcw,
   AlertTriangle,
+  Scale,
   Banknote,
   Star,
   Ticket,
   Megaphone,
   LifeBuoy,
+  FileText,
 } from 'lucide-react';
 import { AdminGuard } from './admin-guard';
 import { cn } from '@/lib/utils';
@@ -32,7 +34,13 @@ const navItems = [
   { href: '/admin/payments', icon: Wallet, labelKey: 'nav.payments' as const },
   { href: '/admin/refunds', icon: RotateCcw, labelKey: 'nav.refunds' as const },
   { href: '/admin/disputes', icon: AlertTriangle, labelKey: 'nav.disputes' as const },
+  {
+    href: '/admin/marketplace-fairness',
+    icon: Scale,
+    labelKey: 'nav.marketplaceFairness' as const,
+  },
   { href: '/admin/support', icon: LifeBuoy, labelKey: 'nav.support' as const },
+  { href: '/admin/legal', icon: FileText, labelKey: 'nav.legal' as const },
   { href: '/admin/payouts', icon: Banknote, labelKey: 'nav.payouts' as const },
   { href: '/admin/reviews', icon: Star, labelKey: 'nav.reviews' as const },
   { href: '/admin/coupons', icon: Ticket, labelKey: 'nav.coupons' as const },

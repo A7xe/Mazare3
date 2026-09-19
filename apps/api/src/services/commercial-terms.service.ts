@@ -147,6 +147,99 @@ export function pickResolvedTerms(
   };
 }
 
+/** Phase 2/3A — report active terms that diverge from standard 18% / verified 15%. */
+export async function auditCommercialTermsDrift(): Promise<
+  Array<{
+    id: string;
+    ownerProfileId: string;
+    propertyId: string | null;
+    commissionPercent: number;
+    status: string;
+    note: string;
+    commissionSource: 'partner_commercial_terms' | 'platform_env';
+    expectedStandardPercent: number;
+    expectedVerifiedPercent: number;
+    customOverride: boolean;
+    obsoleteLegacy12: boolean;
+    effectiveFrom: string | null;
+    effectiveTo: string | null;
+    createdAt: string | null;
+  }>
+> {
+  const config = loadPaymentPolicyConfig();
+  const rows = await prisma.partnerCommercialTerms.findMany({
+    where: {
+      status: { in: [PartnerCommercialTermsStatus.active, PartnerCommercialTermsStatus.scheduled] },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const drift: Array<{
+    id: string;
+    ownerProfileId: string;
+    propertyId: string | null;
+    commissionPercent: number;
+    status: string;
+    note: string;
+    commissionSource: 'partner_commercial_terms' | 'platform_env';
+    expectedStandardPercent: number;
+    expectedVerifiedPercent: number;
+    customOverride: boolean;
+    obsoleteLegacy12: boolean;
+    effectiveFrom: string | null;
+    effectiveTo: string | null;
+    createdAt: string | null;
+  }> = [];
+
+  for (const row of rows) {
+    const pct = bpsToPercent(row.commissionBps);
+    const isStandard = pct === config.platformCommissionPercent;
+    const isVerified = pct === config.platformVerifiedCommissionPercent;
+    if (!isStandard && !isVerified) {
+      drift.push({
+        id: row.id,
+        ownerProfileId: row.ownerProfileId,
+        propertyId: row.propertyId,
+        commissionPercent: pct,
+        status: row.status,
+        note:
+          pct === 12
+            ? 'Obsolete 12% legacy rate — requires explicit admin review'
+            : 'Custom rate differs from marketplace SSOT 18/15',
+        commissionSource: 'partner_commercial_terms',
+        expectedStandardPercent: 18,
+        expectedVerifiedPercent: 15,
+        customOverride: true,
+        obsoleteLegacy12: pct === 12,
+        effectiveFrom: row.effectiveFrom?.toISOString() ?? null,
+        effectiveTo: row.effectiveTo?.toISOString() ?? null,
+        createdAt: row.createdAt?.toISOString() ?? null,
+      });
+    }
+  }
+
+  if (config.platformCommissionPercent !== 18 || config.platformVerifiedCommissionPercent !== 15) {
+    drift.push({
+      id: 'platform_default_env',
+      ownerProfileId: '—',
+      propertyId: null,
+      commissionPercent: config.platformCommissionPercent,
+      status: 'env',
+      note: `Env platform default ${config.platformCommissionPercent}% / verified ${config.platformVerifiedCommissionPercent}%`,
+      commissionSource: 'platform_env',
+      expectedStandardPercent: 18,
+      expectedVerifiedPercent: 15,
+      customOverride: true,
+      obsoleteLegacy12: config.platformCommissionPercent === 12,
+      effectiveFrom: null,
+      effectiveTo: null,
+      createdAt: null,
+    });
+  }
+
+  return drift;
+}
+
 export async function listOwnerCommercialTerms(ownerProfileId: string) {
   return prisma.partnerCommercialTerms.findMany({
     where: { ownerProfileId },
@@ -266,6 +359,21 @@ export async function activateCommercialTerms(params: {
     throw new AppError(409, 'CANNOT_ACTIVATE', 'Only draft or scheduled terms can be activated');
   }
 
+  // Material custom rates must not activate silently without owner CommercialTermsAcceptance.
+  const ack = await prisma.commercialTermsAcceptance.findFirst({
+    where: {
+      ownerProfileId: params.ownerProfileId,
+      commercialTermsId: row.id,
+    },
+  });
+  if (!ack) {
+    throw new AppError(
+      409,
+      'COMMERCIAL_TERMS_ACCEPTANCE_REQUIRED',
+      'Owner must acknowledge custom commercial terms before activation',
+    );
+  }
+
   const now = new Date();
   const becomesActive = row.effectiveFrom <= now;
   const nextStatus = becomesActive
@@ -310,7 +418,11 @@ export async function activateCommercialTerms(params: {
     action: 'admin.commercial_terms_activated',
     entityType: 'partner_commercial_terms',
     entityId: row.id,
-    metadata: { status: nextStatus, ownerProfileId: params.ownerProfileId },
+    metadata: {
+      status: nextStatus,
+      ownerProfileId: params.ownerProfileId,
+      commercialTermsAcceptanceId: ack.id,
+    },
     req: params.req,
   });
 

@@ -98,43 +98,94 @@ export function AdminRefundsView() {
                     {t('colRequested')}:{' '}
                     <PriceDisplay amount={r.requestedAmount} currency="JOD" locale={locale} />
                   </p>
+                  <p>
+                    {t('colRefunded')}:{' '}
+                    <PriceDisplay amount={r.refundedAmount ?? 0} currency="JOD" locale={locale} />
+                  </p>
+                  <p>
+                    {t('colRemainingRefund')}:{' '}
+                    <PriceDisplay amount={r.remainingAmount ?? 0} currency="JOD" locale={locale} />
+                  </p>
+                  <p>
+                    {t('colAggregateRefund')}:{' '}
+                    {t(`refundAggregate.${r.aggregateLabel ?? 'pending'}`)}
+                  </p>
                 </div>
+                {(r.allocations?.length ?? 0) > 0 && (
+                  <div
+                    className="space-y-1 rounded-xl border border-primary/10 bg-surface/60 p-3 text-xs"
+                    data-testid={`refund-allocations-${r.id}`}
+                  >
+                    <p className="font-medium text-navy">{t('refundAllocationsTitle')}</p>
+                    {r.allocations!.map((a) => (
+                      <div
+                        key={a.id}
+                        className="flex flex-wrap items-center justify-between gap-2 text-muted"
+                      >
+                        <span>
+                          {t('refundAllocationLine', {
+                            status: a.status,
+                            amount: a.allocatedAmount.toFixed(2),
+                          })}
+                        </span>
+                        {a.providerRefundRef && (
+                          <span className="font-mono text-[10px]">{a.providerRefundRef}</span>
+                        )}
+                        {a.lastError && (
+                          <span className="text-danger">{a.lastError.slice(0, 80)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <p className="text-sm text-muted">{r.reason}</p>
                 <Input
                   placeholder={t('adminNotePlaceholder')}
                   value={notes[r.id] ?? r.adminNote ?? ''}
                   onChange={(e) => setNotes((n) => ({ ...n, [r.id]: e.target.value }))}
                 />
-                {r.status === 'pending' && (
+                {(r.status === 'pending' ||
+                  r.status === 'approved' ||
+                  r.aggregateLabel === 'action_required' ||
+                  r.aggregateLabel === 'partially_refunded') && (
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      data-testid={`refund-approve-${r.id}`}
-                      disabled={busy === r.id}
-                      onClick={() => void updateStatus(r.id, 'approved')}
-                    >
-                      {t('approveRefund')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid={`refund-reject-${r.id}`}
-                      disabled={busy === r.id}
-                      onClick={() => void updateStatus(r.id, 'rejected')}
-                    >
-                      {t('rejectRefund')}
-                    </Button>
+                    {r.status === 'pending' && (r.refundedAmount ?? 0) <= 0 && (
+                      <>
+                        <Button
+                          size="sm"
+                          data-testid={`refund-approve-${r.id}`}
+                          disabled={busy === r.id}
+                          onClick={() => void updateStatus(r.id, 'approved')}
+                        >
+                          {t('approveRefund')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`refund-reject-${r.id}`}
+                          disabled={busy === r.id}
+                          onClick={() => void updateStatus(r.id, 'rejected')}
+                        >
+                          {t('rejectRefund')}
+                        </Button>
+                      </>
+                    )}
+                    {(r.status === 'approved' ||
+                      r.aggregateLabel === 'action_required' ||
+                      r.aggregateLabel === 'partially_refunded') && (
+                      <Button
+                        size="sm"
+                        data-testid={`refund-process-${r.id}`}
+                        disabled={busy === r.id}
+                        onClick={() => void updateStatus(r.id, 'processed')}
+                      >
+                        {r.aggregateLabel === 'action_required' ||
+                        r.aggregateLabel === 'partially_refunded'
+                          ? t('retryRefundAllocations')
+                          : t('markRefundProcessed')}
+                      </Button>
+                    )}
                   </div>
-                )}
-                {r.status === 'approved' && (
-                  <Button
-                    size="sm"
-                    data-testid={`refund-process-${r.id}`}
-                    disabled={busy === r.id}
-                    onClick={() => void updateStatus(r.id, 'processed')}
-                  >
-                    {t('markRefundProcessed')}
-                  </Button>
                 )}
               </CardContent>
             </Card>

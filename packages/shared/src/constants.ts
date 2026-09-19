@@ -41,6 +41,9 @@ export const SLOT_HOLDING_BOOKING_STATUSES = [
   'confirmed',
 ] as const;
 
+/** Alias — Phase 3C.4E.3 inventory-holding set (must match DB partial unique WHERE). */
+export const BOOKING_INVENTORY_HOLDING_STATUSES = SLOT_HOLDING_BOOKING_STATUSES;
+
 export const PAYMENT_STATUSES = [
   'initiated',
   'pending',
@@ -55,7 +58,7 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export const PAYMENT_METHODS = ['card', 'cliq', 'manual_test'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-export const PAYMENT_PURPOSES = ['full', 'deposit', 'balance'] as const;
+export const PAYMENT_PURPOSES = ['full', 'deposit', 'balance', 'reschedule_difference'] as const;
 export type PaymentPurpose = (typeof PAYMENT_PURPOSES)[number];
 
 export const PAYMENT_COLLECTION_MODES = ['full', 'deposit_balance'] as const;
@@ -105,6 +108,26 @@ export const DISPUTE_TYPES = [
   'access_problem',
   'cleanliness_issue',
   'other',
+  'customer_no_show',
+  'owner_no_show',
+  'force_majeure',
+] as const;
+
+export const OWNER_CANCELLATION_REASONS = [
+  'PROPERTY_UNAVAILABLE',
+  'OWNER_EMERGENCY',
+  'MAINTENANCE_FAILURE',
+  'DOUBLE_BOOKING_OWNER_FAULT',
+  'PROPERTY_DAMAGE',
+  'ACCESS_PROBLEM',
+  'FORCE_MAJEURE',
+  'OTHER',
+] as const;
+
+export const ARRIVAL_INCIDENT_TYPES = [
+  'owner_no_show_report',
+  'access_denied_report',
+  'property_unavailable_report',
 ] as const;
 export type DisputeType = (typeof DISPUTE_TYPES)[number];
 

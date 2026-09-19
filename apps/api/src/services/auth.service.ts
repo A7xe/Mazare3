@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { AuthIdentityProvider, prisma } from '@mazare3/db';
+import { AuthIdentityProvider, LegalAcceptanceContext, LegalDocumentType, prisma } from '@mazare3/db';
 import type { LoginInput, SignupInput, UserRole } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import type { SessionPayload } from '../lib/jwt.js';
@@ -9,6 +9,10 @@ import {
   normalizeLoginEmail,
   recordLoginIdentifierFailure,
 } from './login-abuse.service.js';
+import { recordAcceptance } from './legal/legal-acceptance.service.js';
+import { grantConsent } from './legal/privacy-consent.service.js';
+import { grantDataProcessingConsent } from './legal/data-processing-consent.service.js';
+import { getVersionById } from './legal/legal-document.service.js';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -65,6 +69,22 @@ export async function signupCustomer(input: SignupInput): Promise<SessionPayload
     throw new AppError(409, 'EMAIL_EXISTS', 'An account with this email already exists');
   }
 
+  const termsVersion = await getVersionById(input.acceptedTermsVersionId);
+  if (!termsVersion || termsVersion.documentType !== LegalDocumentType.terms_and_conditions) {
+    throw new AppError(400, 'INVALID_TERMS_VERSION', 'acceptedTermsVersionId is invalid');
+  }
+  if (termsVersion.status !== 'active') {
+    throw new AppError(400, 'TERMS_NOT_ACTIVE', 'Terms version is not active');
+  }
+
+  const privacyVersion = await getVersionById(input.acknowledgedPrivacyVersionId);
+  if (!privacyVersion || privacyVersion.documentType !== LegalDocumentType.privacy_policy) {
+    throw new AppError(400, 'INVALID_PRIVACY_VERSION', 'acknowledgedPrivacyVersionId is invalid');
+  }
+  if (privacyVersion.status !== 'active') {
+    throw new AppError(400, 'PRIVACY_NOT_ACTIVE', 'Privacy version is not active');
+  }
+
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const passwordChangedAt = new Date();
 
@@ -92,6 +112,52 @@ export async function signupCustomer(input: SignupInput): Promise<SessionPayload
 
     return created;
   });
+
+  // Separate evidence: Terms acceptance vs Privacy acknowledgement (not Prior Consent / marketing).
+  await recordAcceptance(user.id, {
+    documentVersionId: input.acceptedTermsVersionId,
+    context: LegalAcceptanceContext.registration,
+    sourceSurface: 'auth.signup',
+  });
+  await recordAcceptance(user.id, {
+    documentVersionId: input.acknowledgedPrivacyVersionId,
+    context: LegalAcceptanceContext.privacy_consent,
+    sourceSurface: 'auth.signup.privacy_ack',
+  });
+
+  // Jordan Prior Consent for account processing — distinct from Privacy Policy acknowledgement.
+  if (input.priorConsentAccount !== true) {
+    throw new AppError(
+      400,
+      'PRIOR_CONSENT_REQUIRED',
+      'Explicit Prior Consent is required for account Personal Data processing',
+    );
+  }
+  await grantDataProcessingConsent(user.id, {
+    purposeKey: 'account_registration_and_authentication',
+    language: input.priorConsentLanguage ?? input.locale ?? 'ar',
+    explicitConsent: true,
+    sourceSurface: 'auth.signup.prior_consent',
+    privacyNoticeVersionId: input.acknowledgedPrivacyVersionId,
+  });
+
+  // Marketing is optional and separate — never required for signup.
+  if (input.marketingConsent?.email) {
+    await grantConsent(user.id, {
+      purposeCode: 'marketing_email',
+      consentVersion: input.marketingConsent.consentVersion ?? 'signup-v1',
+      noticeVersionId: input.marketingConsent.noticeVersionId,
+      sourceSurface: 'auth.signup.marketing',
+    });
+  }
+  if (input.marketingConsent?.sms) {
+    await grantConsent(user.id, {
+      purposeCode: 'marketing_sms',
+      consentVersion: input.marketingConsent.consentVersion ?? 'signup-v1',
+      noticeVersionId: input.marketingConsent.noticeVersionId,
+      sourceSurface: 'auth.signup.marketing',
+    });
+  }
 
   return {
     userId: user.id,
@@ -153,6 +219,8 @@ export async function getUserById(userId: string) {
       locale: true,
       status: true,
       createdAt: true,
+      superAdmin: true,
+      capabilityGrants: { select: { capability: true } },
       ownerProfile: {
         select: { status: true, rejectionReason: true },
       },
@@ -163,9 +231,10 @@ export async function getUserById(userId: string) {
     return null;
   }
 
-  const { ownerProfile, ...rest } = user;
+  const { ownerProfile, capabilityGrants, ...rest } = user;
   return {
     ...rest,
+    capabilities: capabilityGrants.map((g) => g.capability),
     ownerProfileStatus: ownerProfile?.status ?? null,
     ownerRejectionReason: ownerProfile?.rejectionReason ?? null,
   };

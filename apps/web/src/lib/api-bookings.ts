@@ -96,9 +96,90 @@ export async function fetchMyBooking(id: string) {
   });
 }
 
+/** Phase 3C.4D.6 — immutable Booking-time listing snapshot (Customer-safe). */
+export async function fetchMyBookingListingSnapshot(bookingId: string) {
+  return bookingFetch<{
+    data: import('@/components/bookings/booking-listing-snapshot-panel').ListingSnapshotApiResult;
+  }>(`/me/bookings/${encodeURIComponent(bookingId)}/listing-snapshot`, {
+    cache: 'no-store',
+  });
+}
+
 export async function cancelBooking(id: string) {
   return bookingFetch<{ data: PublicBookingSummary }>(`/me/bookings/${id}/cancel`, {
     method: 'POST',
+  });
+}
+
+export async function fetchCheckInCode(bookingId: string) {
+  return bookingFetch<{
+    data: { status: string; code?: string | null; opensAt?: string; expiresAt?: string };
+  }>(`/me/bookings/${bookingId}/check-in-code`);
+}
+
+export async function reportArrivalProblem(
+  bookingId: string,
+  input: { type: string; description: string },
+) {
+  return bookingFetch<{ data: unknown }>(`/me/bookings/${bookingId}/report-arrival-problem`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function requestBookingReschedule(bookingId: string, toSlotId: string) {
+  return bookingFetch<{ data: unknown }>(`/me/bookings/${bookingId}/reschedule`, {
+    method: 'POST',
+    body: JSON.stringify({ toSlotId }),
+  });
+}
+
+export type ReschedulePreviewResult = {
+  bookingId: string;
+  toSlotId: string;
+  fromMerchantValue: number;
+  toListMerchantValue: number;
+  pricingMode: string;
+  customerContractedValue: number;
+  commissionBasisValue: number;
+  customerPayableDelta: number;
+  ownerAbsorbsAmount: number;
+  priceDelta: number;
+};
+
+export async function previewReschedule(
+  bookingId: string,
+  toSlotId: string,
+  opts?: { forceMajeure?: boolean; voluntaryUpgrade?: boolean },
+) {
+  const sp = new URLSearchParams({ toSlotId });
+  if (opts?.forceMajeure) sp.set('forceMajeure', '1');
+  if (opts?.voluntaryUpgrade) sp.set('voluntaryUpgrade', '1');
+  return bookingFetch<{ data: ReschedulePreviewResult }>(
+    `/me/bookings/${bookingId}/reschedule-preview?${sp}`,
+    { cache: 'no-store' },
+  );
+}
+
+export async function chooseForceMajeureResolution(
+  bookingId: string,
+  input: {
+    choice: 'FULL_REFUND' | 'EQUIVALENT_RESCHEDULE';
+    toSlotId?: string;
+    voluntaryUpgrade?: boolean;
+    source?: string;
+  },
+) {
+  return bookingFetch<{ data: unknown }>(`/me/bookings/${bookingId}/force-majeure/choose`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function respondToReschedule(requestId: string, accept: boolean) {
+  return bookingFetch<{ data: unknown }>(`/me/reschedule-requests/${requestId}/respond`, {
+    method: 'POST',
+    body: JSON.stringify({ accept }),
   });
 }
 

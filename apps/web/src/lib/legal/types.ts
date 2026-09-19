@@ -5,6 +5,9 @@ export const LEGAL_PAGE_SLUGS = [
   'privacy',
   'cancellation-refund',
   'booking-payment',
+  'verification',
+  'cookie-policy',
+  'community-reviews',
 ] as const;
 
 export type LegalPageSlug = (typeof LEGAL_PAGE_SLUGS)[number];
@@ -14,6 +17,7 @@ export type LegalSection = {
   title: string;
   paragraphs: string[];
   bullets?: string[];
+  tableMarkdown?: string;
 };
 
 export type LegalDocument = {

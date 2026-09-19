@@ -19,6 +19,11 @@ import type {
   PublicAvailabilitySlot,
   PublicPropertyDetail,
 } from '@mazare3/shared';
+import {
+  BALANCE_DUE_HOURS_BEFORE_START,
+  CANCELLATION_FREE_UNTIL_HOURS,
+  DEPOSIT_PERCENT,
+} from '@mazare3/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,7 +39,18 @@ import {
   validatePropertyCoupon,
 } from '@/lib/api-bookings';
 import { getMe } from '@/lib/api-auth';
-import { LegalCommitmentNotice } from '@/components/legal/legal-commitment-notice';
+import {
+  BookingLegalAck,
+  type BookingLegalAckState,
+} from '@/components/legal/booking-legal-ack';
+import { PriorConsentCheckbox } from '@/components/legal/prior-consent-checkbox';
+import { FirstRunLegalGate } from '@/components/legal/first-run-legal-gate';
+import {
+  contractualActionsBlocked,
+  legalAcceptHref,
+  useMyLegalStatus,
+} from '@/components/legal/legal-reacceptance';
+import { ensurePriorConsentsForPurposes } from '@/lib/ensure-prior-consents';
 import { formatPrice } from '@/lib/property-helpers';
 import { bookableSlotsForDate, monthKeyFromIso } from '@/lib/booking-calendar';
 import { AvailabilityCalendar } from '@/components/marketplace/booking/availability-calendar';
@@ -135,8 +151,57 @@ export function BookingPanel({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoteEpoch, setQuoteEpoch] = useState(0);
   const quoteSeq = useRef(0);
+  const [legalAck, setLegalAck] = useState<BookingLegalAckState | null>(null);
+  const [priorBookingConsent, setPriorBookingConsent] = useState(false);
+  const [priorPaymentConsent, setPriorPaymentConsent] = useState(false);
+  const [needBookingPriorConsent, setNeedBookingPriorConsent] = useState(true);
+  const [needPaymentPriorConsent, setNeedPaymentPriorConsent] = useState(true);
+  const { status: legalStatus } = useMyLegalStatus();
 
   const currency = property.currency;
+  const bookingLegalSummary = {
+    depositPercent: DEPOSIT_PERCENT,
+    freeCancelUntilHours: CANCELLATION_FREE_UNTIL_HOURS,
+    balanceDueHoursBeforeStart: BALANCE_DUE_HOURS_BEFORE_START,
+    showCancelTiers: true,
+    showDepositDisclosure: true,
+    showOwnerApprovalDisclosure: !instant,
+    ownerApprovalMinutes: 60,
+    ...(quote
+      ? {
+          amountDueNow: quote.depositDueAmount ?? quote.customerPayableTotal,
+          remainingBalance: quote.remainingAmount,
+          currency,
+        }
+      : {}),
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { fetchPriorConsentStatus } = await import('@/lib/api-legal');
+        const res = await fetchPriorConsentStatus();
+        if (cancelled) return;
+        const bookingRow = res.data.purposes.find(
+          (p) => p.purposeKey === 'marketplace_booking_processing',
+        );
+        const paymentRow = res.data.purposes.find(
+          (p) => p.purposeKey === 'payment_and_refund_processing',
+        );
+        setNeedBookingPriorConsent(bookingRow?.validity !== 'CONSENT_STILL_VALID');
+        setNeedPaymentPriorConsent(paymentRow?.validity !== 'CONSENT_STILL_VALID');
+      } catch {
+        if (!cancelled) {
+          setNeedBookingPriorConsent(true);
+          setNeedPaymentPriorConsent(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [property.slug]);
 
   useEffect(() => {
     setDate(initialDate || '');
@@ -234,7 +299,7 @@ export function BookingPanel({
     } catch (err) {
       if (seq !== quoteSeq.current) return;
       setQuote(null);
-      if (err instanceof BookingApiError && err.code === 'SLOT_UNAVAILABLE') {
+      if (err instanceof BookingApiError && (err.code === 'BOOKING_SLOT_UNAVAILABLE' || err.code === 'SLOT_UNAVAILABLE')) {
         setCalendarEpoch((n) => n + 1);
         setPeriod('');
         setQuoteError(t('slotUnavailable'));
@@ -311,6 +376,14 @@ export function BookingPanel({
       setError(t('selectSlotError'));
       return;
     }
+    if (!legalAck?.isValid) {
+      setError(t('legalAckRequired'));
+      return;
+    }
+    if (contractualActionsBlocked(legalStatus)) {
+      router.push(legalAcceptHref(pathname));
+      return;
+    }
 
     try {
       const me = await getMe();
@@ -326,6 +399,21 @@ export function BookingPanel({
 
     setBooking(true);
     try {
+      const consentOk = await ensurePriorConsentsForPurposes({
+        purposeKeys: ['marketplace_booking_processing', 'payment_and_refund_processing'],
+        checkedPurposes: {
+          marketplace_booking_processing: priorBookingConsent,
+          payment_and_refund_processing: priorPaymentConsent,
+        },
+        language: locale,
+        sourceSurface: 'marketplace.booking-panel',
+      });
+      if (!consentOk.ok) {
+        setError(t('priorConsentRequired'));
+        setBooking(false);
+        return;
+      }
+
       const res = await createBooking({
         propertySlug: property.slug,
         date,
@@ -333,6 +421,7 @@ export function BookingPanel({
         guestsCount: guests,
         expectedTotalAmount: quote.expectedTotalAmount,
         couponCode: coupon?.normalizedCode,
+        acceptedDocumentVersionIds: legalAck.versionIds,
       });
       clearBookingDraft(property.slug);
       if (res.data.status === 'pending_owner_approval') {
@@ -341,11 +430,18 @@ export function BookingPanel({
         router.push(`/checkout/${res.data.id}`);
       }
     } catch (err) {
-      if (err instanceof BookingApiError && err.code === 'SLOT_UNAVAILABLE') {
+      if (err instanceof BookingApiError && (err.code === 'BOOKING_SLOT_UNAVAILABLE' || err.code === 'SLOT_UNAVAILABLE')) {
         setCalendarEpoch((n) => n + 1);
         setPeriod('');
         setQuote(null);
         setError(t('slotUnavailable'));
+      } else if (
+        err instanceof BookingApiError &&
+        (err.code === 'CUSTOMER_BOOKING_LEGAL_TERMS_UNAVAILABLE' ||
+          err.code === 'CUSTOMER_BOOKING_LEGAL_ACCEPTANCE_REQUIRED' ||
+          err.code === 'CUSTOMER_BOOKING_LEGAL_VERSION_MISMATCH')
+      ) {
+        setError(t('legalTermsUnavailable'));
       } else if (err instanceof BookingApiError && err.code === 'PRICING_CHANGED') {
         setCoupon(null);
         setQuoteEpoch((n) => n + 1);
@@ -361,7 +457,14 @@ export function BookingPanel({
   }
 
   const quoteReady = Boolean(quote) && !quoteLoading && !quoteError;
-  const ctaDisabled = booking || !date || !period || !quoteReady;
+  const ctaDisabled =
+    booking ||
+    !date ||
+    !period ||
+    !quoteReady ||
+    !legalAck?.isValid ||
+    (needBookingPriorConsent && !priorBookingConsent) ||
+    (needPaymentPriorConsent && !priorPaymentConsent);
   const isPage = layout === 'page';
 
   const submitLabel = booking ? (
@@ -534,7 +637,32 @@ export function BookingPanel({
         >
           {t('safeBookingPolicyLink')}
         </Link>
-        <LegalCommitmentNotice testId="booking-legal-notice" />
+        <BookingLegalAck
+          testIdPrefix="booking-legal"
+          summary={bookingLegalSummary}
+          disabled={booking}
+          onChange={setLegalAck}
+        />
+        <div className="space-y-2 rounded-[14px] border border-[#E0E8F3] bg-[#F8FBFF] px-3.5 py-3">
+          {needBookingPriorConsent ? (
+            <PriorConsentCheckbox
+              purposeKey="marketplace_booking_processing"
+              checked={priorBookingConsent}
+              disabled={booking}
+              testId="booking-prior-consent-booking"
+              onChange={setPriorBookingConsent}
+            />
+          ) : null}
+          {needPaymentPriorConsent ? (
+            <PriorConsentCheckbox
+              purposeKey="payment_and_refund_processing"
+              checked={priorPaymentConsent}
+              disabled={booking}
+              testId="booking-prior-consent-payment"
+              onChange={setPriorPaymentConsent}
+            />
+          ) : null}
+        </div>
 
         <div
           data-testid="booking-sticky-cta"
@@ -719,7 +847,33 @@ export function BookingPanel({
           </div>
         </div>
 
-        <LegalCommitmentNotice testId="booking-legal-notice" />
+        <BookingLegalAck
+          testIdPrefix="booking-legal"
+          summary={bookingLegalSummary}
+          disabled={booking}
+          onChange={setLegalAck}
+        />
+        <div className="space-y-2 rounded-[14px] border border-[#E0E8F3] bg-[#F8FBFF] px-3.5 py-3">
+          {needBookingPriorConsent ? (
+            <PriorConsentCheckbox
+              purposeKey="marketplace_booking_processing"
+              checked={priorBookingConsent}
+              disabled={booking}
+              testId="booking-prior-consent-booking-legacy"
+              onChange={setPriorBookingConsent}
+            />
+          ) : null}
+          {needPaymentPriorConsent ? (
+            <PriorConsentCheckbox
+              purposeKey="payment_and_refund_processing"
+              checked={priorPaymentConsent}
+              disabled={booking}
+              testId="booking-prior-consent-payment-legacy"
+              onChange={setPriorPaymentConsent}
+            />
+          ) : null}
+        </div>
+        <FirstRunLegalGate enforceOnPaths={['/book', '/properties']} />
       </div>
     </div>
   );

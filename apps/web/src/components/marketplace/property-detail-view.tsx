@@ -24,6 +24,7 @@ import { MobileBookCta } from './mobile-book-cta';
 import { PropertyCard } from './property-card';
 import { PropertyDetailGallery } from './property-detail-gallery';
 import { PropertyAboutText } from './property-about-text';
+import { PropertyPoolSafetyDisclosure } from './property-pool-safety-disclosure';
 import { PropertyRatingBreakdown } from './property-rating-breakdown';
 import { PropertyDetailMapCard } from './property-detail-map-card';
 import { MarketplacePageShell } from '@/components/layout/marketplace-page-shell';
@@ -280,6 +281,8 @@ export async function PropertyDetailView({
               <AmenityPills keys={property.amenityKeys} max={12} />
             </div>
           </section>
+
+          <PropertyPoolSafetyDisclosure property={property} />
 
           {rules.length > 0 ? (
             <section>

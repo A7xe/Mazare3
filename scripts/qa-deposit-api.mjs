@@ -25,10 +25,21 @@ function fail(name, detail) {
 async function api(method, path, body, useCookie = true) {
   const headers = { 'Content-Type': 'application/json' };
   if (useCookie && cookieJar) headers.Cookie = cookieJar;
+  let payload = body;
+  // PayTabs contact completeness for local QA when demo user has no phone.
+  if (
+    method === 'POST' &&
+    path === '/payments/create-intent' &&
+    body &&
+    typeof body === 'object' &&
+    !body.contactPhone
+  ) {
+    payload = { ...body, contactPhone: '+962790000001' };
+  }
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: payload ? JSON.stringify(payload) : undefined,
   });
   const setCookie = res.headers.getSetCookie?.() ?? [];
   if (setCookie.length) {
@@ -87,9 +98,30 @@ function percentOfFils(base, pct) {
   return Math.round((base * pct) / 100);
 }
 
+async function ensureCustomerTermsAccepted() {
+  const status = await api('GET', '/me/legal/status');
+  const termsGate = (status.json.data?.customer?.gates ?? []).find(
+    (g) => g.documentType === 'terms_and_conditions',
+  );
+  if (termsGate && termsGate.status !== 'missing' && termsGate.status !== 'reacceptance_required') {
+    return true;
+  }
+  if (!termsGate && status.json.data?.customer?.requiresAction === false) return true;
+  const doc = await api('GET', '/legal/documents/terms_and_conditions?lang=en', null, false);
+  const versionId = doc.json.data?.id;
+  if (!versionId) return false;
+  const accept = await api('POST', '/me/legal/accept', {
+    documentVersionId: versionId,
+    context: 'login_reacceptance',
+    sourceSurface: 'qa.deposit-api',
+  });
+  return accept.status === 201 || accept.status === 200;
+}
+
 async function createPendingBooking() {
   const slot = await findAvailableSlot();
   if (!slot) return null;
+  if (!(await ensureCustomerTermsAccepted())) return null;
   const r = await api('POST', '/bookings', {
     propertySlug: SLUG,
     date: slot.date,
@@ -355,19 +387,22 @@ async function main() {
     else fail('backdate-balance-due', `status ${r.status}`);
     await api('POST', '/internal/payments/expire-stale', null, false);
     r = await api('GET', `/me/bookings/${over.booking.id}`);
-    if (r.json.data?.paymentState === 'balance_overdue') {
-      pass('paymentState=balance_overdue is queryable');
+    if (
+      r.json.data?.status === 'cancelled' &&
+      r.json.data?.cancellationReasonCode === 'BALANCE_NOT_PAID'
+    ) {
+      pass('unpaid balance at deadline auto-cancels (BALANCE_NOT_PAID)');
     } else {
-      fail('overdue state', r.json.data?.paymentState);
+      fail('overdue auto-cancel', `${r.json.data?.status} ${r.json.data?.cancellationReasonCode ?? r.json.data?.paymentState}`);
     }
+    // After auto-cancel, balance payment must not be creatable
     r = await api('POST', '/payments/create-intent', {
       bookingId: over.booking.id,
       method: 'card',
       purpose: 'balance',
     });
-    if (r.status === 201) pass('can still pay balance when overdue');
-    else fail('pay overdue balance', `${r.status} ${r.json.code}`);
-    await api('POST', `/payments/${r.json.data.id}/simulate-success`);
+    if (r.status === 400 || r.status === 409) pass('cannot pay balance after auto-cancel');
+    else fail('pay after auto-cancel', `${r.status} ${r.json.code}`);
   }
 
   // Commission still on full total

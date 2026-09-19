@@ -118,7 +118,11 @@ export type RequestPartnerChangesParams = {
 export type ReviewPartnerPayoutParams = {
   ownerProfileId: string;
   actorUserId: string;
-  input: { status: 'reviewed' | 'rejected'; reason?: string };
+  input: {
+    status: 'reviewed' | 'rejected' | 'action_required' | 'reassessment_required';
+    reason?: string;
+    reasonCategory?: string;
+  };
   req?: AuthenticatedRequest;
 };
 
@@ -435,31 +439,13 @@ export async function requestPartnerChanges(params: RequestPartnerChangesParams)
 }
 
 export async function reviewPartnerPayout(params: ReviewPartnerPayoutParams): Promise<AdminPartnerDetail> {
-  if (params.input.status === 'rejected' && !(params.input.reason ?? '').trim()) {
-    throw new AppError(400, 'REASON_REQUIRED', 'A reason is required to reject payout details');
-  }
-  const payout = await prisma.ownerPayoutProfile.findUnique({
-    where: { ownerProfileId: params.ownerProfileId },
-  });
-  if (!payout) throw new AppError(404, 'NOT_FOUND', 'Payout profile not found');
-  await prisma.ownerPayoutProfile.update({
-    where: { id: payout.id },
-    data: {
-      reviewStatus:
-        params.input.status === 'reviewed'
-          ? OwnerPayoutReviewStatus.reviewed
-          : OwnerPayoutReviewStatus.rejected,
-      reviewReason: params.input.reason?.trim() || null,
-      reviewedByUserId: params.actorUserId,
-      reviewedAt: new Date(),
-    },
-  });
-  await createAuditLog({
+  const { applyAdminPayoutBeneficiaryDecision } = await import('./payout-beneficiary.service.js');
+  await applyAdminPayoutBeneficiaryDecision({
+    ownerProfileId: params.ownerProfileId,
     actorUserId: params.actorUserId,
-    action: 'admin.partner_payout_reviewed',
-    entityType: 'owner_payout_profile',
-    entityId: payout.id,
-    metadata: { ownerProfileId: params.ownerProfileId, status: params.input.status },
+    status: params.input.status,
+    reason: params.input.reason,
+    reasonCategory: params.input.reasonCategory,
     req: params.req,
   });
   return getAdminPartnerDetail(params.ownerProfileId);

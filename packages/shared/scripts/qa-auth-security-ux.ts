@@ -51,11 +51,29 @@ console.log('\n— Signup role / schema —');
   const withRole = signupSchema.safeParse({
     email: 'a@b.co',
     password: 'password1',
+    acceptedTermsVersionId: 'terms-v',
+    acknowledgedPrivacyVersionId: 'privacy-v',
     role: 'admin',
   } as never);
   expect('3 extra role ignored by zod object', withRole.success === true && !('role' in (withRole.data as object)));
-  expect('4 password min 8', signupSchema.safeParse({ email: 'a@b.co', password: 'short' }).success === false);
-  expect('5 password ok 8+', signupSchema.safeParse({ email: 'a@b.co', password: 'password' }).success === true);
+  expect(
+    '4 password min 8',
+    signupSchema.safeParse({
+      email: 'a@b.co',
+      password: 'short',
+      acceptedTermsVersionId: 't',
+      acknowledgedPrivacyVersionId: 'p',
+    }).success === false,
+  );
+  expect(
+    '5 password ok 8+',
+    signupSchema.safeParse({
+      email: 'a@b.co',
+      password: 'password',
+      acceptedTermsVersionId: 't',
+      acknowledgedPrivacyVersionId: 'p',
+    }).success === true,
+  );
 }
 
 console.log('\n— Login errors / hashing —');

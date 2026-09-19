@@ -6,9 +6,11 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Link, useRouter } from '@/i18n/navigation';
 import {
   Calendar,
+  CalendarClock,
   Clock,
   Eye,
   Headphones,
+  KeyRound,
   Loader2,
   MapPin,
   MessageSquare,
@@ -19,12 +21,33 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react';
-import type { CancellationPolicyView, DisputeType, PublicBookingSummary, SupportTicketSummary } from '@mazare3/shared';
-import { DISPUTE_TYPES } from '@mazare3/shared';
+import type {
+  CancellationPolicyView,
+  DisputeType,
+  PublicBookingSummary,
+  ReportArrivalProblemInput,
+  SupportTicketSummary,
+} from '@mazare3/shared';
+import {
+  ARRIVAL_INCIDENT_TYPES,
+  DISPUTE_TYPES,
+  resolveBookingPeriodStart,
+  resolveCheckInWindow,
+} from '@mazare3/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { BookingApiError, cancelBooking, fetchMyBookings } from '@/lib/api-bookings';
+import {
+  BookingApiError,
+  cancelBooking,
+  chooseForceMajeureResolution,
+  fetchCheckInCode,
+  fetchMyBookingListingSnapshot,
+  fetchMyBookings,
+  reportArrivalProblem,
+  requestBookingReschedule,
+  respondToReschedule,
+} from '@/lib/api-bookings';
 import {
   fetchMySupportTickets,
   openDispute,
@@ -39,9 +62,28 @@ import { BookingReviewForm } from '@/components/account/booking-review-form';
 import { BookingExactMap } from '@/components/maps/booking-exact-map';
 import { BookingSupportForm } from '@/components/account/booking-support-form';
 import { FavoriteButton } from '@/components/favorites/favorite-button';
+import {
+  RescheduleSlotPicker,
+  type RescheduleSlotSelection,
+} from '@/components/bookings/reschedule-slot-picker';
 import { cn } from '@/lib/utils';
+import {
+  fetchBookingLegalSnapshot,
+  type CustomerBookingLegalSnapshot,
+} from '@/lib/api-legal';
+import {
+  BookingListingSnapshotPanel,
+  type ListingSnapshotApiResult,
+} from '@/components/bookings/booking-listing-snapshot-panel';
 
 type BookingTab = 'upcoming' | 'previous' | 'canceled';
+
+const DOC_TYPE_TO_PATH: Record<string, string> = {
+  terms_and_conditions: '/terms',
+  privacy_policy: '/privacy',
+  cancellation_refund_policy: '/cancellation-refund',
+  booking_terms: '/booking-payment',
+};
 
 type PropertyMeta = { id: string; imageUrl?: string };
 
@@ -68,6 +110,18 @@ function bookingEndMs(b: PublicBookingSummary): number {
 function bookingBucket(b: PublicBookingSummary, now: Date): BookingTab {
   if (b.status === 'cancelled') return 'canceled';
   if (b.status === 'expired') return 'previous';
+  if (b.visitLifecycle?.displayKey === 'completed' || b.visitOutcome === 'completed') {
+    return 'previous';
+  }
+  if (
+    b.visitLifecycle?.terminal &&
+    (b.visitLifecycle.displayKey === 'customer_no_show' ||
+      b.visitLifecycle.displayKey === 'owner_no_show' ||
+      b.visitLifecycle.displayKey === 'access_denied' ||
+      b.visitLifecycle.displayKey === 'force_majeure')
+  ) {
+    return 'previous';
+  }
   if (b.status === 'confirmed' && bookingEndMs(b) < now.getTime()) return 'previous';
   return 'upcoming';
 }
@@ -99,6 +153,27 @@ function badgeLabelKey(tab: BookingTab): 'badgeUpcoming' | 'badgeCompleted' | 'b
   return 'badgeCanceled';
 }
 
+function isConfirmedUpcoming(b: PublicBookingSummary, now: Date): boolean {
+  return b.status === 'confirmed' && bookingBucket(b, now) === 'upcoming';
+}
+
+function bookingPeriodStart(b: PublicBookingSummary): Date {
+  return resolveBookingPeriodStart(
+    b.bookingStartAt ? new Date(b.bookingStartAt) : null,
+    parseDisplayDate(b.bookingStartAt, b.date),
+  );
+}
+
+function canShowCheckInAction(b: PublicBookingSummary, now: Date): boolean {
+  if (!isConfirmedUpcoming(b, now)) return false;
+  return resolveCheckInWindow(bookingPeriodStart(b), now).status !== 'expired';
+}
+
+function canReportArrivalProblem(b: PublicBookingSummary, now: Date): boolean {
+  if (!isConfirmedUpcoming(b, now)) return false;
+  return now.getTime() >= bookingPeriodStart(b).getTime();
+}
+
 export function MyBookingsView() {
   const t = useTranslations('bookings');
   const tCommon = useTranslations('common');
@@ -119,11 +194,39 @@ export function MyBookingsView() {
   const [activeTab, setActiveTab] = useState<BookingTab>('upcoming');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [propertyMeta, setPropertyMeta] = useState<Record<string, PropertyMeta>>({});
+  const [checkInBusy, setCheckInBusy] = useState<string | null>(null);
+  const [checkInDisplay, setCheckInDisplay] = useState<
+    Record<string, { code: string | null; status: string; opensAt?: string; expiresAt?: string }>
+  >({});
+  const [arrivalForm, setArrivalForm] = useState<
+    Record<string, { type: ReportArrivalProblemInput['type']; description: string }>
+  >({});
+  const [rescheduleSelection, setRescheduleSelection] = useState<
+    Record<string, RescheduleSlotSelection | null>
+  >({});
+  const [fmRescheduleSelection, setFmRescheduleSelection] = useState<
+    Record<string, RescheduleSlotSelection | null>
+  >({});
+  const [fmVoluntaryUpgrade, setFmVoluntaryUpgrade] = useState<Record<string, boolean>>({});
+  const [fmShowReschedule, setFmShowReschedule] = useState<Record<string, boolean>>({});
+  const [legalSnapshots, setLegalSnapshots] = useState<
+    Record<string, CustomerBookingLegalSnapshot | null | 'loading' | 'error'>
+  >({});
+  const [listingSnapshots, setListingSnapshots] = useState<
+    Record<string, ListingSnapshotApiResult | 'loading' | 'error'>
+  >({});
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const checkInHideTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
     const tmr = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(tmr);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of Object.values(checkInHideTimers.current)) clearTimeout(timer);
+    };
   }, []);
 
   const load = useCallback(async () => {
@@ -230,6 +333,310 @@ export function MyBookingsView() {
     }
   }
 
+  async function handleShowCheckInCode(booking: PublicBookingSummary) {
+    setCheckInBusy(booking.id);
+    setError(null);
+    try {
+      const res = await fetchCheckInCode(booking.id);
+      const display = {
+        status: res.data.status,
+        code: res.data.code ?? null,
+        opensAt: res.data.opensAt,
+        expiresAt: res.data.expiresAt,
+      };
+      setCheckInDisplay((prev) => ({ ...prev, [booking.id]: display }));
+      if (display.code) {
+        if (checkInHideTimers.current[booking.id]) {
+          clearTimeout(checkInHideTimers.current[booking.id]);
+        }
+        checkInHideTimers.current[booking.id] = setTimeout(() => {
+          setCheckInDisplay((prev) => {
+            const cur = prev[booking.id];
+            if (!cur) return prev;
+            return { ...prev, [booking.id]: { ...cur, code: null } };
+          });
+        }, 90_000);
+      }
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('checkInCodeError'));
+    } finally {
+      setCheckInBusy(null);
+    }
+  }
+
+  async function handleReportArrivalProblem(booking: PublicBookingSummary) {
+    const form = arrivalForm[booking.id];
+    if (!form?.description || form.description.length < 10) {
+      setError(t('arrivalProblemDescMin'));
+      return;
+    }
+    setActionBusy(`arrival-${booking.id}`);
+    setError(null);
+    try {
+      await reportArrivalProblem(booking.id, form);
+      setArrivalForm((f) => {
+        const next = { ...f };
+        delete next[booking.id];
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('arrivalProblemError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleForceMajeureFullRefund(booking: PublicBookingSummary) {
+    setActionBusy(`fm-refund-${booking.id}`);
+    setError(null);
+    try {
+      await chooseForceMajeureResolution(booking.id, {
+        choice: 'FULL_REFUND',
+        source: 'customer_my_bookings',
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('forceMajeureChoiceError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleForceMajeureReschedule(booking: PublicBookingSummary) {
+    const selection = fmRescheduleSelection[booking.id];
+    if (!selection?.slotId) {
+      setError(t('rescheduleSlotRequired'));
+      return;
+    }
+    setActionBusy(`fm-reschedule-${booking.id}`);
+    setError(null);
+    try {
+      await chooseForceMajeureResolution(booking.id, {
+        choice: 'EQUIVALENT_RESCHEDULE',
+        toSlotId: selection.slotId,
+        voluntaryUpgrade: fmVoluntaryUpgrade[booking.id] === true,
+        source: 'customer_my_bookings',
+      });
+      setFmShowReschedule((s) => ({ ...s, [booking.id]: false }));
+      setFmRescheduleSelection((r) => ({ ...r, [booking.id]: null }));
+      await load();
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('forceMajeureChoiceError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  function renderForceMajeureChoice(b: PublicBookingSummary) {
+    const fm = b.forceMajeureResolution;
+    if (!fm?.awaitingCustomerChoice) return null;
+    const showPicker = fmShowReschedule[b.id] === true;
+    return (
+      <div
+        className="w-full max-w-sm space-y-2 rounded-xl border border-primary/20 bg-primary-soft/20 p-3"
+        data-testid={`force-majeure-choice-${b.id}`}
+      >
+        <p className="text-sm font-medium text-navy">{t('forceMajeureConfirmedTitle')}</p>
+        <p className="text-xs text-muted">{t('forceMajeureConfirmedBody')}</p>
+        <ul className="list-disc space-y-1 ps-4 text-xs text-muted">
+          <li>{t('forceMajeureRefundNote')}</li>
+          <li>{t('forceMajeureRescheduleOptionalNote')}</li>
+          <li>{t('forceMajeureAvailabilityNote')}</li>
+        </ul>
+        <Button
+          size="sm"
+          className="w-full shadow-soft"
+          data-testid={`fm-choose-refund-${b.id}`}
+          disabled={actionBusy === `fm-refund-${b.id}`}
+          onClick={() => void handleForceMajeureFullRefund(b)}
+        >
+          {actionBusy === `fm-refund-${b.id}` ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : null}
+          {t('forceMajeureChooseRefund')}
+        </Button>
+        {!showPicker ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            data-testid={`fm-show-reschedule-${b.id}`}
+            onClick={() => setFmShowReschedule((s) => ({ ...s, [b.id]: true }))}
+          >
+            {t('forceMajeureChooseReschedule')}
+          </Button>
+        ) : (
+          <div className="space-y-2 border-t border-primary/10 pt-2">
+            <p className="text-xs text-muted">{t('forceMajeureRescheduleHint')}</p>
+            <RescheduleSlotPicker
+              bookingId={b.id}
+              propertySlug={b.propertySlug}
+              currentDate={b.date}
+              currentPeriod={b.period}
+              currentMerchantValue={b.originalSlotPrice ?? b.totalAmount}
+              locale={locale}
+              initiatedBy="customer"
+              forceMajeure
+              voluntaryUpgrade={fmVoluntaryUpgrade[b.id] === true}
+              currency={b.currency}
+              testIdPrefix={`fm-reschedule-picker-${b.id}`}
+              onSelect={(selection) =>
+                setFmRescheduleSelection((r) => ({ ...r, [b.id]: selection }))
+              }
+            />
+            <label className="flex items-center gap-2 text-xs text-navy">
+              <input
+                type="checkbox"
+                checked={fmVoluntaryUpgrade[b.id] === true}
+                onChange={(e) =>
+                  setFmVoluntaryUpgrade((v) => ({ ...v, [b.id]: e.target.checked }))
+                }
+                data-testid={`fm-voluntary-upgrade-${b.id}`}
+              />
+              {t('forceMajeureVoluntaryUpgrade')}
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full gap-1"
+              data-testid={`fm-choose-reschedule-${b.id}`}
+              disabled={
+                actionBusy === `fm-reschedule-${b.id}` || !fmRescheduleSelection[b.id]?.slotId
+              }
+              onClick={() => void handleForceMajeureReschedule(b)}
+            >
+              {actionBusy === `fm-reschedule-${b.id}` ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CalendarClock className="h-4 w-4" />
+              )}
+              {t('forceMajeureConfirmReschedule')}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  async function handleRequestReschedule(booking: PublicBookingSummary) {
+    const selection = rescheduleSelection[booking.id];
+    if (!selection?.slotId) {
+      setError(t('rescheduleSlotRequired'));
+      return;
+    }
+    setActionBusy(`reschedule-${booking.id}`);
+    setError(null);
+    try {
+      await requestBookingReschedule(booking.id, selection.slotId);
+      setRescheduleSelection((r) => ({ ...r, [booking.id]: null }));
+      await load();
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('rescheduleError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleRespondReschedule(requestId: string, accept: boolean) {
+    setActionBusy(`respond-${requestId}`);
+    setError(null);
+    try {
+      await respondToReschedule(requestId, accept);
+      await load();
+    } catch (err) {
+      setError(err instanceof BookingApiError ? err.message : t('rescheduleRespondError'));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  function renderPendingReschedule(b: PublicBookingSummary) {
+    const pending = b.pendingReschedule;
+    if (!pending) return null;
+    const needsCustomerResponse =
+      pending.status === 'pending' &&
+      (pending.requestedBy === 'owner' || pending.requestedBy === 'admin');
+    const needsPayment =
+      pending.status === 'accepted_pending_payment' && pending.customerPayableDelta > 0;
+    const waitingOnOwner =
+      pending.status === 'pending' && pending.requestedBy === 'customer';
+
+    return (
+      <div
+        className="w-full max-w-md space-y-2 rounded-xl border border-primary/15 bg-primary-soft/20 p-3"
+        data-testid={`pending-reschedule-${b.id}`}
+      >
+        <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+          {t('pendingRescheduleTitle')}
+        </p>
+        <p className="text-sm text-navy">
+          {t('rescheduleStatusLabel')}:{' '}
+          <span className="font-medium">{t(`rescheduleStatus.${pending.status}` as never)}</span>
+        </p>
+        {pending.expiresAt && (
+          <p className="text-xs text-muted">
+            {t('rescheduleExpiresAt')}: {formatPlatformDateTime(pending.expiresAt, locale)}
+          </p>
+        )}
+        <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+          <p>
+            {t('rescheduleFrom')}: {pending.fromSlot.date} · {t(`period.${pending.fromSlot.period}`)}
+          </p>
+          <p>
+            {t('rescheduleTo')}: {pending.toSlot.date} · {t(`period.${pending.toSlot.period}`)}
+          </p>
+          <p>
+            {t('reschedulePriceDelta')}:{' '}
+            <PriceDisplay
+              amount={pending.customerPayableDelta}
+              currency={b.currency}
+              locale={locale}
+            />
+          </p>
+          {pending.ownerAbsorbsAmount > 0 && (
+            <p>
+              {t('rescheduleOwnerAbsorbs')}:{' '}
+              <PriceDisplay
+                amount={pending.ownerAbsorbsAmount}
+                currency={b.currency}
+                locale={locale}
+              />
+            </p>
+          )}
+        </div>
+        {waitingOnOwner && (
+          <p className="text-xs font-medium text-muted">{t('rescheduleWaitingOwner')}</p>
+        )}
+        {needsCustomerResponse && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              data-testid={`reschedule-accept-${b.id}`}
+              disabled={actionBusy === `respond-${pending.id}`}
+              onClick={() => void handleRespondReschedule(pending.id, true)}
+            >
+              {t('rescheduleAccept')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid={`reschedule-reject-${b.id}`}
+              disabled={actionBusy === `respond-${pending.id}`}
+              onClick={() => void handleRespondReschedule(pending.id, false)}
+            >
+              {t('rescheduleReject')}
+            </Button>
+          </div>
+        )}
+        {needsPayment && (
+          <Button asChild size="sm" className="shadow-soft" data-testid={`reschedule-pay-${b.id}`}>
+            <Link href={`/checkout/reschedule/${pending.id}`}>{t('payRescheduleDifference')}</Link>
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   async function handleCancel(id: string) {
     setCancellingId(id);
     try {
@@ -284,7 +691,30 @@ export function MyBookingsView() {
   const nextTrip = bucketed.upcoming[0] ?? null;
 
   function toggleExpanded(id: string) {
-    setExpandedId((cur) => (cur === id ? null : id));
+    setExpandedId((cur) => {
+      const next = cur === id ? null : id;
+      if (next && legalSnapshots[next] === undefined) {
+        setLegalSnapshots((prev) => ({ ...prev, [next]: 'loading' }));
+        void fetchBookingLegalSnapshot(next)
+          .then((res) => {
+            setLegalSnapshots((prev) => ({ ...prev, [next]: res.data }));
+          })
+          .catch(() => {
+            setLegalSnapshots((prev) => ({ ...prev, [next]: 'error' }));
+          });
+      }
+      if (next && listingSnapshots[next] === undefined) {
+        setListingSnapshots((prev) => ({ ...prev, [next]: 'loading' }));
+        void fetchMyBookingListingSnapshot(next)
+          .then((res) => {
+            setListingSnapshots((prev) => ({ ...prev, [next]: res.data }));
+          })
+          .catch(() => {
+            setListingSnapshots((prev) => ({ ...prev, [next]: 'error' }));
+          });
+      }
+      return next;
+    });
   }
 
   function focusBooking(id: string) {
@@ -400,6 +830,7 @@ export function MyBookingsView() {
                     locale,
                   );
                   const badgeKey = badgeLabelKey(tab);
+                  const checkInInfo = checkInDisplay[b.id];
 
                   return (
                     <article
@@ -553,6 +984,20 @@ export function MyBookingsView() {
                             <Badge variant={b.status === 'cancelled' ? 'muted' : 'highlight'}>
                               {t(`status.${b.status}`)}
                             </Badge>
+                            {b.visitLifecycle?.displayKey ? (
+                              <Badge
+                                variant={b.visitLifecycle.terminal ? 'muted' : 'default'}
+                                data-testid={`booking-visit-lifecycle-${b.visitLifecycle.displayKey}`}
+                              >
+                                {t(`visitLifecycle.${b.visitLifecycle.displayKey}`)}
+                              </Badge>
+                            ) : null}
+                            {b.status === 'cancelled' &&
+                              b.cancellationReasonCode === 'BALANCE_NOT_PAID' && (
+                              <Badge variant="muted" data-testid="booking-cancel-reason-balance-unpaid">
+                                {t('cancellationReasonBalanceUnpaid')}
+                              </Badge>
+                            )}
                             {b.paymentStatus && (
                               <Badge variant={b.paymentStatus === 'paid' ? 'highlight' : 'default'}>
                                 {t(`paymentStatus.${b.paymentStatus}`)}
@@ -750,6 +1195,61 @@ export function MyBookingsView() {
                                   )}
                                 </div>
                               )}
+                              <div
+                                className="rounded-xl border border-[#E4EAF3] bg-[#F8FAFD] p-3 text-xs"
+                                data-testid={`booking-legal-evidence-${b.id}`}
+                              >
+                                <p className="font-medium text-navy">{t('legalPoliciesTitle')}</p>
+                                {legalSnapshots[b.id] === 'loading' ||
+                                legalSnapshots[b.id] === undefined ? (
+                                  <p className="mt-1 text-muted">{t('legalPoliciesLoading')}</p>
+                                ) : legalSnapshots[b.id] === 'error' ? (
+                                  <p className="mt-1 text-muted">{t('legalPoliciesUnavailable')}</p>
+                                ) : legalSnapshots[b.id] == null ? (
+                                  <p className="mt-1 text-muted">{t('legalPoliciesNone')}</p>
+                                ) : (
+                                  <ul className="mt-2 space-y-1.5">
+                                    {(legalSnapshots[b.id] as CustomerBookingLegalSnapshot).documents.map(
+                                      (doc) => {
+                                        const href = DOC_TYPE_TO_PATH[doc.documentType];
+                                        const label = `${doc.title} · v${doc.version} (${doc.language})`;
+                                        return (
+                                          <li key={doc.versionId}>
+                                            {href && doc.status === 'active' ? (
+                                              <Link
+                                                href={href}
+                                                className="font-medium text-[#2F6EF6] hover:underline"
+                                              >
+                                                {label}
+                                              </Link>
+                                            ) : (
+                                              <span className="text-[#53637A]">{label}</span>
+                                            )}
+                                            {doc.effectiveAt ? (
+                                              <span className="text-muted">
+                                                {' '}
+                                                · {t('legalEffectiveAt')}{' '}
+                                                {new Date(doc.effectiveAt).toLocaleDateString(
+                                                  locale === 'ar' ? 'ar-JO' : 'en-GB',
+                                                )}
+                                              </span>
+                                            ) : null}
+                                          </li>
+                                        );
+                                      },
+                                    )}
+                                    <li className="text-muted">
+                                      {t('legalFinancialKey')}:{' '}
+                                      {(legalSnapshots[b.id] as CustomerBookingLegalSnapshot)
+                                        .financialPolicyKey}
+                                    </li>
+                                  </ul>
+                                )}
+                              </div>
+                              <BookingListingSnapshotPanel
+                                data={listingSnapshots[b.id]}
+                                testId={`booking-listing-snapshot-${b.id}`}
+                              />
                             </div>
 
                             <div className="flex w-full max-w-sm flex-col items-stretch gap-3 sm:items-end">
@@ -787,10 +1287,166 @@ export function MyBookingsView() {
                                   <Link href={`/checkout/${b.id}`}>{t('payBalance')}</Link>
                                 </Button>
                               )}
+                              {renderForceMajeureChoice(b)}
                               {b.paymentCollectionMode === 'full' && b.status === 'pending_payment' && (
                                 <Button asChild size="sm" className="shadow-soft">
                                   <Link href={`/checkout/${b.id}`}>{t('payDeposit')}</Link>
                                 </Button>
+                              )}
+                              {isConfirmedUpcoming(b, now) && (
+                                <div
+                                  className="w-full max-w-sm space-y-2 rounded-xl border border-primary/10 p-3"
+                                  data-testid={`phase2-actions-${b.id}`}
+                                >
+                                  <p className="text-xs font-medium text-navy">{t('phase2Title')}</p>
+                                  {canShowCheckInAction(b, now) && (
+                                    <div className="space-y-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="gap-1"
+                                        data-testid={`check-in-show-${b.id}`}
+                                        disabled={checkInBusy === b.id}
+                                        onClick={() => void handleShowCheckInCode(b)}
+                                      >
+                                        {checkInBusy === b.id ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <KeyRound className="h-4 w-4" />
+                                        )}
+                                        {t('showCheckInCode')}
+                                      </Button>
+                                      {checkInInfo && (
+                                        <div
+                                          className="rounded-lg bg-primary-soft/40 px-3 py-2 text-sm"
+                                          data-testid={`check-in-display-${b.id}`}
+                                        >
+                                          {checkInInfo.status === 'not_open' && (
+                                            <p className="text-muted">
+                                              {t('checkInNotOpen')}{' '}
+                                              {checkInInfo.opensAt
+                                                ? formatPlatformDateTime(
+                                                    checkInInfo.opensAt,
+                                                    locale,
+                                                    b.timeZone,
+                                                  )
+                                                : ''}
+                                            </p>
+                                          )}
+                                          {checkInInfo.status === 'verified' && (
+                                            <p className="text-primary">{t('checkInVerified')}</p>
+                                          )}
+                                          {checkInInfo.status === 'expired' && (
+                                            <p className="text-muted">{t('checkInExpired')}</p>
+                                          )}
+                                          {checkInInfo.code && (
+                                            <p className="font-mono text-lg font-bold tracking-widest text-navy">
+                                              {checkInInfo.code}
+                                            </p>
+                                          )}
+                                          {checkInInfo.status === 'available' && !checkInInfo.code && (
+                                            <p className="text-muted">{t('checkInAlreadyGenerated')}</p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {canReportArrivalProblem(b, now) && (
+                                    <div className="space-y-2 border-t border-primary/10 pt-2">
+                                      <p className="text-xs font-medium text-navy">
+                                        {t('reportArrivalProblemTitle')}
+                                      </p>
+                                      <select
+                                        className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
+                                        data-testid={`arrival-type-${b.id}`}
+                                        value={
+                                          arrivalForm[b.id]?.type ?? 'owner_no_show_report'
+                                        }
+                                        onChange={(e) =>
+                                          setArrivalForm((f) => ({
+                                            ...f,
+                                            [b.id]: {
+                                              type: e.target.value as ReportArrivalProblemInput['type'],
+                                              description: f[b.id]?.description ?? '',
+                                            },
+                                          }))
+                                        }
+                                      >
+                                        {ARRIVAL_INCIDENT_TYPES.map((type) => (
+                                          <option key={type} value={type}>
+                                            {t(`arrivalProblemType.${type}`)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <Input
+                                        data-testid={`arrival-desc-${b.id}`}
+                                        placeholder={t('arrivalProblemDescPlaceholder')}
+                                        value={arrivalForm[b.id]?.description ?? ''}
+                                        onChange={(e) =>
+                                          setArrivalForm((f) => ({
+                                            ...f,
+                                            [b.id]: {
+                                              type: f[b.id]?.type ?? 'owner_no_show_report',
+                                              description: e.target.value,
+                                            },
+                                          }))
+                                        }
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="gap-1"
+                                        data-testid={`arrival-submit-${b.id}`}
+                                        disabled={actionBusy === `arrival-${b.id}`}
+                                        onClick={() => void handleReportArrivalProblem(b)}
+                                      >
+                                        <MessageSquareWarning className="h-4 w-4" />
+                                        {t('reportArrivalProblem')}
+                                      </Button>
+                                    </div>
+                                  )}
+                                  {renderPendingReschedule(b)}
+                                  {!b.pendingReschedule && (
+                                    <div className="space-y-2 border-t border-primary/10 pt-2">
+                                      <p className="text-xs font-medium text-navy">
+                                        {t('requestRescheduleTitle')}
+                                      </p>
+                                      <RescheduleSlotPicker
+                                        bookingId={b.id}
+                                        propertySlug={b.propertySlug}
+                                        currentDate={b.date}
+                                        currentPeriod={b.period}
+                                        currentMerchantValue={
+                                          b.originalSlotPrice ?? b.totalAmount
+                                        }
+                                        locale={locale}
+                                        initiatedBy="customer"
+                                        currency={b.currency}
+                                        testIdPrefix={`reschedule-picker-${b.id}`}
+                                        onSelect={(selection) =>
+                                          setRescheduleSelection((r) => ({
+                                            ...r,
+                                            [b.id]: selection,
+                                          }))
+                                        }
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="gap-1"
+                                        data-testid={`reschedule-submit-${b.id}`}
+                                        disabled={
+                                          actionBusy === `reschedule-${b.id}` ||
+                                          !rescheduleSelection[b.id]?.slotId
+                                        }
+                                        onClick={() => void handleRequestReschedule(b)}
+                                      >
+                                        <CalendarClock className="h-4 w-4" />
+                                        {t('requestReschedule')}
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
                               )}
                               {canCancelBooking(b) && (
                                 <Button
@@ -846,9 +1502,25 @@ export function MyBookingsView() {
                                 </div>
                               )}
                               {b.refundRequest && (
-                                <Badge variant="muted" data-testid={`refund-status-${b.id}`}>
-                                  {t(`refundRequestStatus.${b.refundRequest.status}`)}
-                                </Badge>
+                                <div className="space-y-1" data-testid={`refund-status-${b.id}`}>
+                                  <Badge variant="muted">
+                                    {t(
+                                      `refundAggregate.${b.refundRequest.aggregateLabel ?? 'pending'}`,
+                                    )}
+                                  </Badge>
+                                  <p className="text-xs text-muted">
+                                    {t('refundAggregateDetail', {
+                                      refunded: (
+                                        b.refundRequest.refundedAmount ?? 0
+                                      ).toFixed(2),
+                                      remaining: (
+                                        b.refundRequest.remainingAmount ??
+                                        b.refundRequest.requestedAmount
+                                      ).toFixed(2),
+                                      total: b.refundRequest.requestedAmount.toFixed(2),
+                                    })}
+                                  </p>
+                                </div>
                               )}
                               {b.canOpenDispute && (
                                 <div className="w-full max-w-sm space-y-2 rounded-xl border border-primary/10 p-3">

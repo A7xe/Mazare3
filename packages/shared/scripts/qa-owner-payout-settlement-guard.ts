@@ -42,7 +42,12 @@ expect(
     readiness.includes('ready') &&
     readiness.includes('needs_attention'),
 );
-expect('2 isOwnerPayoutReady uses reviewed', readiness.includes("=== 'ready'") || readiness.includes('OwnerPayoutReviewStatus.reviewed'));
+expect(
+  '2 isOwnerPayoutReady uses reviewed',
+  readiness.includes('OwnerPayoutReviewStatus.reviewed') ||
+    readiness.includes("result: 'READY'") ||
+    readiness.includes("=== 'ready'"),
+);
 expect('3 assert throws PAYOUT_DESTINATION_REQUIRED', readiness.includes('PAYOUT_DESTINATION_REQUIRED'));
 expect('4 assert looks up OwnerPayoutProfile', readiness.includes('ownerPayoutProfile.findUnique'));
 

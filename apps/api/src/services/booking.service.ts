@@ -13,7 +13,7 @@ import {
   OwnerStatus,
   CommissionSource,
 } from '@mazare3/db';
-import { SLOT_HOLDING_STATUSES } from '../lib/payment-hold.js';
+import { SLOT_HOLDING_STATUSES, bookingSlotUnavailableError, isBookingSlotUniqueViolation } from '../lib/payment-hold.js';
 import type { CreateBookingInput, RebookIntent } from '@mazare3/shared';
 import {
   BOOKING_CANCELLATION_REASON,
@@ -23,10 +23,10 @@ import {
 } from '@mazare3/shared';
 import { AppError } from '../lib/errors.js';
 import { createAuditLog } from './audit.service.js';
+import { assertPriorConsentsActive } from './legal/data-processing-consent.service.js';
 import {
   toPublicBookingSummary,
   withBookingOperationsFlags,
-  isPropertyCurrentlyBookable,
 } from '../mappers/public-booking.mapper.js';
 import { BLOCKING_REFUND_REQUEST_STATUSES } from '@mazare3/shared';
 import {
@@ -38,6 +38,12 @@ import { canOpenDisputeForBooking } from './dispute.service.js';
 import { toPaymentSummary } from '../mappers/payment.mapper.js';
 import type { CheckoutBookingView } from '@mazare3/shared';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import {
+  assertCustomerBookingLegalForCommitment,
+  finalizeCustomerBookingLegalEvidence,
+} from './legal/customer-booking-legal.service.js';
+import { mapPendingRescheduleByBookingIds } from './reschedule.service.js';
+import { mapForceMajeureResolutionByBookingIds } from './force-majeure.service.js';
 import { randomBytes } from 'node:crypto';
 import { PAYMENT_HOLD_MINUTES } from '@mazare3/shared';
 import { buildInitialPaymentOptions } from '../lib/initial-payment-choice.js';
@@ -85,7 +91,27 @@ function generatePublicCode(): string {
   return `MZ-${randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-async function syncLivePaymentPlanForBooking(bookingId: string): Promise<boolean> {
+export type FirstPaymentPlanSyncResult = {
+  changed: boolean;
+  fullPaymentRequired: boolean;
+  hoursUntilStart: number;
+  previousDepositPercent: number;
+  currentDepositPercent: number;
+  previousRemainingAmount: number;
+  currentRemainingAmount: number;
+  customerPayableTotal: number;
+};
+
+/**
+ * Phase 3C.4E.2B — Recompute unpaid first-payment plan from live Booking Start.
+ * Does NOT change commercial price / commission / merchant value — only deposit% /
+ * due-now / remaining / balanceDueAt when the 72h boundary is crossed before first capture.
+ * No-op after any successful capture (confirmed deposit Bookings keep balance architecture).
+ */
+export async function syncLivePaymentPlanForBooking(
+  bookingId: string,
+  options?: { actorUserId?: string | null; req?: AuthenticatedRequest; audit?: boolean },
+): Promise<FirstPaymentPlanSyncResult | null> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -94,20 +120,27 @@ async function syncLivePaymentPlanForBooking(bookingId: string): Promise<boolean
       payments: { select: { status: true } },
     },
   });
-  if (!booking) return false;
+  if (!booking) return null;
   if (
     booking.status !== BookingStatus.pending_payment &&
     booking.status !== BookingStatus.pending_owner_approval
   ) {
-    return false;
+    return null;
   }
-  if (booking.payments.some((p) => p.status === PaymentStatus.succeeded)) return false;
+  if (booking.payments.some((p) => p.status === PaymentStatus.succeeded)) return null;
 
   const propertyDeposit =
     booking.property.depositPercent != null
       ? decimalToNumber(booking.property.depositPercent)
       : null;
   const hoursUntilStart = hoursUntilBookingStart(booking.bookingStartAt, booking.slot.date);
+  const planProbe = resolvePaymentPlan({
+    hoursUntilStart,
+    customerPayable: decimalToNumber(booking.customerPayableTotal),
+  });
+
+  const previousDepositPercent = decimalToNumber(booking.depositPercent);
+  const previousRemainingAmount = decimalToNumber(booking.remainingAmount);
 
   const snap = booking.platformCouponId
     ? buildPlatformFundedSnapshot({
@@ -131,25 +164,70 @@ async function syncLivePaymentPlanForBooking(bookingId: string): Promise<boolean
       });
 
   const changed =
-    jodToFils(decimalToNumber(booking.depositPercent)) !== jodToFils(snap.depositPercent) ||
-    jodToFils(decimalToNumber(booking.remainingAmount)) !== jodToFils(snap.remainingAmount);
+    jodToFils(previousDepositPercent) !== jodToFils(snap.depositPercent) ||
+    jodToFils(previousRemainingAmount) !== jodToFils(snap.remainingAmount);
 
-  if (!changed) return false;
+  if (changed) {
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: {
+        depositPercent: snap.depositPercent,
+        depositAmount: snap.depositAmount,
+        remainingAmount: snap.remainingAmount,
+        customerPayableTotal: snap.customerPayableTotal,
+        customerServiceFeeAmount: snap.customerServiceFeeAmount,
+        platformCommissionAmount: snap.platformCommissionAmount,
+        ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
+        balanceDueAt: snap.balanceDueAt,
+      },
+    });
 
-  await prisma.booking.update({
-    where: { id: bookingId },
-    data: {
-      depositPercent: snap.depositPercent,
-      depositAmount: snap.depositAmount,
-      remainingAmount: snap.remainingAmount,
-      customerPayableTotal: snap.customerPayableTotal,
-      customerServiceFeeAmount: snap.customerServiceFeeAmount,
-      platformCommissionAmount: snap.platformCommissionAmount,
-      ownerNetPayoutAmount: snap.ownerNetPayoutAmount,
-      balanceDueAt: snap.balanceDueAt,
-    },
-  });
-  return true;
+    // Stale deposit/full sessions no longer match the live due-now obligation.
+    await prisma.payment.updateMany({
+      where: {
+        bookingId,
+        status: { in: [PaymentStatus.initiated, PaymentStatus.pending] },
+        purpose: { in: ['deposit', 'full'] },
+      },
+      data: { status: PaymentStatus.expired },
+    });
+
+    if (options?.audit !== false) {
+      await createAuditLog({
+        actorUserId: options?.actorUserId ?? undefined,
+        action: 'booking.payment_plan_revalidated',
+        entityType: 'booking',
+        entityId: bookingId,
+        metadata: {
+          reasonCategory:
+            planProbe.fullPaymentRequired && previousDepositPercent < 100
+              ? 'DEPOSIT_ELIGIBLE_TO_FULL_REQUIRED_BEFORE_FIRST_CAPTURE'
+              : 'FIRST_PAYMENT_PLAN_SYNC',
+          previousDepositPercent,
+          currentDepositPercent: snap.depositPercent,
+          previousRemainingAmount,
+          currentRemainingAmount: snap.remainingAmount,
+          hoursUntilStart,
+          fullPaymentRequired: planProbe.fullPaymentRequired,
+          evaluatedAt: new Date().toISOString(),
+        },
+        req: options?.req,
+      });
+    }
+  }
+
+  return {
+    changed,
+    fullPaymentRequired: planProbe.fullPaymentRequired,
+    hoursUntilStart,
+    previousDepositPercent,
+    currentDepositPercent: changed ? snap.depositPercent : previousDepositPercent,
+    previousRemainingAmount,
+    currentRemainingAmount: changed ? snap.remainingAmount : previousRemainingAmount,
+    customerPayableTotal: decimalToNumber(
+      changed ? snap.customerPayableTotal : booking.customerPayableTotal,
+    ),
+  };
 }
 
 const bookingInclude = {
@@ -178,6 +256,13 @@ export async function createBooking(
   input: CreateBookingInput,
   req?: AuthenticatedRequest,
 ) {
+  // Purpose-specific Prior Consent before Booking Personal Data processing begins.
+  // Does not re-ask every click when valid consent remains active.
+  await assertPriorConsentsActive(userId, [
+    'marketplace_booking_processing',
+    'payment_and_refund_processing',
+  ]);
+
   const resolved = await resolveBookingPricing({
     propertySlug: input.propertySlug,
     date: input.date,
@@ -209,6 +294,26 @@ export async function createBooking(
   } = resolved;
 
   const promotionApplies = Boolean(priced.promotionId && priced.discountAmount > 0);
+
+  // Phase 3C.4D.6 — capture gate summary before TX (avoid nested writes inside Booking TX)
+  const { evaluatePropertyBookability } = await import('./property-bookability.service.js');
+  const gateSummary = await evaluatePropertyBookability(propertyId, 'new_booking');
+
+  // Phase 3C.4E.4A — server-authoritative legal corpus before commitment
+  const locale: 'ar' | 'en' = 'ar';
+  let legalSet;
+  try {
+    legalSet = await assertCustomerBookingLegalForCommitment({
+      userId,
+      submitted: input.acceptedDocumentVersionIds ?? null,
+      locale,
+    });
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'CUSTOMER_BOOKING_LEGAL_TERMS_UNAVAILABLE') {
+      throw err;
+    }
+    throw err;
+  }
 
   if (
     input.expectedTotalAmount != null &&
@@ -242,7 +347,7 @@ export async function createBooking(
         },
       });
       if (activeOnSlot) {
-        throw new AppError(409, 'SLOT_UNAVAILABLE', 'This time slot is not available for booking');
+        throw bookingSlotUnavailableError();
       }
 
       const timedSlot = slot.startAt && slot.endAt;
@@ -263,9 +368,7 @@ export async function createBooking(
           LIMIT 1
         `);
         if (overlaps.length > 0) {
-          throw new AppError(
-            409,
-            'SLOT_UNAVAILABLE',
+          throw bookingSlotUnavailableError(
             'This time overlaps another booking on this property',
           );
         }
@@ -277,7 +380,7 @@ export async function createBooking(
       });
 
       if (updated.count !== 1) {
-        throw new AppError(409, 'SLOT_UNAVAILABLE', 'This time slot was just booked');
+        throw bookingSlotUnavailableError();
       }
 
       const holdExpiresAt = instant ? new Date() : null;
@@ -356,8 +459,72 @@ export async function createBooking(
           promotionApplies,
         });
       }
+
+      // Phase 3C.4D.6 — immutable listing snapshot required for NEW Booking (same TX)
+      const { createInitialBookingListingSnapshot } = await import(
+        './booking-listing-snapshot.service.js'
+      );
+      await createInitialBookingListingSnapshot({
+        bookingId: created.id,
+        propertyId,
+        booking: {
+          currency: created.currency,
+          totalAmount: created.totalAmount,
+          platformCommissionPercent: created.platformCommissionPercent,
+        },
+        policyVersionRefs: {
+          termsVersionId: legalSet.corpusReady ? legalSet.terms!.versionId : undefined,
+          cancellationPolicyVersionId: legalSet.corpusReady
+            ? legalSet.cancellation!.versionId
+            : undefined,
+          bookingTermsVersionId: legalSet.corpusReady
+            ? legalSet.bookingTerms!.versionId
+            : undefined,
+          privacyNoticeVersionId: legalSet.privacy?.versionId,
+        },
+        gateSummary: {
+          eligible: gateSummary.eligible,
+          layers: {
+            regulatoryReadiness: gateSummary.layers.regulatoryReadiness,
+            authorityReviewStatus: gateSummary.layers.authorityReviewStatus,
+          },
+        },
+        tx,
+      });
+
+      // Phase 3C.4E.4A.1 — snapshot + LegalAcceptance in SAME TX as Booking
+      // (ACTIVE versions only; no DRAFT fabricate; no after-commit acceptance gap)
+      await finalizeCustomerBookingLegalEvidence({
+        userId,
+        bookingId: created.id,
+        legalSet,
+        submitted: input.acceptedDocumentVersionIds ?? null,
+        commissionPercent: Number(created.platformCommissionPercent),
+        depositPercent: Number(created.depositPercent),
+        req,
+        tx,
+        phase: 'all',
+      });
+
       return created;
-    }, { timeout: 20_000, maxWait: 10_000 });
+    }, { timeout: 30_000, maxWait: 10_000 });
+
+    if (legalSet.corpusReady) {
+      await createAuditLog({
+        actorUserId: userId,
+        action: 'booking.legal_acceptance_atomic',
+        entityType: 'booking',
+        entityId: booking.id,
+        metadata: {
+          acceptancePresentationKey: legalSet.acceptancePresentationKey,
+          termsVersionId: legalSet.terms?.versionId,
+          cancellationPolicyVersionId: legalSet.cancellation?.versionId,
+          bookingTermsVersionId: legalSet.bookingTerms?.versionId,
+          note: 'LegalAcceptance persisted in Booking TX (3C.4E.4A.1)',
+        },
+        req,
+      });
+    }
 
     await createAuditLog({
       actorUserId: userId,
@@ -368,6 +535,8 @@ export async function createBooking(
         publicCode: booking.publicCode,
         propertySlug: input.propertySlug,
         instantBookingEnabled: instant,
+        legalCorpusReady: legalSet.corpusReady,
+        legalEvidenceAtomic: true,
       },
       req,
     });
@@ -392,28 +561,40 @@ export async function createBooking(
 
     return toPublicBookingSummary(booking);
   } catch (err) {
-    if (err instanceof AppError && err.code === 'SLOT_UNAVAILABLE') {
+    if (err instanceof AppError && (err.code === 'BOOKING_SLOT_UNAVAILABLE' || err.code === 'SLOT_UNAVAILABLE')) {
       await createAuditLog({
         actorUserId: userId,
-        action: 'booking.conflict_rejected',
+        action: 'booking.slot_conflict',
         entityType: 'availability_slot',
         entityId: slot.id,
-        metadata: { propertySlug: input.propertySlug, date: input.date, period: input.period },
+        metadata: {
+          propertyId,
+          propertySlug: input.propertySlug,
+          date: input.date,
+          period: input.period,
+          context: 'booking.create',
+        },
         req,
       });
-      throw err;
+      throw err.code === 'SLOT_UNAVAILABLE' ? bookingSlotUnavailableError() : err;
     }
-    const prismaCode = (err as { code?: string })?.code;
-    if (prismaCode === 'P2002') {
+    if (isBookingSlotUniqueViolation(err)) {
       await createAuditLog({
         actorUserId: userId,
-        action: 'booking.conflict_rejected',
+        action: 'booking.slot_conflict',
         entityType: 'availability_slot',
         entityId: slot.id,
-        metadata: { propertySlug: input.propertySlug, reason: 'unique_violation' },
+        metadata: {
+          propertyId,
+          propertySlug: input.propertySlug,
+          date: input.date,
+          period: input.period,
+          context: 'booking.create',
+          reason: 'unique_violation',
+        },
         req,
       });
-      throw new AppError(409, 'SLOT_UNAVAILABLE', 'This time slot is not available for booking');
+      throw bookingSlotUnavailableError();
     }
     throw err;
   }
@@ -424,19 +605,25 @@ async function enrichBookingSummariesForCustomer(
   rows: Awaited<ReturnType<typeof prisma.booking.findMany<{ include: typeof bookingInclude }>>>,
 ) {
   const ids = rows.map((r) => r.id);
-  const [refunds, disputes, reviewMap] = await Promise.all([
+  const { mapInitialListingSnapshotsByBookingIds, applyListingSnapshotIdentity } = await import(
+    './booking-listing-snapshot.service.js'
+  );
+  const [refunds, disputes, reviewMap, fmByBooking, snapByBooking] = await Promise.all([
     prisma.refundRequest.findMany({
       where: {
         bookingId: { in: ids },
         customerId: userId,
       },
       orderBy: { createdAt: 'desc' },
+      include: { allocations: true },
     }),
     prisma.dispute.findMany({
       where: { bookingId: { in: ids }, openedByUserId: userId },
       orderBy: { createdAt: 'desc' },
     }),
     reviewsForBookings(ids),
+    mapForceMajeureResolutionByBookingIds(ids),
+    mapInitialListingSnapshotsByBookingIds(ids),
   ]);
 
   const refundByBooking = new Map<string, (typeof refunds)[0]>();
@@ -449,29 +636,69 @@ async function enrichBookingSummariesForCustomer(
   }
 
   const reviewInviteIds: string[] = [];
+  const pendingByBooking = await mapPendingRescheduleByBookingIds(ids);
   const summaries = rows.map((row) => {
-    const summary = toPublicBookingSummary(row);
+    const summary = applyListingSnapshotIdentity(
+      toPublicBookingSummary(row),
+      snapByBooking.get(row.id),
+    );
+    summary.pendingReschedule = pendingByBooking.get(row.id) ?? null;
     const hasCaptured = row.payments.some((p) => p.status === PaymentStatus.succeeded);
     const refundRow = refundByBooking.get(row.id);
     const hasBlockingRefund =
       refundRow &&
       (BLOCKING_REFUND_REQUEST_STATUSES as readonly string[]).includes(refundRow.status);
     const refundRequest = refundRow
-      ? {
-          id: refundRow.id,
-          bookingId: refundRow.bookingId,
-          status: refundRow.status,
-          policyRefundAmount: decimalToNumber(refundRow.policyRefundAmount),
-          requestedAmount: decimalToNumber(refundRow.requestedAmount),
-          approvedAmount:
-            refundRow.approvedAmount != null
-              ? decimalToNumber(refundRow.approvedAmount)
-              : null,
-          reason: refundRow.reason,
-          adminNote: refundRow.adminNote,
-          createdAt: refundRow.createdAt.toISOString(),
-          updatedAt: refundRow.updatedAt.toISOString(),
-        }
+      ? (() => {
+          const refundedAmount = decimalToNumber(refundRow.refundedAmount ?? 0);
+          const requestedAmount = decimalToNumber(refundRow.requestedAmount);
+          const remainingAmount = Math.max(
+            0,
+            Math.round((requestedAmount - refundedAmount) * 100) / 100,
+          );
+          const allocations = (refundRow.allocations ?? []).map((a) => ({
+            id: a.id,
+            paymentId: a.paymentId,
+            status: a.status,
+            allocatedAmount: decimalToNumber(a.allocatedAmount),
+            refundedAmount: decimalToNumber(a.refundedAmount),
+            providerRefundRef: a.providerRefundRef,
+            lastError: a.lastError,
+          }));
+          let aggregateLabel:
+            | 'pending'
+            | 'partially_refunded'
+            | 'refunded'
+            | 'action_required' = 'pending';
+          if (refundRow.status === 'processed' || remainingAmount <= 0.001) {
+            aggregateLabel = 'refunded';
+          } else if (refundedAmount > 0 && remainingAmount > 0.001) {
+            aggregateLabel = allocations.some((a) => a.status === 'failed')
+              ? 'action_required'
+              : 'partially_refunded';
+          } else if (allocations.some((a) => a.status === 'failed')) {
+            aggregateLabel = 'action_required';
+          }
+          return {
+            id: refundRow.id,
+            bookingId: refundRow.bookingId,
+            status: refundRow.status,
+            policyRefundAmount: decimalToNumber(refundRow.policyRefundAmount),
+            requestedAmount,
+            approvedAmount:
+              refundRow.approvedAmount != null
+                ? decimalToNumber(refundRow.approvedAmount)
+                : null,
+            refundedAmount,
+            remainingAmount,
+            aggregateLabel,
+            allocations,
+            reason: refundRow.reason,
+            adminNote: refundRow.adminNote,
+            createdAt: refundRow.createdAt.toISOString(),
+            updatedAt: refundRow.updatedAt.toISOString(),
+          };
+        })()
       : null;
 
     const existingReview = reviewMap.get(row.id);
@@ -515,6 +742,7 @@ async function enrichBookingSummariesForCustomer(
             createdAt: existingReview.createdAt.toISOString(),
           }
         : null,
+      forceMajeureResolution: fmByBooking.get(row.id) ?? null,
     });
   });
 
@@ -565,6 +793,7 @@ export async function getRebookIntent(userId: string, bookingId: string): Promis
     include: {
       property: {
         select: {
+          id: true,
           slug: true,
           status: true,
           capacity: true,
@@ -587,8 +816,10 @@ export async function getRebookIntent(userId: string, bookingId: string): Promis
 
   const capacity = row.property.capacity;
   const guestsToApply = Math.min(Math.max(1, row.guestsCount), capacity);
+  const { evaluatePropertyBookability } = await import('./property-bookability.service.js');
+  const evalResult = await evaluatePropertyBookability(row.property.id, 'new_booking');
   return {
-    bookable: isPropertyCurrentlyBookable(row.property),
+    bookable: evalResult.canBook,
     propertySlug: row.property.slug,
     propertyCapacity: capacity,
     guestsCount: row.guestsCount,
@@ -713,7 +944,7 @@ export async function cancelMyBooking(
 ) {
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, userId },
-    include: { slot: true, payments: true, refundRequests: true },
+    include: { slot: true, payments: true, refundRequests: { include: { allocations: true } } },
   });
 
   if (!booking) {
@@ -751,6 +982,10 @@ export async function cancelMyBooking(
       booking.bookingStartAt,
       booking.slot.date,
       commissionPercent,
+      new Date(),
+      booking.rescheduleCount > 0
+        ? { originalBookingStartAt: booking.originalBookingStartAt, applyRescheduleAnchor: true }
+        : undefined,
     );
     if (!policy.canCancel) {
       throw new AppError(
@@ -909,10 +1144,25 @@ export async function acceptOwnerBooking(
     throw new AppError(409, 'OWNER_DECISION_ALREADY_MADE', 'This request is no longer awaiting approval');
   }
   if (booking.property.owner.status !== OwnerStatus.approved) {
-    throw new AppError(409, 'PARTNER_NOT_BOOKABLE', 'This property is not accepting new bookings');
+    throw new AppError(
+      409,
+      'PARTNER_NOT_BOOKABLE',
+      'This Property is currently unavailable for Booking.',
+    );
   }
   if (booking.property.status !== PropertyStatus.published) {
-    throw new AppError(409, 'PROPERTY_NOT_BOOKABLE', 'Property is not published');
+    throw new AppError(
+      409,
+      'PROPERTY_NOT_BOOKABLE',
+      'This Property is currently unavailable for Booking.',
+    );
+  }
+  // Phase 3C.4D.4B — re-check authority + regulatory READY before accepting unpaid request
+  {
+    const { assertPropertyEligibleForNewPaidBooking } = await import(
+      './property-bookability.service.js'
+    );
+    await assertPropertyEligibleForNewPaidBooking(booking.property.id, 'owner_accept');
   }
   if (booking.slot.status !== AvailabilitySlotStatus.booked) {
     throw new AppError(409, 'SLOT_UNAVAILABLE', 'This time slot is no longer valid');

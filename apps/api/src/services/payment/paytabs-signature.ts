@@ -73,7 +73,9 @@ export function parsePaytabsCartId(
   cartId: string | null | undefined,
 ): { paymentId: string; purpose: string } | null {
   if (!cartId) return null;
-  const m = /^mazare3_pay_(.+)_(deposit|balance|full)$/.exec(cartId.trim());
+  // Include reschedule_difference (Phase 3C.4E.2B) — purpose is suffix after last known enum.
+  const m =
+    /^mazare3_pay_(.+)_(deposit|balance|full|reschedule_difference)$/.exec(cartId.trim());
   if (!m) return null;
   return { paymentId: m[1]!, purpose: m[2]! };
 }

@@ -12,6 +12,9 @@ const HELP_LINKS = [
   { href: '/privacy', key: 'privacy', testId: 'footer-legal-privacy' },
   { href: '/cancellation-refund', key: 'cancellation-refund', testId: 'footer-legal-cancellation' },
   { href: '/booking-payment', key: 'booking-payment', testId: 'footer-legal-booking-payment' },
+  { href: '/verification', key: 'verification', testId: 'footer-legal-verification' },
+  { href: '/cookie-policy', key: 'cookie-policy', testId: 'footer-legal-cookie-policy' },
+  { href: '/community-reviews', key: 'community-reviews', testId: 'footer-legal-community-reviews' },
 ] as const;
 
 export function SiteFooter() {

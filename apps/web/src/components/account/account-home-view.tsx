@@ -22,6 +22,7 @@ import {
   Phone,
   Plus,
   Settings,
+  Shield,
   UserRound,
 } from 'lucide-react';
 import { Link, usePathname, useRouter } from '@/i18n/navigation';
@@ -38,6 +39,11 @@ import {
   type AccountPartnerSurfaceKind,
 } from '@/lib/add-farm-entry';
 import { cn } from '@/lib/utils';
+import {
+  LegalReacceptanceBanner,
+  legalAcceptHref,
+  useMyLegalStatus,
+} from '@/components/legal/legal-reacceptance';
 
 function firstName(full: string) {
   const trimmed = full.trim();
@@ -201,6 +207,7 @@ export function AccountHomeView() {
   const [phoneMasked, setPhoneMasked] = useState<string | null>(null);
   const [partnerLoading, setPartnerLoading] = useState(false);
   const [partnerSurface, setPartnerSurface] = useState<AccountPartnerSurfaceKind | null>('join');
+  const { status: legalStatus } = useMyLegalStatus();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -367,6 +374,10 @@ export function AccountHomeView() {
 
   return (
     <div data-testid="account-home" className="pb-8">
+      <LegalReacceptanceBanner
+        status={legalStatus}
+        onAcceptClick={() => router.push(legalAcceptHref('/account'))}
+      />
       <div className="grid gap-4 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] lg:items-start lg:gap-5">
         {/* Right rail (RTL): title + discover + support */}
         <aside className="flex flex-col gap-4">
@@ -572,6 +583,13 @@ export function AccountHomeView() {
                   testId: 'account-home-terms',
                   tone: 'bg-[#F1E9FF] text-[#7C3AED]',
                   icon: <FileText className="h-4 w-4" aria-hidden />,
+                },
+                {
+                  href: '/account/privacy',
+                  label: t('privacyRights'),
+                  testId: 'account-home-privacy',
+                  tone: 'bg-[#E8F8EF] text-[#16A34A]',
+                  icon: <Shield className="h-4 w-4" aria-hidden />,
                 },
               ]}
             />

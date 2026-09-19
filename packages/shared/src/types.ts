@@ -186,8 +186,36 @@ export interface PublicPropertyDetail extends PublicPropertySummary {
   rulesAr: string[];
   rulesEn: string[];
   reviews?: PublicPropertyReview[];
+  /** Phase 3C.4D.4B — Customer-safe new-Booking eligibility (server-authoritative). */
+  canBook?: boolean;
   bookingDisabled?: boolean;
   bookingDisabledReason?: string | null;
+  /**
+   * Phase 3C.4D.5 — Owner-provided pool/safety facts for Customer disclosure.
+   * Never includes regulatory evidence, licence numbers, or admin notes.
+   */
+  poolSafetyDisclosure?: {
+    poolAvailable: boolean;
+    poolsCount: number;
+    hasIndoorPool: boolean;
+    hasHeatedPool: boolean;
+    depthSource: 'owner_provided';
+    minDepthMeters: number | null;
+    maxDepthMeters: number | null;
+    childrenAllowed: boolean | null;
+    childrenRequireAdultSupervision: boolean | null;
+    seasonality: string | null;
+    accessRestrictionsAr: string | null;
+    accessRestrictionsEn: string | null;
+    otherWarningsAr: string | null;
+    otherWarningsEn: string | null;
+    safetyDisclosures: Array<{
+      category: string;
+      descriptionAr: string;
+      descriptionEn: string | null;
+    }>;
+    disclaimerKey: string;
+  } | null;
   activeOffers?: PublicPropertyOffer[];
 }
 
@@ -224,11 +252,13 @@ export interface HomePublicTestimonial {
 }
 
 export interface PublicAvailabilitySlot {
+  /** Present when the API returns a concrete availability row (needed for reschedule). */
+  id?: string;
   date: string;
   period: AvailabilityPeriod;
   price: number;
   currency: string;
-  status: 'available' | 'blocked' | 'booked';
+  status: 'available' | 'blocked' | 'booked' | 'held';
   startAt: string | null;
   endAt: string | null;
   startAtLocal: string | null;
@@ -236,7 +266,7 @@ export interface PublicAvailabilitySlot {
   timeZone: string;
   source: 'legacy' | 'generated' | 'manual';
   bookable: boolean;
-  conflictReason: 'blocked' | 'booked' | 'overlapping_booking' | 'legacy_untimed' | null;
+  conflictReason: 'blocked' | 'booked' | 'overlapping_booking' | 'legacy_untimed' | 'held' | null;
   usesLegacyTiming: boolean;
   depositAmount: number;
   remainingAmount: number;
@@ -495,6 +525,37 @@ export interface OwnerBookingRow {
   payoutAvailableAt?: string | null;
   paymentState?: BookingPaymentState;
   isFullyPaid?: boolean;
+  pendingReschedule?: PendingRescheduleSummary | null;
+  /** Phase 3C.4D.6 — booking-time listing snapshot availability. */
+  listingSnapshotStatus?: 'available' | 'LEGACY_SNAPSHOT_UNAVAILABLE';
+  /** Phase 3C.4E.4B/C — visit outcome when set. */
+  visitOutcome?: string | null;
+  visitLifecycleDisplayKey?: string | null;
+}
+
+export interface PendingRescheduleSlotSummary {
+  id: string;
+  date: string;
+  period: AvailabilityPeriod;
+  startAt?: string | null;
+  endAt?: string | null;
+  price?: number | null;
+}
+
+export interface PendingRescheduleSummary {
+  id: string;
+  status: string;
+  requestedBy: 'customer' | 'owner' | 'admin';
+  fromSlot: PendingRescheduleSlotSummary;
+  toSlot: PendingRescheduleSlotSummary;
+  customerPayableDelta: number;
+  customerContractedValue: number;
+  fromMerchantValue: number;
+  toListMerchantValue: number | null;
+  ownerAbsorbsAmount: number;
+  pricingMode: string;
+  expiresAt: string | null;
+  paymentRequired: boolean;
 }
 
 export interface OwnerAvailabilitySlotRow {
@@ -504,7 +565,7 @@ export interface OwnerAvailabilitySlotRow {
   period: AvailabilityPeriod;
   price: number;
   currency: string;
-  status: 'available' | 'blocked' | 'booked';
+  status: 'available' | 'blocked' | 'booked' | 'held';
   hasActiveBooking: boolean;
   startAt: string | null;
   endAt: string | null;
@@ -743,9 +804,13 @@ export interface AdminBookingRow {
   payoutAvailableAt?: string | null;
   refundStatus?: RefundStatus | null;
   cancellationRefundAmount?: number | null;
+  /** System/customer cancellation reason code when status is cancelled. */
+  cancellationReasonCode?: string | null;
   paymentState?: BookingPaymentState;
   paymentCollectionMode?: PaymentCollectionMode;
   isFullyPaid?: boolean;
+  /** Phase 3C.4D.6 — booking-time listing snapshot availability. */
+  listingSnapshotStatus?: 'available' | 'LEGACY_SNAPSHOT_UNAVAILABLE';
 }
 
 export interface OwnerBookingPaymentInfo {
@@ -825,6 +890,17 @@ export interface PaymentSummary {
   succeededAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Phase 3C.4E.2B — set when unpaid plan was revalidated to full-only (<=72h)
+   * before creating/reusing a first-payment session. UI must show updated due-now.
+   */
+  paymentPlanRevalidated?: {
+    code: 'FULL_PAYMENT_REQUIRED_WITHIN_72H';
+    previousDepositPercent: number;
+    currentDepositPercent: number;
+    dueNowAmount: number;
+    fullPaymentRequired: true;
+  } | null;
 }
 
 export interface PublicBookingSummary {
@@ -843,6 +919,18 @@ export interface PublicBookingSummary {
   currency: string;
   createdAt: string;
   cancelledAt?: string | null;
+  /** Present when cancelled; e.g. BALANCE_NOT_PAID for unpaid-balance auto-cancel. */
+  cancellationReasonCode?: string | null;
+  /** Phase 3C.4E.4B — stored visit outcome when set. */
+  visitOutcome?: string | null;
+  visitOutcomeAt?: string | null;
+  /** Customer-facing visit lifecycle projection (orthogonal to Booking.status). */
+  visitLifecycle?: {
+    outcome: string | null;
+    terminal: boolean;
+    displayKey: string;
+    graceDeadlineAt: string | null;
+  } | null;
   paymentStatus?: PaymentDisplayStatus | null;
   paymentId?: string | null;
   customerPayableAmount?: number | null;
@@ -895,6 +983,35 @@ export interface PublicBookingSummary {
   } | null;
   /** Past booking may start a new booking on the same bookable property. */
   canRebook?: boolean;
+  pendingReschedule?: PendingRescheduleSummary | null;
+  /** Compact legal evidence when a BookingLegalSnapshot exists (no content hashes). */
+  legalEvidence?: BookingLegalEvidenceSummary | null;
+  /**
+   * Phase 3C.4D.6 — whether an immutable Booking-time listing snapshot exists.
+   * When `available`, material titles/location on this summary prefer the snapshot.
+   */
+  listingSnapshotStatus?: 'available' | 'LEGACY_SNAPSHOT_UNAVAILABLE';
+  /** Phase 3C.4A.3 — confirmed force majeure awaiting / showing Customer resolution choice. */
+  forceMajeureResolution?: ForceMajeureResolutionSummary | null;
+}
+
+/** Customer-safe compact legal evidence attached to a booking summary. */
+export interface BookingLegalEvidenceSummary {
+  bookingTermsVersion: string | null;
+  cancellationPolicyVersion: string | null;
+  termsVersion?: string | null;
+  financialPolicyKey: string;
+  acceptedAt?: string | null;
+}
+
+/** Confirmed force majeure resolution state for customer/admin surfaces. */
+export interface ForceMajeureResolutionSummary {
+  incidentId: string;
+  status: string;
+  awaitingCustomerChoice: boolean;
+  customerChoice: 'FULL_REFUND' | 'EQUIVALENT_RESCHEDULE' | null;
+  customerChosenTargetSlotId: string | null;
+  customerResolutionChosenAt: string | null;
 }
 
 export interface BookingArrivalInfo {
@@ -916,6 +1033,16 @@ export interface RebookIntent {
   preferredPeriod: AvailabilityPeriod;
 }
 
+export interface RefundPaymentAllocationSummary {
+  id: string;
+  paymentId: string;
+  status: string;
+  allocatedAmount: number;
+  refundedAmount: number;
+  providerRefundRef: string | null;
+  lastError: string | null;
+}
+
 export interface RefundRequestSummary {
   id: string;
   bookingId: string;
@@ -923,6 +1050,11 @@ export interface RefundRequestSummary {
   policyRefundAmount: number;
   requestedAmount: number;
   approvedAmount: number | null;
+  /** Phase 3C.4E.2A — aggregate succeeded refund amount. */
+  refundedAmount: number;
+  remainingAmount: number;
+  aggregateLabel: 'pending' | 'partially_refunded' | 'refunded' | 'action_required';
+  allocations: RefundPaymentAllocationSummary[];
   reason: string;
   adminNote: string | null;
   createdAt: string;
@@ -957,6 +1089,10 @@ export interface AdminRefundRequestRow {
   policyRefundAmount: number;
   requestedAmount: number;
   approvedAmount: number | null;
+  refundedAmount: number;
+  remainingAmount: number;
+  aggregateLabel: 'pending' | 'partially_refunded' | 'refunded' | 'action_required';
+  allocations: RefundPaymentAllocationSummary[];
   status: RefundRequestStatus;
   reason: string;
   adminNote: string | null;

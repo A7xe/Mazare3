@@ -1,0 +1,251 @@
+import { LEGAL_CONTENT_PLACEHOLDERS as P } from './placeholders';
+import {
+  BALANCE_DUE_HOURS_BEFORE_START,
+  CANCELLATION_CHARGE_30_UNTIL_HOURS,
+  CANCELLATION_CHARGE_50_UNTIL_HOURS,
+  CANCELLATION_CHARGE_PERCENT_TIER_100,
+  CANCELLATION_CHARGE_PERCENT_TIER_30,
+  CANCELLATION_CHARGE_PERCENT_TIER_50,
+  CANCELLATION_FREE_UNTIL_HOURS,
+  CUSTOMER_NO_SHOW_GRACE_MINUTES,
+  DEPOSIT_PERCENT,
+  FULL_PAYMENT_WITHIN_HOURS,
+  MAX_CUSTOMER_RESCHEDULES,
+} from './ssot-values';
+import {
+  ADVISOR_REVISED_VERSION,
+  PUBLIC_PLATFORM_TIME_ZONE_AR,
+  PUBLIC_PLATFORM_TIME_ZONE_EN,
+  finalizeLaunchDocument,
+  type LaunchLegalDocument,
+} from './build-legal-markdown';
+
+export const cancellationRefundPolicy: LaunchLegalDocument = finalizeLaunchDocument({
+  documentType: 'cancellation_refund_policy',
+  version: ADVISOR_REVISED_VERSION,
+  includeInternalBanner: false,
+  titleEn: 'Cancellation & Refund Policy',
+  titleAr: 'سياسة الإلغاء والاسترداد',
+  introEn: `This Policy explains how cancellations and refunds work on Mazare3 for Customers. Timing uses the actual Booking start in ${PUBLIC_PLATFORM_TIME_ZONE_EN}. It works together with the Terms & Conditions and Booking Terms.`,
+  introAr: `توضح هذه السياسة كيف يعمل الإلغاء والاسترداد على مزارع للعملاء. يعتمد التوقيت على بداية الحجز الفعلية ${PUBLIC_PLATFORM_TIME_ZONE_AR}. وتعمل مع الشروط والأحكام وشروط الحجز.`,
+  sections: [
+    {
+      id: 'overview',
+      titleEn: '1. Overview',
+      titleAr: '1. نظرة عامة',
+      paragraphsEn: [
+        `Mazare3 applies clear cancellation rules so Customers understand what may be retained and what may be refunded.`,
+        `Important principle: Mazare3 does not collect additional money that was never captured merely to satisfy a cancellation percentage. Any amount retained cannot exceed what was actually captured and available for retention for that Booking.`,
+      ],
+      paragraphsAr: [
+        `تطبّق مزارع قواعد إلغاء واضحة حتى يفهم العميل ما قد يُحتفظ به وما قد يُسترد.`,
+        `مبدأ مهم: لا تجمع مزارع مالاً إضافياً لم يُحصَّل أصلاً لمجرد استيفاء نسبة إلغاء. لا يجوز أن يتجاوز أي مبلغ محتفظ به ما جُمع فعلاً وكان متاحاً للاحتفاظ به لذلك الحجز.`,
+      ],
+    },
+    {
+      id: 'key-definitions',
+      titleEn: '2. Key definitions',
+      titleAr: '2. تعريفات أساسية',
+      paragraphsEn: [`In this Policy:`],
+      paragraphsAr: [`في هذه السياسة:`],
+      bulletsEn: [
+        `“Customer” means the person who books a Property.`,
+        `“Owner” (also “Partner”) means the person who lists and hosts the Property.`,
+        `“Booking Value for Cancellation Purposes” means the authoritative Booking amount used to calculate cancellation charges under Mazare3’s financial rules for that Booking.`,
+        `“Captured Amount” means money successfully collected for the Booking.`,
+        `“Refund Due” or “Approved Refund” means an amount Mazare3 has determined should be returned to the Customer under this Policy, which may still be pending payment-provider processing.`,
+        `“Refunded Amount” means money whose refund has successfully completed or been confirmed through the payment process.`,
+        `“Net Collected Amount” means Captured Amount minus successfully completed Refunded Amounts, where that net figure is needed.`,
+        `“Cancellation charge” means Booking Value for Cancellation Purposes × the applicable percentage in section 5.`,
+        `“Retained amount” means the lesser of (a) the Captured Amount available for retention and (b) the cancellation charge.`,
+        `“Refund” in the calculation steps below means the Captured Amount available to return after the retained amount is applied (a Refund Due until processing completes).`,
+      ],
+      bulletsAr: [
+        `«العميل» الشخص الذي يحجز العقار.`,
+        `«المالك» (أو «الشريك») الشخص الذي يعرض العقار ويستضيف الزيارة.`,
+        `«قيمة الحجز المعتمدة لأغراض الإلغاء» المبلغ المعتمد للحجز الذي تُحسب عليه رسوم الإلغاء وفق قواعد مزارع المالية لذلك الحجز.`,
+        `«المبلغ المحصّل» المال الذي جُمع بنجاح للحجز.`,
+        `«مبلغ الاسترداد المستحق» أو «الاسترداد المعتمد» مبلغ قررت مزارع أنه ينبغي إعادته إلى العميل بموجب هذه السياسة، وقد يبقى معلّقاً ريثما تكتمل معالجته لدى مزود الدفع.`,
+        `«المبلغ المسترد فعلياً» المال الذي اكتمل استرداده أو تأكد عبر عملية الدفع.`,
+        `«صافي المحصّل» المبلغ المحصّل ناقص المبالغ المستردة فعلياً المكتملة، حيث يلزم ذلك الرقم الصافي.`,
+        `«رسوم الإلغاء» قيمة الحجز المعتمدة لأغراض الإلغاء × النسبة المعمول بها في البند 5.`,
+        `«المبلغ المحتفظ به» الأقل بين (أ) المبلغ المحصّل المتاح للاحتفاظ و(ب) رسوم الإلغاء.`,
+        `«الاسترداد» في خطوات الحساب أدناه يعني المبلغ المحصّل المتاح للإعادة بعد تطبيق المبلغ المحتفظ به (ويُعدّ مبلغ استرداد مستحقاً إلى أن تكتمل المعالجة).`,
+      ],
+    },
+    {
+      id: 'before-payment',
+      titleEn: '3. Before payment is captured',
+      titleAr: '3. قبل تحصيل الدفع',
+      paragraphsEn: [
+        `Unpaid Booking requests (including waiting for Owner approval) can be cancelled without a cancellation charge. If the Owner declines or the request expires, nothing is captured.`,
+      ],
+      paragraphsAr: [
+        `يمكن إلغاء طلبات الحجز غير المدفوعة (بما فيها انتظار موافقة المالك) دون رسوم إلغاء. إذا رفض المالك أو انتهت مهلة الطلب، لا يُحصَّل شيء.`,
+      ],
+    },
+    {
+      id: 'payment-plan',
+      titleEn: '4. Deposit and Balance',
+      titleAr: '4. العربون والرصيد المتبقي',
+      paragraphsEn: [
+        `Timing uses the actual Booking start in ${PUBLIC_PLATFORM_TIME_ZONE_EN}.`,
+        `If the Booking starts in more than ${FULL_PAYMENT_WITHIN_HOURS} hours, the Customer may choose a ${DEPOSIT_PERCENT}% Deposit or pay in full. If the Booking starts in ${FULL_PAYMENT_WITHIN_HOURS} hours or less, full payment is required.`,
+        `For eligible Deposit Bookings, the remaining Balance must be paid by the deadline that is ${BALANCE_DUE_HOURS_BEFORE_START} hours before the actual Booking start. If the Balance remains unpaid when that deadline has passed, the Booking will be automatically cancelled under Mazare3’s payment rules, after payment-status reconciliation so a successfully completed Balance payment is not cancelled by mistake. The captured Deposit is retained; no additional cancellation amount is collected; the slot is released.`,
+      ],
+      paragraphsAr: [
+        `يعتمد التوقيت على بداية الحجز الفعلية ${PUBLIC_PLATFORM_TIME_ZONE_AR}.`,
+        `إذا بدأت فترة الحجز بعد أكثر من ${FULL_PAYMENT_WITHIN_HOURS} ساعة، يجوز للعميل اختيار عربون بنسبة ${DEPOSIT_PERCENT}٪ أو الدفع الكامل. وإذا كانت البداية خلال ${FULL_PAYMENT_WITHIN_HOURS} ساعة أو أقل، يُطلب الدفع الكامل.`,
+        `لحجوزات العربون المؤهلة، يجب سداد الرصيد المتبقي بحلول الموعد الذي يسبق بداية الحجز الفعلية بـ${BALANCE_DUE_HOURS_BEFORE_START} ساعة. إذا بقي الرصيد غير مدفوع عند حلول ذلك الموعد، يُلغى الحجز تلقائياً وفق قواعد الدفع في مزارع، بعد مطابقة حالة الدفع حتى لا يُلغى دفع رصيد اكتمل بنجاح بالخطأ. يُحتفظ بالعربون المحصّل؛ ولا يُجمع مبلغ إلغاء إضافي؛ وتُحرَّر الفترة.`,
+      ],
+    },
+    {
+      id: 'customer-tiers',
+      titleEn: '5. Customer cancellation tiers',
+      titleAr: '5. شرائح إلغاء العميل',
+      paragraphsEn: [
+        `For a confirmed paid Booking cancelled by the Customer before start, the applicable charge percentage of Booking Value for Cancellation Purposes is:`,
+      ],
+      paragraphsAr: [
+        `لحجز مؤكد مدفوع يلغيه العميل قبل البداية، تكون نسبة الرسوم من قيمة الحجز المعتمدة لأغراض الإلغاء كما يلي:`,
+      ],
+      tableMarkdownEn: [
+        `| Time before actual start | Cancellation charge |`,
+        `| --- | --- |`,
+        `| More than ${CANCELLATION_FREE_UNTIL_HOURS} hours | ${0}% |`,
+        `| More than ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours and up to ${CANCELLATION_FREE_UNTIL_HOURS} hours | ${CANCELLATION_CHARGE_PERCENT_TIER_30}% |`,
+        `| More than ${CANCELLATION_CHARGE_50_UNTIL_HOURS} hours and up to ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours | ${CANCELLATION_CHARGE_PERCENT_TIER_50}% |`,
+        `| ${CANCELLATION_CHARGE_50_UNTIL_HOURS} hours or less before start | ${CANCELLATION_CHARGE_PERCENT_TIER_100}% |`,
+        `| After Booking start | Ordinary cancellation is unavailable; incident / no-show / dispute rules apply |`,
+      ].join('\n'),
+      tableMarkdownAr: [
+        `| الوقت قبل البداية الفعلية | رسوم الإلغاء |`,
+        `| --- | --- |`,
+        `| أكثر من ${CANCELLATION_FREE_UNTIL_HOURS} ساعة | ${0}٪ |`,
+        `| أكثر من ${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة وحتى ${CANCELLATION_FREE_UNTIL_HOURS} ساعة | ${CANCELLATION_CHARGE_PERCENT_TIER_30}٪ |`,
+        `| أكثر من ${CANCELLATION_CHARGE_50_UNTIL_HOURS} ساعة وحتى ${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة | ${CANCELLATION_CHARGE_PERCENT_TIER_50}٪ |`,
+        `| ${CANCELLATION_CHARGE_50_UNTIL_HOURS} ساعة أو أقل قبل البداية | ${CANCELLATION_CHARGE_PERCENT_TIER_100}٪ |`,
+        `| بعد بداية الحجز | الإلغاء العادي غير متاح؛ تُطبَّق قواعد الحوادث / عدم الحضور / النزاعات |`,
+      ].join('\n'),
+    },
+    {
+      id: 'formula',
+      titleEn: '6. How the refund is calculated',
+      titleAr: '6. كيف يُحسب الاسترداد',
+      paragraphsEn: [
+        `Step 1 — Policy charge: Booking Value for Cancellation Purposes × applicable percentage.`,
+        `Step 2 — Retained amount: the lesser of the Captured Amount available for retention and the policy charge.`,
+        `Step 3 — Refund Due: Captured Amount available to return after the retained amount is applied (and after accounting for any already completed Refunded Amounts).`,
+        `A pending or approved Refund Due is not yet a completed Refunded Amount until the payment process confirms completion.`,
+        `Mazare3 will not charge unpaid remaining amounts merely because a cancellation percentage equals a stated tier.`,
+      ],
+      paragraphsAr: [
+        `الخطوة 1 — رسوم السياسة: قيمة الحجز المعتمدة لأغراض الإلغاء × النسبة المعمول بها.`,
+        `الخطوة 2 — المبلغ المحتفظ به: الأقل بين المبلغ المحصّل المتاح للاحتفاظ ورسوم السياسة.`,
+        `الخطوة 3 — مبلغ الاسترداد المستحق: المبلغ المحصّل المتاح للإعادة بعد تطبيق المبلغ المحتفظ به (وبعد مراعاة أي مبالغ مستردة فعلياً مكتملة مسبقاً).`,
+        `مبلغ الاسترداد المستحق أو المعتمد المعلّق ليس مبلغاً مسترداً فعلياً إلى أن تؤكد عملية الدفع اكتمال الاسترداد.`,
+        `لن تُحصّل مزارع مبالغ متبقية غير مدفوعة لمجرد أن نسبة الإلغاء تطابق شريحة معلنة.`,
+      ],
+    },
+    {
+      id: 'examples-200',
+      titleEn: '7. Examples (200 JOD Booking)',
+      titleAr: '7. أمثلة (حجز بقيمة 200 د.أ)',
+      paragraphsEn: [
+        `Assume Booking Value for Cancellation Purposes = 200 JOD.`,
+        `If a ${DEPOSIT_PERCENT}% Deposit applies, Deposit = 60 JOD and remaining Balance = 140 JOD.`,
+        `Amounts labelled “refund” in these examples are Refund Due figures before payment-provider completion.`,
+      ],
+      paragraphsAr: [
+        `افترض أن قيمة الحجز المعتمدة لأغراض الإلغاء = 200 د.أ.`,
+        `إذا طُبّق عربون بنسبة ${DEPOSIT_PERCENT}٪، فالعربون = 60 د.أ والرصيد المتبقي = 140 د.أ.`,
+        `المبالغ الموسومة بـ«الاسترداد» في هذه الأمثلة هي مبالغ استرداد مستحقة قبل اكتمال المعالجة لدى مزود الدفع.`,
+      ],
+      bulletsEn: [
+        `Fully paid 200 JOD, cancel more than ${CANCELLATION_FREE_UNTIL_HOURS} hours before start: charge 0 JOD; retained 0; Refund Due 200 JOD.`,
+        `Fully paid 200 JOD, cancel in the window of more than ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours and up to ${CANCELLATION_FREE_UNTIL_HOURS} hours: charge 60 JOD; retained 60; Refund Due 140 JOD.`,
+        `Fully paid 200 JOD, cancel in the window of more than ${CANCELLATION_CHARGE_50_UNTIL_HOURS} hours and up to ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours: charge 100 JOD; retained 100; Refund Due 100 JOD.`,
+        `Fully paid 200 JOD, cancel ${CANCELLATION_CHARGE_50_UNTIL_HOURS} hours or less before start: charge 200 JOD; retained 200; Refund Due 0.`,
+        `Deposit only captured (60 JOD), cancel in the window of more than ${CANCELLATION_CHARGE_30_UNTIL_HOURS} hours and up to ${CANCELLATION_FREE_UNTIL_HOURS} hours: policy charge = 60 JOD; retained = 60 JOD; Refund Due = 0. Mazare3 does not collect the unpaid 140 JOD merely because the percentage is ${CANCELLATION_CHARGE_PERCENT_TIER_30}%.`,
+        `Deposit only captured (60 JOD), cancel more than ${CANCELLATION_FREE_UNTIL_HOURS} hours before start: retained 0; Refund Due 60 JOD.`,
+      ],
+      bulletsAr: [
+        `مدفوع بالكامل 200 د.أ، إلغاء بعد أكثر من ${CANCELLATION_FREE_UNTIL_HOURS} ساعة قبل البداية: الرسوم 0؛ المحتفظ به 0؛ مبلغ الاسترداد المستحق 200 د.أ.`,
+        `مدفوع بالكامل 200 د.أ، إلغاء في نافذة أكثر من ${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة وحتى ${CANCELLATION_FREE_UNTIL_HOURS} ساعة: الرسوم 60 د.أ؛ المحتفظ به 60؛ مبلغ الاسترداد المستحق 140 د.أ.`,
+        `مدفوع بالكامل 200 د.أ، إلغاء في نافذة أكثر من ${CANCELLATION_CHARGE_50_UNTIL_HOURS} ساعة وحتى ${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة: الرسوم 100 د.أ؛ المحتفظ به 100؛ مبلغ الاسترداد المستحق 100 د.أ.`,
+        `مدفوع بالكامل 200 د.أ، إلغاء خلال ${CANCELLATION_CHARGE_50_UNTIL_HOURS} ساعة أو أقل قبل البداية: الرسوم 200 د.أ؛ المحتفظ به 200؛ مبلغ الاسترداد المستحق 0.`,
+        `عربون محصّل فقط (60 د.أ)، إلغاء في نافذة أكثر من ${CANCELLATION_CHARGE_30_UNTIL_HOURS} ساعة وحتى ${CANCELLATION_FREE_UNTIL_HOURS} ساعة: رسوم السياسة = 60 د.أ؛ المحتفظ به = 60 د.أ؛ مبلغ الاسترداد المستحق = 0. لا تجمع مزارع الـ 140 د.أ غير المدفوعة لمجرد أن النسبة ${CANCELLATION_CHARGE_PERCENT_TIER_30}٪.`,
+        `عربون محصّل فقط (60 د.أ)، إلغاء بعد أكثر من ${CANCELLATION_FREE_UNTIL_HOURS} ساعة قبل البداية: المحتفظ به 0؛ مبلغ الاسترداد المستحق 60 د.أ.`,
+      ],
+    },
+    {
+      id: 'owner-cancel',
+      titleEn: '8. Owner-caused cancellation',
+      titleAr: '8. الإلغاء بسبب المالك',
+      paragraphsEn: [
+        `If an Owner causes cancellation of a confirmed Booking: the Customer is entitled to a 100% refund of eligible captured Booking payments; the resulting amount becomes a Refund Due until payment processing confirms completion; Owner payout for that Booking is zero; Owner financial and reliability consequences may apply under the Owner Agreement and Mazare3 fairness rules.`,
+        `Genuine force majeure after Mazare3 review: see section 10. Owner penalty does not apply.`,
+      ],
+      paragraphsAr: [
+        `إذا تسبب المالك بإلغاء حجز مؤكد: يستحق العميل استرداداً بنسبة 100٪ من مدفوعات الحجز المحصّلة (مبلغ استرداد مستحق للمبالغ المحصّلة المؤهلة)؛ ويكون صرف المالك لذلك الحجز صفراً؛ وقد تُطبَّق عواقب مالية وموثوقية على المالك بموجب اتفاق المالك وقواعد عدالة مزارع.`,
+        `القوة القاهرة الحقيقية بعد مراجعة مزارع: انظر البند 10. ولا تُطبَّق غرامة على المالك.`,
+      ],
+    },
+    {
+      id: 'no-shows',
+      titleEn: '9. No-shows and access denied',
+      titleAr: '9. عدم الحضور ومنع الوصول',
+      paragraphsEn: [
+        `Customer no-show is not automatic merely because check-in is missing. It may be finalised only after Booking start, after a ${CUSTOMER_NO_SHOW_GRACE_MINUTES}-minute grace period, when payment conditions are satisfied, check-in is not verified, no unresolved Owner-fault / access-denied / force-majeure condition applies, the Owner may report, and Mazare3 review and confirmation are required. Confirmed Customer no-show: Customer Refund Due = 0.`,
+        `Confirmed Owner no-show or unjustified access denied (after Mazare3 review): the Customer is entitled to a 100% refund of eligible captured payments (Refund Due until payment processing confirms completion); Owner payout = 0; Owner financial and reliability consequences may apply under the Owner Agreement.`,
+        `An Owner’s decision to deny access or end use does not automatically decide the financial outcome. Where payment or refund responsibility is disputed, Mazare3 may review available evidence and apply the cancellation / incident / dispute rules. The Owner cannot unilaterally classify a disputed case as Customer no-show merely to retain payment.`,
+      ],
+      paragraphsAr: [
+        `عدم حضور العميل ليس تلقائياً لمجرد غياب تسجيل الوصول. لا يُعتمد إلا بعد بداية الحجز، وبعد فترة سماح ${CUSTOMER_NO_SHOW_GRACE_MINUTES} دقيقة، وعند استيفاء شروط الدفع وعدم تحقق تسجيل الوصول وعدم وجود حالة مفتوحة منسوبة لخطأ المالك / منع الوصول / القوة القاهرة، ويجوز للمالك الإبلاغ، ويُشترط مراجعة مزارع وتأكيدها. عند التأكيد: مبلغ الاسترداد المستحق للعميل = 0.`,
+        `عدم حضور المالك المؤكد أو منع الوصول غير المبرر (بعد مراجعة مزارع): يستحق العميل استرداداً بنسبة 100٪ من المحصّل؛ صرف المالك = 0؛ وقد تُطبَّق عواقب مالية وموثوقية بموجب اتفاق المالك.`,
+        `قرار المالك برفض الدخول أو إنهاء الاستخدام لا يحدّد تلقائياً النتيجة المالية. عند النزاع على مسؤولية الدفع أو الاسترداد، يجوز لمزارع مراجعة الأدلة المتاحة وتطبيق قواعد الإلغاء / الحوادث / النزاعات. لا يجوز للمالك منفرداً تصنيف حالة متنازع عليها كعدم حضور للعميل لمجرد الاحتفاظ بالمبلغ.`,
+      ],
+    },
+    {
+      id: 'reschedule-fm',
+      titleEn: '10. Rescheduling and force majeure',
+      titleAr: '10. إعادة الجدولة والقوة القاهرة',
+      paragraphsEn: [
+        `Rescheduling requires agreement under product rules (normally up to ${MAX_CUSTOMER_RESCHEDULES} successful Customer-requested reschedule per Booking).`,
+        `After a Customer-requested reschedule, cancellation timing is calculated using the earlier of the original Booking start and the new Booking start, so moving a Booking further into the future cannot create a more favourable cancellation window than the original protection rule.`,
+        `Customer-initiated: same price → no adjustment; higher → Customer pays the accepted difference before completion; lower → eligible difference becomes a Refund Due. Owner-initiated: the Customer cannot be forced to pay a higher replacement price solely because the Owner requested the change; if the accepted replacement results in a lower eligible price, the applicable difference is refunded according to the existing rules.`,
+        `Where Mazare3 confirms a genuine force-majeure event that makes performance of the Booking objectively impossible: the Customer is entitled to a full refund of eligible captured Booking payments. An equivalent reschedule may be offered as an alternative and is not imposed instead of that refund without the Customer’s agreement. Owner penalty remains zero. Ordinary cancellation penalties do not apply to that genuine approved force-majeure impossibility. If the Customer voluntarily chooses a more expensive replacement beyond an equivalent replacement, an explicitly accepted price difference may apply.`,
+      ],
+      paragraphsAr: [
+        `إعادة الجدولة تتطلب اتفاقاً وفق قواعد المنتج (عادة حتى ${MAX_CUSTOMER_RESCHEDULES} إعادة جدولة ناجحة بطلب العميل لكل حجز).`,
+        `بعد إعادة الجدولة بطلب العميل، يُحتسب توقيت الإلغاء بالاستناد إلى الأسبق من موعد بداية الحجز الأصلي وموعد البداية الجديد، حتى لا ينشئ نقل الحجز إلى موعد أبعد نافذة إلغاء أفضل من قاعدة الحماية الأصلية.`,
+        `بمبادرة العميل: نفس السعر → بلا تعديل؛ أعلى → يدفع العميل الفرق المقبول قبل الإتمام؛ أدنى → يصبح الفرق المستحق مبلغ استرداد مستحقاً. بمبادرة المالك: لا يُجبر العميل على دفع سعر بديل أعلى لمجرد أن المالك طلب التغيير؛ وإذا نتج عن البديل المقبول سعر مؤهل أدنى، يُسترد الفرق المنطبق وفق القواعد القائمة.`,
+        `عندما تؤكد مزارع حدث قوة قاهرة حقيقياً يجعل تنفيذ الحجز متعذراً بصورة موضوعية: يستحق العميل استرداداً كاملاً لمدفوعات الحجز المحصّلة المؤهلة. ويجوز عرض إعادة جدولة مكافئة كبديل، ولا تُفرض بدلاً من ذلك الاسترداد دون موافقة العميل. وتبقى غرامة المالك صفراً. ولا تُطبَّق غرامات الإلغاء العادية على حالة القوة القاهرة المعتمدة التي يتعذر معها التنفيذ. وإذا اختار العميل طوعاً بديلاً أعلى سعراً من البديل المكافئ، فقد ينطبق فرق سعر مقبول صراحة.`,
+      ],
+    },
+    {
+      id: 'refund-process',
+      titleEn: '11. How refunds are processed',
+      titleAr: '11. كيف تُعالَج الاستردادات',
+      paragraphsEn: [
+        `Once a refund is finally approved or due under Mazare3 policy, Mazare3 submits and processes it through the configured payment provider without unreasonable delay. Actual posting to the Customer’s bank or card may still depend on that provider and the card issuer.`,
+        `A Refund Due or Approved Refund is not a completed Refunded Amount until the payment process confirms completion. Mazare3 does not promise an exact arrival day for funds.`,
+      ],
+      paragraphsAr: [
+        `متى أصبح الاسترداد معتمداً نهائياً أو مستحقاً بموجب سياسة مزارع، تقدّمه مزارع وتعالجه عبر مزود الدفع المهيأ دون تأخير غير معقول. وقد يعتمد ظهور المبلغ فعلياً في بنك العميل أو بطاقته على ذلك المزود ومصدر البطاقة.`,
+        `مبلغ الاسترداد المستحق أو المعتمد ليس مبلغاً مسترداً فعلياً إلى أن تؤكد عملية الدفع اكتماله. ولا تعد مزارع بيوم وصول محدد للأموال.`,
+      ],
+    },
+    {
+      id: 'contact',
+      titleEn: '12. Contact',
+      titleAr: '12. التواصل',
+      paragraphsEn: [
+        `Questions: ${P.LEGAL_CONTACT_EMAIL}. Operator: ${P.LEGAL_ENTITY_NAME}. For Booking issues, use My bookings and in-product support.`,
+      ],
+      paragraphsAr: [
+        `للاستفسار: ${P.LEGAL_CONTACT_EMAIL}. المشغّل: ${P.LEGAL_ENTITY_NAME}. لمسائل الحجز استخدم «حجوزاتي» والدعم داخل المنتج.`,
+      ],
+    },
+  ],
+});
